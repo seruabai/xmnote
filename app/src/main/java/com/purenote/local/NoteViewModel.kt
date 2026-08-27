@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.purenote.local.data.ChecklistItem
+import com.purenote.local.data.DataChanges
 import com.purenote.local.data.Folder
 import com.purenote.local.data.Note
 import com.purenote.local.data.NoteFilter
@@ -112,6 +113,9 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { refresh() }
         viewModelScope.launch {
             screen.collect { if (it is Screen.Home) refresh() }
+        }
+        viewModelScope.launch {
+            DataChanges.events.collect { refresh() }
         }
     }
 

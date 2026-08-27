@@ -8,8 +8,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -34,6 +38,7 @@ import androidx.core.view.isVisible
 import com.purenote.local.MainActivity
 import com.purenote.local.PureNoteApp
 import com.purenote.local.R
+import com.purenote.local.data.DataChanges
 import com.purenote.local.data.Note
 import com.purenote.local.data.NoteFilter
 import com.purenote.local.data.SortOrder
@@ -214,13 +219,17 @@ class QuickCaptureService : Service() {
 
         content.addView(noteHeader())
         content.addView(space(18))
-        content.addView(noteStrip(notes))
+        val notesStrip = noteStrip(notes)
+        root.excludeHorizontalGesture(notesStrip)
+        content.addView(notesStrip)
         content.addView(space(18))
         content.addView(todoHeader())
         content.addView(space(17))
 
         if (composerOpen) {
-            content.addView(todoComposer())
+            val composer = todoComposer()
+            root.excludeHorizontalGesture(composer)
+            content.addView(composer)
             content.addView(space(11))
         }
         val rootTodos = todos.filter { !it.isSubtask }
@@ -239,7 +248,7 @@ class QuickCaptureService : Service() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             overlayType(),
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -340,25 +349,41 @@ class QuickCaptureService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dip(21), 0, dip(18), 0)
         }
-        val check = label(if (todo.done) "✓" else "□", 25f, if (todo.done) 0xFF222222.toInt() else 0xFFCCCCCC.toInt(), false).apply {
-            gravity = Gravity.CENTER
+        val check = NativeTodoCheckbox(this, todo.done, 22f).apply {
             setOnClickListener { toggleTodoFromPanel(todo) }
         }
         header.addView(check, LinearLayout.LayoutParams(dip(38), dip(76)))
-        header.addView(label(todo.title.ifBlank { "待办清单" }, 18f, if (todo.done) 0xFFAAAAAA.toInt() else 0xFF171717.toInt(), false).apply {
+        val title = label(
+            todo.title.ifBlank { "待办清单" },
+            18f,
+            if (todo.done) 0xFFC4C4C4.toInt() else 0xFF171717.toInt(),
+            false,
+        ).apply {
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
-        }, LinearLayout.LayoutParams(0, dip(76), 1f))
+            if (todo.done) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+            setOnClickListener { openTodo(todo.id) }
+            contentDescription = "编辑待办：${todo.title}"
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, dip(76), 1f))
 
         if (children.isNotEmpty()) {
             val doneCount = children.count { it.done }
-            header.addView(label("$doneCount/${children.size}", 14f, 0xFF777777.toInt(), false).apply {
+            val expandControl = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                isFocusable = true
+                contentDescription = if (todo.id in collapsedTodoIds) "展开子待办" else "收起子待办"
+            }
+            expandControl.addView(label("$doneCount/${children.size}", 14f, 0xFF777777.toInt(), false).apply {
                 gravity = Gravity.CENTER
             }, LinearLayout.LayoutParams(dip(48), dip(76)))
             val arrow = label(if (todo.id in collapsedTodoIds) "›" else "⌄", 19f, 0xFF888888.toInt(), false).apply {
                 gravity = Gravity.CENTER
             }
-            header.addView(arrow, LinearLayout.LayoutParams(dip(29), dip(76)))
+            expandControl.addView(arrow, LinearLayout.LayoutParams(dip(29), dip(76)))
+            header.addView(expandControl, LinearLayout.LayoutParams(dip(77), dip(76)))
 
             val childrenBox = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -372,10 +397,11 @@ class QuickCaptureService : Service() {
                 })
                 childrenBox.addView(subTodoRow(child))
             }
-            header.setOnClickListener {
+            expandControl.setOnClickListener {
                 val collapsing = childrenBox.isVisible
                 childrenBox.isVisible = !collapsing
                 arrow.text = if (collapsing) "›" else "⌄"
+                expandControl.contentDescription = if (collapsing) "展开子待办" else "收起子待办"
                 if (collapsing) collapsedTodoIds.add(todo.id) else collapsedTodoIds.remove(todo.id)
             }
             card.addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(76)))
@@ -392,14 +418,15 @@ class QuickCaptureService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dip(49), 0, dip(18), 0)
         }
-        row.addView(label(if (todo.done) "✓" else "□", 22f, if (todo.done) 0xFF777777.toInt() else 0xFFCCCCCC.toInt(), false).apply {
-            gravity = Gravity.CENTER
+        row.addView(NativeTodoCheckbox(this, todo.done, 17f).apply {
             setOnClickListener { toggleTodoFromPanel(todo) }
         }, LinearLayout.LayoutParams(dip(34), dip(54)))
-        row.addView(label(todo.title, 15.5f, if (todo.done) 0xFFA0A0A0.toInt() else 0xFF666666.toInt(), false).apply {
+        row.addView(label(todo.title, 15.5f, if (todo.done) 0xFFC4C4C4.toInt() else 0xFF555555.toInt(), false).apply {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-            setOnClickListener { toggleTodoFromPanel(todo) }
+            if (todo.done) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+            setOnClickListener { openTodo(todo.parentId ?: todo.id) }
+            contentDescription = "编辑子待办：${todo.title}"
         }, LinearLayout.LayoutParams(0, dip(54), 1f))
         return row
     }
@@ -418,6 +445,7 @@ class QuickCaptureService : Service() {
                     }
                 }
             }
+            DataChanges.notifyChanged()
             loadAndRenderPanel()
         }
     }
@@ -432,7 +460,7 @@ class QuickCaptureService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.TOP
         }
-        inputRow.addView(label("□", 25f, 0xFFCCCCCC.toInt(), false), LinearLayout.LayoutParams(dip(39), dip(49)))
+        inputRow.addView(NativeTodoCheckbox(this, false, 21f), LinearLayout.LayoutParams(dip(39), dip(49)))
         val input = EditText(this).apply {
             hint = "回车即可连续添加待办"
             setTextSize(17f)
@@ -474,6 +502,7 @@ class QuickCaptureService : Service() {
                 val repo = (application as PureNoteApp).repository
                 scope.launch {
                     repo.quickAddTodo(text, quickDueAt)
+                    DataChanges.notifyChanged()
                     composerOpen = false
                     quickDueAt = null
                     postToMain { Toast.makeText(this@QuickCaptureService, "已添加待办", Toast.LENGTH_SHORT).show() }
@@ -506,6 +535,17 @@ class QuickCaptureService : Service() {
             Intent(this, MainActivity::class.java).apply {
                 putExtra(Reminders.EXTRA_ID, id)
                 putExtra(Reminders.EXTRA_KIND, Reminders.KIND_NOTE)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            },
+        )
+    }
+
+    private fun openTodo(id: Long) {
+        hidePanel()
+        startActivity(
+            Intent(this, MainActivity::class.java).apply {
+                putExtra(Reminders.EXTRA_ID, id)
+                putExtra(Reminders.EXTRA_KIND, Reminders.KIND_TODO)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             },
         )
@@ -621,40 +661,89 @@ class QuickCaptureService : Service() {
         android.os.Handler(mainLooper).post(block)
     }
 
+    /** 原生悬浮窗版本的小米待办复选框，与 Compose 主界面的视觉保持一致。 */
+    private class NativeTodoCheckbox(
+        context: Context,
+        private val checked: Boolean,
+        boxSizeDp: Float,
+    ) : View(context) {
+        private val density = resources.displayMetrics.density
+        private val boxSize = boxSizeDp * density
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val checkPath = Path()
+
+        init {
+            isClickable = true
+            isFocusable = true
+            contentDescription = if (checked) "取消完成" else "标记完成"
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val left = (width - boxSize) / 2f
+            val top = (height - boxSize) / 2f
+            val rect = RectF(left, top, left + boxSize, top + boxSize)
+            val radius = 5f * density
+
+            if (checked) {
+                paint.style = Paint.Style.FILL
+                paint.color = 0xFF111111.toInt()
+                canvas.drawRoundRect(rect, radius, radius, paint)
+
+                paint.style = Paint.Style.STROKE
+                paint.color = Color.WHITE
+                paint.strokeWidth = 1.8f * density
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeJoin = Paint.Join.ROUND
+                checkPath.reset()
+                checkPath.moveTo(left + boxSize * 0.25f, top + boxSize * 0.52f)
+                checkPath.lineTo(left + boxSize * 0.43f, top + boxSize * 0.69f)
+                checkPath.lineTo(left + boxSize * 0.76f, top + boxSize * 0.34f)
+                canvas.drawPath(checkPath, paint)
+            } else {
+                paint.style = Paint.Style.STROKE
+                paint.color = 0xFFD0D0D0.toInt()
+                paint.strokeWidth = 1.6f * density
+                canvas.drawRoundRect(rect, radius, radius, paint)
+            }
+        }
+    }
+
     /**
-     * 悬浮窗不会在所有厂商系统上自动收到全面屏返回手势，因此在左右边缘补充一层
-     * 与系统返回一致的跟手滑动。竖向滚动和卡片内部横滑不会被拦截。
+     * 桌面悬浮面板支持从任意空白/卡片区域向右跟手滑动收起。横向笔记卡片和待办
+     * 输入框会被排除，以免与它们自己的交互冲突；竖向滚动仍由子视图处理。
      */
     @SuppressLint("ClickableViewAccessibility")
     private class EdgeDismissFrame(context: Context) : FrameLayout(context) {
         var onDismiss: ((Float) -> Unit)? = null
 
-        private val edgeWidth = 38f * resources.displayMetrics.density
         private val dismissDistance = 68f * resources.displayMetrics.density
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+        private val horizontalGestureExclusions = mutableListOf<View>()
         private var downX = 0f
         private var downY = 0f
-        private var edgeDirection = 0f
+        private var gestureCandidate = false
         private var dragging = false
+
+        fun excludeHorizontalGesture(view: View) {
+            horizontalGestureExclusions += view
+        }
 
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = event.x
-                    downY = event.y
-                    edgeDirection = when {
-                        downX <= edgeWidth -> 1f
-                        downX >= width - edgeWidth -> -1f
-                        else -> 0f
+                    downX = event.rawX
+                    downY = event.rawY
+                    gestureCandidate = horizontalGestureExclusions.none {
+                        isPointInside(it, event.rawX, event.rawY)
                     }
                     dragging = false
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if (edgeDirection != 0f) {
-                        val dx = event.x - downX
-                        val dy = event.y - downY
-                        val followsEdge = dx * edgeDirection > 0f
-                        if (followsEdge && abs(dx) > touchSlop && abs(dx) > abs(dy) * 1.15f) {
+                    if (gestureCandidate) {
+                        val dx = event.rawX - downX
+                        val dy = event.rawY - downY
+                        if (dx > touchSlop && dx > abs(dy) * 1.15f) {
                             dragging = true
                             parent?.requestDisallowInterceptTouchEvent(true)
                             return true
@@ -669,17 +758,16 @@ class QuickCaptureService : Service() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_MOVE -> {
                     if (!dragging) return false
-                    val rawDx = event.x - downX
-                    val dx = if (rawDx * edgeDirection > 0f) rawDx else 0f
+                    val dx = (event.rawX - downX).coerceAtLeast(0f)
                     translationX = dx
-                    alpha = (1f - abs(dx) / width.coerceAtLeast(1) * 0.48f).coerceIn(0.52f, 1f)
+                    alpha = (1f - dx / width.coerceAtLeast(1) * 0.48f).coerceIn(0.52f, 1f)
                     return true
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!dragging) return false
-                    val shouldDismiss = abs(translationX) >= dismissDistance
+                    val shouldDismiss = translationX >= dismissDistance
                     if (shouldDismiss) {
-                        onDismiss?.invoke(if (translationX >= 0f) 1f else -1f)
+                        onDismiss?.invoke(1f)
                     } else {
                         animate().translationX(0f).alpha(1f).setDuration(140L).start()
                     }
@@ -693,6 +781,14 @@ class QuickCaptureService : Service() {
                 }
             }
             return true
+        }
+
+        private fun isPointInside(view: View, rawX: Float, rawY: Float): Boolean {
+            if (!view.isShown) return false
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            return rawX >= location[0] && rawX < location[0] + view.width &&
+                rawY >= location[1] && rawY < location[1] + view.height
         }
 
         override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
