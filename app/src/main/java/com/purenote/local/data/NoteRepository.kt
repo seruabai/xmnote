@@ -3,6 +3,7 @@ package com.purenote.local.data
 import android.content.Context
 import android.database.Cursor
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.core.TodoCompletion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -194,11 +195,18 @@ class NoteRepository(context: Context) {
             db.updateTodo(id, title.trim(), dueAt, allDay, repeat, sortIndex = 0, now = System.currentTimeMillis())
         }
 
-    /** 勾选父待办时同步所有子任务 */
+    /**
+     * 勾选父待办时同步所有子任务；切换子待办时则按全部子项重新计算父待办状态。
+     * 这样无论变更来自 App 还是桌面悬浮层，父子完成状态都遵循同一规则。
+     */
     suspend fun setTodoDone(todo: Todo, done: Boolean) = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         db.setTodoDone(todo.id, done, now)
-        if (!todo.isSubtask) db.setDoneForChildren(todo.id, done, now)
+        if (!todo.isSubtask) {
+            db.setDoneForChildren(todo.id, done, now)
+        } else {
+            todo.parentId?.let { syncParentDoneFromChildren(it, now) }
+        }
     }
 
     /** 用编辑器中的子任务列表整体替换某父待办的子任务 */
@@ -208,6 +216,22 @@ class NoteRepository(context: Context) {
         subs.filter { it.first.isNotBlank() }.forEach { (text, done) ->
             val id = db.insertTodo(parentId, text.trim(), null, false, 0, sortIndex = 0, now = now)
             if (done) db.setTodoDone(id, true, now)
+        }
+        syncParentDoneFromChildren(parentId, now)
+    }
+
+    /** 无子项时保留父待办自己的状态；存在子项时，父项仅在所有子项完成后才完成。 */
+    private fun syncParentDoneFromChildren(parentId: Long, now: Long) {
+        db.readableDatabase.rawQuery(
+            "SELECT COUNT(*), SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END) FROM todos WHERE parent_id = ?",
+            arrayOf(parentId.toString()),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return
+            val childCount = cursor.getInt(0)
+            val incompleteCount = cursor.getInt(1)
+            TodoCompletion.parentDone(childCount, incompleteCount)?.let { parentDone ->
+                db.setTodoDone(parentId, parentDone, now)
+            }
         }
     }
 

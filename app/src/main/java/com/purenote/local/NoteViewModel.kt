@@ -477,14 +477,15 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 scheduleTodoAlarm(todo.id, todo.dueAt)
             }
-            // 小米行为：最后一个子待办完成 → 整个待办清单完成
-            if (markingDone && todo.isSubtask) {
-                val all = repo.loadTodos()
-                val siblings = all.filter { it.parentId == todo.parentId }
-                if (siblings.isNotEmpty() && siblings.all { it.done }) {
-                    all.firstOrNull { it.id == todo.parentId }?.let { parent ->
-                        repo.setTodoDone(parent, true)
-                        Reminders.cancel(getApplication(), Reminders.KIND_TODO, parent.id)
+            // 父项状态已由仓库按全部子项统一重算；这里同步父项提醒状态。
+            if (todo.isSubtask) {
+                todo.parentId?.let { parentId ->
+                    repo.getTodo(parentId)?.let { parent ->
+                        if (parent.done) {
+                            Reminders.cancel(getApplication(), Reminders.KIND_TODO, parent.id)
+                        } else {
+                            scheduleTodoAlarm(parent.id, parent.dueAt)
+                        }
                     }
                 }
             }

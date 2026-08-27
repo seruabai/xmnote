@@ -206,9 +206,9 @@ class QuickCaptureService : Service() {
     }
 
     private fun renderPanel(notes: List<Note>, todos: List<Todo>) {
+        val previousPanel = panel
         panelScrollY = panelScroll?.scrollY ?: panelScrollY
         unregisterPanelBackCallback()
-        panel?.let { runCatching { wm.removeView(it) } }
         panelScroll = null
         dismissingPanel = false
 
@@ -263,6 +263,10 @@ class QuickCaptureService : Service() {
         }
         panel = root
         wm.addView(root, params)
+        // 新面板先覆盖到窗口上，再移除旧面板，避免勾选待办刷新时露出一帧桌面背景。
+        previousPanel?.takeIf { it !== root }?.let { old ->
+            runCatching { wm.removeView(old) }
+        }
         root.requestFocus()
         scroll.post { scroll.scrollTo(0, panelScrollY) }
         when {
@@ -440,15 +444,6 @@ class QuickCaptureService : Service() {
         scope.launch {
             val markingDone = !todo.done
             repo.setTodoDone(todo, markingDone)
-            if (markingDone && todo.isSubtask) {
-                val refreshed = repo.loadTodos()
-                val siblings = refreshed.filter { it.parentId == todo.parentId }
-                if (siblings.isNotEmpty() && siblings.all { it.done }) {
-                    refreshed.firstOrNull { it.id == todo.parentId }?.let { parent ->
-                        repo.setTodoDone(parent, true)
-                    }
-                }
-            }
             DataChanges.notifyChanged()
             loadAndRenderPanel()
         }
@@ -488,36 +483,46 @@ class QuickCaptureService : Service() {
     }
 
     private fun renderInlineTodoEditor(draft: OverlayTodoDraft, focusSubId: Long? = null) {
+        val previousPanel = panel
         unregisterPanelBackCallback()
-        panel?.let { runCatching { wm.removeView(it) } }
         panelScroll = null
         dismissingPanel = false
+
+        val closeEditor: () -> Unit = {
+            scheduleInlineEditorSave(immediate = true)
+            dismissPanel(1f)
+        }
 
         val root = EdgeDismissFrame(this).apply {
             isFocusableInTouchMode = true
             setBackgroundColor(0xA65F6872.toInt())
-            onDismiss = {
-                scheduleInlineEditorSave(immediate = true)
-                dismissPanel(1f)
-            }
+            onDismiss = { closeEditor() }
             isDismissInProgress = { dismissingPanel }
         }
+
+        // 点击编辑卡片以外的灰色区域直接保存并退出，避免悬浮编辑器把用户困住。
+        root.addView(View(this).apply {
+            isClickable = true
+            contentDescription = "关闭待办编辑器"
+            setOnClickListener { closeEditor() }
+        }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
         val sheetScroll = ScrollView(this).apply {
             overScrollMode = View.OVER_SCROLL_NEVER
             isFillViewport = true
             background = rounded(Color.WHITE, 25f)
+            isClickable = true
+            contentDescription = "待办编辑区域，点击空白处关闭"
+            setOnClickListener { closeEditor() }
         }
         val sheet = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dip(20), dip(24), dip(20), dip(18))
-            isClickable = true
         }
         sheetScroll.addView(
             sheet,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT),
         )
-        root.excludeHorizontalGesture(sheetScroll)
 
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -532,6 +537,14 @@ class QuickCaptureService : Service() {
             }
         }
         titleRow.addView(parentCheck, LinearLayout.LayoutParams(dip(40), dip(55)))
+
+        fun syncParentCheckFromSubs() {
+            val materialSubs = draft.subs.filter { it.text.isNotBlank() }
+            if (materialSubs.isNotEmpty()) {
+                draft.done = materialSubs.all { it.done }
+                parentCheck.setChecked(draft.done)
+            }
+        }
 
         val titleInput = inlineEditText(
             text = draft.title,
@@ -574,6 +587,7 @@ class QuickCaptureService : Service() {
                     setOnClickListener {
                         sub.done = !sub.done
                         setChecked(sub.done)
+                        syncParentCheckFromSubs()
                         scheduleInlineEditorSave()
                     }
                 }
@@ -583,6 +597,7 @@ class QuickCaptureService : Service() {
                     imeOptions = EditorInfo.IME_ACTION_NEXT
                     doAfterTextChanged {
                         sub.text = it?.toString().orEmpty()
+                        syncParentCheckFromSubs()
                         scheduleInlineEditorSave()
                     }
                     setOnEditorActionListener { _, actionId, event ->
@@ -592,6 +607,7 @@ class QuickCaptureService : Service() {
                         val current = draft.subs.indexOfFirst { it.key == sub.key }.coerceAtLeast(0)
                         val next = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
                         draft.subs.add(current + 1, next)
+                        syncParentCheckFromSubs()
                         rebuildSubRows(next.key)
                         scheduleInlineEditorSave(immediate = true)
                         true
@@ -604,6 +620,7 @@ class QuickCaptureService : Service() {
                     contentDescription = "删除子待办"
                     setOnClickListener {
                         draft.subs.removeAll { it.key == sub.key }
+                        syncParentCheckFromSubs()
                         rebuildSubRows(null)
                         scheduleInlineEditorSave(immediate = true)
                     }
@@ -616,6 +633,7 @@ class QuickCaptureService : Service() {
                 setOnClickListener {
                     val next = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
                     draft.subs.add(next)
+                    syncParentCheckFromSubs()
                     rebuildSubRows(next.key)
                 }
             })
@@ -635,6 +653,7 @@ class QuickCaptureService : Service() {
             if (!enter) return@setOnEditorActionListener false
             val first = draft.subs.firstOrNull()
                 ?: OverlaySubDraft(nextOverlayDraftKey(), null, "", false).also { draft.subs.add(it) }
+            syncParentCheckFromSubs()
             rebuildSubRows(first.key)
             scheduleInlineEditorSave(immediate = true)
             true
@@ -702,6 +721,10 @@ class QuickCaptureService : Service() {
         }
         panel = root
         wm.addView(root, params)
+        // 保持旧侧栏作为过渡底层，直到编辑器已经成功挂载，避免切换时背景闪白。
+        previousPanel?.takeIf { it !== root }?.let { old ->
+            runCatching { wm.removeView(old) }
+        }
         root.requestFocus()
         when {
             Build.VERSION.SDK_INT >= 34 -> registerAnimatedPredictiveBack(root)
@@ -758,8 +781,14 @@ class QuickCaptureService : Service() {
             repo.updateTodo(draft.id, finalTitle, draft.dueAt, draft.allDay, draft.repeat.ordinal)
         }
         repo.replaceSubs(draft.id, cleanSubs)
-        repo.getTodo(draft.id)?.let { saved ->
-            if (saved.done != draft.done) repo.setTodoDone(saved, draft.done)
+        if (cleanSubs.isEmpty()) {
+            // 普通单项待办由标题前的勾选框决定状态。
+            repo.getTodo(draft.id)?.let { saved ->
+                if (saved.done != draft.done) repo.setTodoDone(saved, draft.done)
+            }
+        } else {
+            // 清单父项状态由子项推导，不能再用旧 draft 状态把未完成子项重新全部勾上。
+            draft.done = cleanSubs.all { it.second }
         }
         if (draft.dueAt == null) {
             Reminders.cancel(this, Reminders.KIND_TODO, draft.id)
@@ -796,13 +825,18 @@ class QuickCaptureService : Service() {
         if (dismissingPanel) return
         val current = panel ?: return
         dismissingPanel = true
+        current.animate().cancel()
+        current.isClickable = false
         val width = current.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
         val target = if (direction >= 0f) width.toFloat() else -width.toFloat()
         current.animate()
             .translationX(target)
-            .setDuration(170L)
+            .setDuration(155L)
             .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .withLayer()
             .withEndAction {
+                // 先隐藏再从 WindowManager 移除，防止 OEM 在窗口销毁前重绘一次原始位置。
+                current.visibility = View.INVISIBLE
                 if (panel === current) hidePanel()
             }
             .start()
@@ -847,7 +881,12 @@ class QuickCaptureService : Service() {
 
                     override fun onBackCancelled() {
                         if (dismissingPanel) return
-                        root.animate().translationX(0f).alpha(1f).setDuration(140L).start()
+                        val moved = abs(root.translationX)
+                        if (moved > root.width * 0.08f) {
+                            dismissPanel(direction)
+                        } else {
+                            root.animate().translationX(0f).setDuration(120L).start()
+                        }
                     }
 
                     override fun onBackInvoked() {
