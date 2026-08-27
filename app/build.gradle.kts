@@ -10,8 +10,8 @@ android {
         applicationId = "com.purenote.local"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.2.1"
     }
 
     buildTypes {
@@ -63,4 +63,19 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.tooling)
 
   testImplementation(libs.junit)
+}
+
+// 每次生成 Debug APK 后，按“纯记+版本号”归档到工作区的 APP 目录。
+// 新版本发布前仍需同时递增 defaultConfig 中的 versionCode 与 versionName，
+// 这样旧 APK 会保留，不会被下一版覆盖。
+val archiveDebugApk by tasks.registering(Copy::class) {
+    group = "build"
+    description = "Copy the debug APK to ../APP using its PureNote version name."
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+    into(rootProject.layout.projectDirectory.dir("../APP"))
+    rename { "纯记+${android.defaultConfig.versionName}.apk" }
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    finalizedBy(archiveDebugApk)
 }
