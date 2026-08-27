@@ -27,6 +27,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Add
@@ -67,6 +69,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -79,6 +82,7 @@ import com.purenote.local.core.TodoGrouper
 import com.purenote.local.data.RepeatRule
 import com.purenote.local.data.Todo
 import java.util.Calendar
+import java.util.UUID
 
 /** 小米待办同款方角勾选框：未勾为描边方块，勾选后墨色填充 + 纸色对勾 */
 @Composable
@@ -110,7 +114,12 @@ fun MiCheckbox(done: Boolean, size: Dp, onClick: () -> Unit, modifier: Modifier 
     }
 }
 
-private data class SubDraft(val text: String, val done: Boolean)
+private data class SubDraft(
+    val text: String,
+    val done: Boolean,
+    /** 列表插入后仍保持稳定，用于把焦点准确交给新建的下一行。 */
+    val key: String = UUID.randomUUID().toString(),
+)
 
 /** 待办主页：参考图采用没有分节标题的连续大卡片列表。 */
 @Composable
@@ -460,15 +469,15 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
 
     var remindOpen by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    var pendingFocusIndex by remember { mutableStateOf(-1) }
-    val subFocus = remember { mutableMapOf<Int, FocusRequester>() }
+    var pendingFocusKey by remember { mutableStateOf<String?>(null) }
+    val subFocus = remember { mutableMapOf<String, FocusRequester>() }
 
-    // 新增子行后请求末行焦点
-    LaunchedEffect(pendingFocusIndex) {
-        if (pendingFocusIndex >= 0) {
+    // 新增/插入子行后，按稳定 key 请求那一行的焦点，避免索引移动导致光标跳回第一行。
+    LaunchedEffect(pendingFocusKey) {
+        pendingFocusKey?.let { key ->
             kotlinx.coroutines.delay(80)
-            runCatching { subFocus[pendingFocusIndex]?.requestFocus() }
-            pendingFocusIndex = -1
+            runCatching { subFocus[key]?.requestFocus() }
+            pendingFocusKey = null
         }
     }
 
@@ -507,7 +516,8 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
         val finalTitle = effectiveTitle.ifBlank { "待办清单" }
         if (id > 0) {
             vm.updateTodo(id, finalTitle, dueAt, allDay, repeat)
-            if (effectiveList) vm.saveTodoSubs(id, cleanSubs.map { it.text to it.done })
+            // 始终同步子项；最后一条被删除时也必须清空数据库中的旧子项。
+            vm.saveTodoSubs(id, if (effectiveList) cleanSubs.map { it.text to it.done } else emptyList())
             afterSave(id)
         } else if (!creating) {
             creating = true
@@ -521,6 +531,19 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
                 id = newId
                 creating = false
                 isNewSaved = true
+                // 创建数据库行期间用户仍可能继续输入或立即收起弹层；再同步一次当前快照，
+                // 避免只保存发起 createTodo 时的旧标题/旧子项。
+                val latestSubs = subs.filter { it.text.isNotBlank() }
+                val latestTitle = title.trim().ifBlank { "待办清单" }
+                vm.updateTodo(newId, latestTitle, dueAt, allDay, repeat)
+                vm.saveTodoSubs(
+                    newId,
+                    if (listMode && latestSubs.isNotEmpty()) {
+                        latestSubs.map { it.text to it.done }
+                    } else {
+                        emptyList()
+                    },
+                )
                 afterSave(newId)
             }
         }
@@ -533,17 +556,28 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
 
     BackHandler { closeSheet() }
 
+    fun moveFromTitleToFirstSub() {
+        listMode = true
+        val first = subs.firstOrNull() ?: SubDraft("", false).also { subs.add(it) }
+        pendingFocusKey = first.key
+    }
+
     fun onTitleInput(input: String) {
-        if (input.contains('\n')) {
-            // 小米交互：主输入框回车 → 整段转为待办清单的子待办
-            val lines = input.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-            if (!listMode) listMode = true
-            lines.forEach { subs.add(SubDraft(it, false)) }
-            title = ""
-            if (subs.isNotEmpty()) pendingFocusIndex = subs.size - 1
-        } else {
-            title = input
+        // 输入法若仍提交换行字符，只确认标题并转到第一条子待办，绝不把标题搬到子项末尾。
+        if ('\n' in input || '\r' in input) {
+            title = input.substringBefore('\n').substringBefore('\r')
+            moveFromTitleToFirstSub()
+            return
         }
+        title = input
+    }
+
+    // 内容停顿片刻即自动保存；“完成”只负责关闭弹层，不再承担唯一的保存职责。
+    val autoSaveSubs = subs.map { Triple(it.key, it.text, it.done) }
+    LaunchedEffect(loaded, id, creating, title, autoSaveSubs, dueAt, allDay, repeat, listMode) {
+        if (!loaded || creating) return@LaunchedEffect
+        kotlinx.coroutines.delay(350)
+        persist()
     }
 
     Box(
@@ -599,6 +633,9 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
                             color = MaterialTheme.colorScheme.onSurface,
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        keyboardActions = KeyboardActions(onNext = { moveFromTitleToFirstSub() }),
                         decorationBox = { inner ->
                             Box {
                                 if (title.isEmpty()) {
@@ -632,29 +669,38 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
 
                 LazyColumn(Modifier.weight(1f)) {
                     if (listMode) {
-                        itemsIndexed(subs) { index, sub ->
-                            val focusReq = subFocus.getOrPut(index) { FocusRequester() }
+                        itemsIndexed(subs, key = { _, sub -> sub.key }) { index, sub ->
+                            val focusReq = subFocus.getOrPut(sub.key) { FocusRequester() }
                             SubEditRow(
                                 draft = sub,
                                 focusRequester = focusReq,
                                 onTextChange = { raw ->
-                                    if (raw.contains('\n')) {
-                                        val parts = raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-                                        if (parts.isEmpty()) {
-                                            subs[index] = sub.copy(text = "")
-                                        } else {
-                                            subs[index] = sub.copy(text = parts.first())
-                                            parts.drop(1).forEachIndexed { i, extra ->
-                                                subs.add(index + 1 + i, SubDraft(extra, false))
-                                            }
-                                            pendingFocusIndex = subs.size - 1
+                                    if (raw.contains('\n') || raw.contains('\r')) {
+                                        val parts = raw.replace("\r", "").split('\n')
+                                        subs[index] = sub.copy(text = parts.firstOrNull().orEmpty())
+                                        val inserted = parts.drop(1)
+                                            .filter { it.isNotBlank() }
+                                            .map { SubDraft(it.trim(), false) }
+                                            .toMutableList()
+                                        // 即使没有粘贴额外文字，回车也必须产生一个全新的下一行。
+                                        val next = SubDraft("", false)
+                                        inserted += next
+                                        inserted.forEachIndexed { i, extra ->
+                                            subs.add(index + 1 + i, extra)
                                         }
+                                        pendingFocusKey = next.key
                                     } else {
                                         subs[index] = sub.copy(text = raw)
                                     }
                                 },
+                                onNext = {
+                                    val next = SubDraft("", false)
+                                    subs.add(index + 1, next)
+                                    pendingFocusKey = next.key
+                                },
                                 onToggle = { subs[index] = sub.copy(done = !sub.done) },
                                 onRemove = {
+                                    subFocus.remove(sub.key)
                                     subs.removeAt(index)
                                 },
                             )
@@ -665,8 +711,9 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        subs.add(SubDraft("", false))
-                                        pendingFocusIndex = subs.size - 1
+                                        val next = SubDraft("", false)
+                                        subs.add(next)
+                                        pendingFocusKey = next.key
                                     }
                                     .padding(vertical = 11.dp),
                             ) {
@@ -817,6 +864,7 @@ private fun SubEditRow(
     draft: SubDraft,
     focusRequester: FocusRequester,
     onTextChange: (String) -> Unit,
+    onNext: () -> Unit,
     onToggle: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -836,6 +884,9 @@ private fun SubEditRow(
                 textDecoration = if (draft.done) TextDecoration.LineThrough else null,
             ),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            keyboardActions = KeyboardActions(onNext = { onNext() }),
             decorationBox = { inner ->
                 Box {
                     if (draft.text.isEmpty()) {

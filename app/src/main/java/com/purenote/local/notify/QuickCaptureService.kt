@@ -19,6 +19,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -32,21 +33,25 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.core.view.isVisible
+import androidx.core.widget.doAfterTextChanged
 import com.purenote.local.MainActivity
 import com.purenote.local.PureNoteApp
 import com.purenote.local.R
 import com.purenote.local.data.DataChanges
 import com.purenote.local.data.Note
 import com.purenote.local.data.NoteFilter
+import com.purenote.local.data.RepeatRule
 import com.purenote.local.data.SortOrder
 import com.purenote.local.data.Todo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -65,8 +70,12 @@ class QuickCaptureService : Service() {
     private var panelScroll: ScrollView? = null
     private var panelScrollY = 0
     private var dismissingPanel = false
-    private var composerOpen = false
-    private var quickDueAt: Long? = null
+    private var inlineEditorDraft: OverlayTodoDraft? = null
+    private var inlineSaveRevision = 0L
+    private val inlineSaveMutex = Mutex()
+    private var overlayDraftKeyCounter = 0L
+    private var registeredBackDispatcher: Any? = null
+    private var registeredBackCallback: Any? = null
     private val collapsedTodoIds = mutableSetOf<Long>()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -122,6 +131,8 @@ class QuickCaptureService : Service() {
     }
 
     private fun removeViews() {
+        scheduleInlineEditorSave(immediate = true)
+        unregisterPanelBackCallback()
         handle?.let { runCatching { wm.removeView(it) } }
         panel?.let { runCatching { wm.removeView(it) } }
         handle = null
@@ -196,6 +207,7 @@ class QuickCaptureService : Service() {
 
     private fun renderPanel(notes: List<Note>, todos: List<Todo>) {
         panelScrollY = panelScroll?.scrollY ?: panelScrollY
+        unregisterPanelBackCallback()
         panel?.let { runCatching { wm.removeView(it) } }
         panelScroll = null
         dismissingPanel = false
@@ -204,6 +216,7 @@ class QuickCaptureService : Service() {
             isFocusableInTouchMode = true
             setBackgroundColor(0xE76E7A86.toInt())
             onDismiss = { direction -> dismissPanel(direction) }
+            isDismissInProgress = { dismissingPanel }
         }
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -226,12 +239,6 @@ class QuickCaptureService : Service() {
         content.addView(todoHeader())
         content.addView(space(17))
 
-        if (composerOpen) {
-            val composer = todoComposer()
-            root.excludeHorizontalGesture(composer)
-            content.addView(composer)
-            content.addView(space(11))
-        }
         val rootTodos = todos.filter { !it.isSubtask }
         if (rootTodos.isEmpty()) {
             content.addView(cardText("暂无待办", 17f, 0xFF777777.toInt(), 82))
@@ -286,10 +293,7 @@ class QuickCaptureService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(plusButton {
-            composerOpen = !composerOpen
-            loadAndRenderPanel()
-        }, LinearLayout.LayoutParams(dip(38), dip(38)))
+        row.addView(plusButton { startInlineTodoEditor(null) }, LinearLayout.LayoutParams(dip(38), dip(38)))
         row.addView(label("待办", 18f, Color.WHITE, bold = false).apply {
             setPadding(dip(13), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, dip(38), 1f))
@@ -362,7 +366,7 @@ class QuickCaptureService : Service() {
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
             if (todo.done) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
-            setOnClickListener { openTodo(todo.id) }
+            setOnClickListener { startInlineTodoEditor(todo.id) }
             contentDescription = "编辑待办：${todo.title}"
         }
         header.addView(title, LinearLayout.LayoutParams(0, dip(76), 1f))
@@ -425,7 +429,7 @@ class QuickCaptureService : Service() {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             if (todo.done) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
-            setOnClickListener { openTodo(todo.parentId ?: todo.id) }
+            setOnClickListener { startInlineTodoEditor(todo.parentId ?: todo.id, todo.id) }
             contentDescription = "编辑子待办：${todo.title}"
         }, LinearLayout.LayoutParams(0, dip(54), 1f))
         return row
@@ -450,74 +454,322 @@ class QuickCaptureService : Service() {
         }
     }
 
-    private fun todoComposer(): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dip(20), dip(18), dip(20), dip(13))
-            background = rounded(Color.WHITE, 18f)
+    /** 在悬浮层内部打开待办编辑器，不再启动 MainActivity。 */
+    private fun startInlineTodoEditor(todoId: Long?, focusSubId: Long? = null) {
+        val repo = (application as PureNoteApp).repository
+        scope.launch {
+            val todo = todoId?.let { repo.getTodo(it) }
+            val children = if (todo == null) emptyList() else {
+                repo.loadTodos()
+                    .filter { it.parentId == todo.id }
+                    .sortedWith(compareBy<Todo> { it.sortIndex }.thenBy { it.createdAt })
+            }
+            val draft = OverlayTodoDraft(
+                id = todo?.id ?: -1L,
+                title = todo?.title.orEmpty(),
+                done = todo?.done ?: false,
+                dueAt = todo?.dueAt,
+                allDay = todo?.allDay ?: false,
+                repeat = todo?.repeat ?: RepeatRule.NONE,
+                subs = children.mapTo(mutableListOf()) {
+                    OverlaySubDraft(
+                        key = nextOverlayDraftKey(),
+                        sourceId = it.id,
+                        text = it.title,
+                        done = it.done,
+                    )
+                },
+            )
+            postToMain {
+                inlineEditorDraft = draft
+                renderInlineTodoEditor(draft, focusSubId)
+            }
         }
-        val inputRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.TOP
-        }
-        inputRow.addView(NativeTodoCheckbox(this, false, 21f), LinearLayout.LayoutParams(dip(39), dip(49)))
-        val input = EditText(this).apply {
-            hint = "回车即可连续添加待办"
-            setTextSize(17f)
-            setTextColor(0xFF191919.toInt())
-            setHintTextColor(0xFFBDBDBD.toInt())
-            setBackgroundColor(Color.TRANSPARENT)
-            setPadding(0, 0, 0, 0)
-            isSingleLine = true
-            imeOptions = EditorInfo.IME_ACTION_DONE
-        }
-        inputRow.addView(input, LinearLayout.LayoutParams(0, dip(49), 1f))
-        box.addView(inputRow)
+    }
 
-        val actions = LinearLayout(this).apply {
+    private fun renderInlineTodoEditor(draft: OverlayTodoDraft, focusSubId: Long? = null) {
+        unregisterPanelBackCallback()
+        panel?.let { runCatching { wm.removeView(it) } }
+        panelScroll = null
+        dismissingPanel = false
+
+        val root = EdgeDismissFrame(this).apply {
+            isFocusableInTouchMode = true
+            setBackgroundColor(0xA65F6872.toInt())
+            onDismiss = {
+                scheduleInlineEditorSave(immediate = true)
+                dismissPanel(1f)
+            }
+            isDismissInProgress = { dismissingPanel }
+        }
+
+        val sheetScroll = ScrollView(this).apply {
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isFillViewport = true
+            background = rounded(Color.WHITE, 25f)
+        }
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dip(20), dip(24), dip(20), dip(18))
+            isClickable = true
+        }
+        sheetScroll.addView(
+            sheet,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT),
+        )
+        root.excludeHorizontalGesture(sheetScroll)
+
+        val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val reminder = label(if (quickDueAt == null) "◴  设置提醒" else "◴  明天 09:00", 14f, 0xFF242424.toInt(), false).apply {
-            gravity = Gravity.CENTER
-            background = rounded(0xFFF0F0F0.toInt(), 11f)
+        val parentCheck = NativeTodoCheckbox(this, draft.done, 22f).apply {
             setOnClickListener {
-                val cal = java.util.Calendar.getInstance().apply {
-                    add(java.util.Calendar.DAY_OF_YEAR, 1)
-                    set(java.util.Calendar.HOUR_OF_DAY, 9)
-                    set(java.util.Calendar.MINUTE, 0)
-                    set(java.util.Calendar.SECOND, 0)
-                }
-                quickDueAt = if (quickDueAt == null) cal.timeInMillis else null
-                loadAndRenderPanel()
+                draft.done = !draft.done
+                setChecked(draft.done)
+                draft.subs.forEach { it.done = draft.done }
+                scheduleInlineEditorSave()
             }
         }
-        actions.addView(reminder, LinearLayout.LayoutParams(dip(130), dip(43)))
-        actions.addView(space(1), LinearLayout.LayoutParams(0, 1, 1f))
-        actions.addView(label("完成", 17f, 0xFF9B9B9B.toInt(), false).apply {
-            gravity = Gravity.CENTER
-            setOnClickListener {
-                val text = input.text.toString().trim()
-                if (text.isBlank()) return@setOnClickListener
-                val repo = (application as PureNoteApp).repository
-                scope.launch {
-                    repo.quickAddTodo(text, quickDueAt)
-                    DataChanges.notifyChanged()
-                    composerOpen = false
-                    quickDueAt = null
-                    postToMain { Toast.makeText(this@QuickCaptureService, "已添加待办", Toast.LENGTH_SHORT).show() }
-                    loadAndRenderPanel()
+        titleRow.addView(parentCheck, LinearLayout.LayoutParams(dip(40), dip(55)))
+
+        val titleInput = inlineEditText(
+            text = draft.title,
+            hint = "待办清单",
+            sizeSp = 18f,
+        ).apply {
+            imeOptions = EditorInfo.IME_ACTION_NEXT
+            doAfterTextChanged {
+                draft.title = it?.toString().orEmpty()
+                scheduleInlineEditorSave()
+            }
+        }
+        titleRow.addView(titleInput, LinearLayout.LayoutParams(0, dip(55), 1f))
+        sheet.addView(titleRow)
+        sheet.addView(label("回车后转到第一条子待办", 12.5f, 0xFFBDBDBD.toInt(), false).apply {
+            setPadding(dip(40), 0, 0, dip(5))
+        })
+
+        val subsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        sheet.addView(subsContainer)
+
+        lateinit var rebuildSubRows: (Long?) -> Unit
+        rebuildSubRows = { focusKey ->
+            subsContainer.removeAllViews()
+            var focusInput: EditText? = null
+
+            draft.subs.forEachIndexed { index, sub ->
+                if (index > 0) {
+                    subsContainer.addView(View(this).apply {
+                        setBackgroundColor(0xFFF0F0F0.toInt())
+                    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(1)).apply {
+                        marginStart = dip(40)
+                    })
+                }
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                val check = NativeTodoCheckbox(this, sub.done, 18f).apply {
+                    setOnClickListener {
+                        sub.done = !sub.done
+                        setChecked(sub.done)
+                        scheduleInlineEditorSave()
+                    }
+                }
+                row.addView(check, LinearLayout.LayoutParams(dip(40), dip(54)))
+
+                val input = inlineEditText(sub.text, "待办内容", 15.5f).apply {
+                    imeOptions = EditorInfo.IME_ACTION_NEXT
+                    doAfterTextChanged {
+                        sub.text = it?.toString().orEmpty()
+                        scheduleInlineEditorSave()
+                    }
+                    setOnEditorActionListener { _, actionId, event ->
+                        val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
+                            (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+                        if (!enter) return@setOnEditorActionListener false
+                        val current = draft.subs.indexOfFirst { it.key == sub.key }.coerceAtLeast(0)
+                        val next = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
+                        draft.subs.add(current + 1, next)
+                        rebuildSubRows(next.key)
+                        scheduleInlineEditorSave(immediate = true)
+                        true
+                    }
+                }
+                if (sub.key == focusKey) focusInput = input
+                row.addView(input, LinearLayout.LayoutParams(0, dip(54), 1f))
+                row.addView(label("×", 21f, 0xFFCCCCCC.toInt(), false).apply {
+                    gravity = Gravity.CENTER
+                    contentDescription = "删除子待办"
+                    setOnClickListener {
+                        draft.subs.removeAll { it.key == sub.key }
+                        rebuildSubRows(null)
+                        scheduleInlineEditorSave(immediate = true)
+                    }
+                }, LinearLayout.LayoutParams(dip(34), dip(54)))
+                subsContainer.addView(row)
+            }
+
+            subsContainer.addView(label("＋  添加子待办", 15f, 0xFFB98200.toInt(), false).apply {
+                setPadding(dip(4), dip(13), 0, dip(14))
+                setOnClickListener {
+                    val next = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
+                    draft.subs.add(next)
+                    rebuildSubRows(next.key)
+                }
+            })
+
+            focusInput?.let { target ->
+                target.post {
+                    target.requestFocus()
+                    target.setSelection(target.text.length)
+                    showKeyboard(target)
                 }
             }
-        }, LinearLayout.LayoutParams(dip(72), dip(43)))
-        box.addView(actions)
-        input.post {
-            input.requestFocus()
-            (getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
-                .showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
         }
-        return box
+
+        titleInput.setOnEditorActionListener { _, actionId, event ->
+            val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
+                (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+            if (!enter) return@setOnEditorActionListener false
+            val first = draft.subs.firstOrNull()
+                ?: OverlaySubDraft(nextOverlayDraftKey(), null, "", false).also { draft.subs.add(it) }
+            rebuildSubRows(first.key)
+            scheduleInlineEditorSave(immediate = true)
+            true
+        }
+
+        val initialFocusKey = focusSubId?.let { requested ->
+            draft.subs.firstOrNull { it.sourceId == requested }?.key
+        }
+        rebuildSubRows(initialFocusKey)
+
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dip(4), 0, 0)
+        }
+        val reminder = label(
+            if (draft.dueAt == null) "◴  设置提醒" else "◴  已设置提醒",
+            13.5f,
+            0xFF777777.toInt(),
+            false,
+        ).apply {
+            gravity = Gravity.CENTER
+            background = rounded(0xFFF0F0F0.toInt(), 12f)
+            setOnClickListener {
+                if (draft.dueAt == null) {
+                    draft.dueAt = java.util.Calendar.getInstance().apply {
+                        add(java.util.Calendar.DAY_OF_YEAR, 1)
+                        set(java.util.Calendar.HOUR_OF_DAY, 9)
+                        set(java.util.Calendar.MINUTE, 0)
+                        set(java.util.Calendar.SECOND, 0)
+                    }.timeInMillis
+                    text = "◴  已设置提醒"
+                } else {
+                    draft.dueAt = null
+                    text = "◴  设置提醒"
+                }
+                scheduleInlineEditorSave(immediate = true)
+            }
+        }
+        footer.addView(reminder, LinearLayout.LayoutParams(dip(126), dip(40)))
+        footer.addView(space(1), LinearLayout.LayoutParams(0, 1, 1f))
+        footer.addView(label("自动保存", 13f, 0xFFAAAAAA.toInt(), false).apply {
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(dip(72), dip(40)))
+        sheet.addView(footer)
+
+        val sheetHeight = (resources.displayMetrics.heightPixels * 0.64f).toInt()
+        root.addView(
+            sheetScroll,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, sheetHeight, Gravity.BOTTOM),
+        )
+        root.addView(View(this).apply {
+            background = rounded(0xFFFFB800.toInt(), 12f)
+        }, FrameLayout.LayoutParams(dip(8), dip(88), Gravity.END or Gravity.CENTER_VERTICAL))
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+        panel = root
+        wm.addView(root, params)
+        root.requestFocus()
+        when {
+            Build.VERSION.SDK_INT >= 34 -> registerAnimatedPredictiveBack(root)
+            Build.VERSION.SDK_INT >= 33 -> registerPredictiveBack(root)
+        }
+
+        if (initialFocusKey == null) {
+            titleInput.post {
+                titleInput.requestFocus()
+                titleInput.setSelection(titleInput.text.length)
+                showKeyboard(titleInput)
+            }
+        }
     }
+
+    private fun inlineEditText(text: String, hint: String, sizeSp: Float): EditText = EditText(this).apply {
+        setText(text)
+        this.hint = hint
+        setTextSize(sizeSp)
+        setTextColor(0xFF171717.toInt())
+        setHintTextColor(0xFFCBCBCB.toInt())
+        setBackgroundColor(Color.TRANSPARENT)
+        setPadding(0, 0, 0, 0)
+        isSingleLine = true
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+    }
+
+    private fun showKeyboard(view: View?) {
+        if (view == null) return
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+            .showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun scheduleInlineEditorSave(immediate: Boolean = false) {
+        val draft = inlineEditorDraft ?: return
+        val revision = ++inlineSaveRevision
+        scope.launch {
+            if (!immediate) delay(350)
+            if (!immediate && revision != inlineSaveRevision) return@launch
+            inlineSaveMutex.withLock { persistInlineEditor(draft) }
+        }
+    }
+
+    private suspend fun persistInlineEditor(draft: OverlayTodoDraft) {
+        val title = draft.title.trim()
+        val cleanSubs = draft.subs.filter { it.text.isNotBlank() }.map { it.text.trim() to it.done }
+        if (draft.id <= 0 && title.isBlank() && cleanSubs.isEmpty()) return
+
+        val repo = (application as PureNoteApp).repository
+        val finalTitle = title.ifBlank { "待办清单" }
+        if (draft.id <= 0) {
+            draft.id = repo.createTodo(null, finalTitle, draft.dueAt, draft.allDay, draft.repeat.ordinal)
+        } else {
+            repo.updateTodo(draft.id, finalTitle, draft.dueAt, draft.allDay, draft.repeat.ordinal)
+        }
+        repo.replaceSubs(draft.id, cleanSubs)
+        repo.getTodo(draft.id)?.let { saved ->
+            if (saved.done != draft.done) repo.setTodoDone(saved, draft.done)
+        }
+        if (draft.dueAt == null) {
+            Reminders.cancel(this, Reminders.KIND_TODO, draft.id)
+        } else {
+            Reminders.schedule(this, Reminders.KIND_TODO, draft.id, draft.dueAt!!)
+        }
+        DataChanges.notifyChanged()
+    }
+
+    private fun nextOverlayDraftKey(): Long = ++overlayDraftKeyCounter
 
     private fun openNewNote() {
         hidePanel()
@@ -540,17 +792,6 @@ class QuickCaptureService : Service() {
         )
     }
 
-    private fun openTodo(id: Long) {
-        hidePanel()
-        startActivity(
-            Intent(this, MainActivity::class.java).apply {
-                putExtra(Reminders.EXTRA_ID, id)
-                putExtra(Reminders.EXTRA_KIND, Reminders.KIND_TODO)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            },
-        )
-    }
-
     private fun dismissPanel(direction: Float) {
         if (dismissingPanel) return
         val current = panel ?: return
@@ -559,7 +800,6 @@ class QuickCaptureService : Service() {
         val target = if (direction >= 0f) width.toFloat() else -width.toFloat()
         current.animate()
             .translationX(target)
-            .alpha(0f)
             .setDuration(170L)
             .setInterpolator(android.view.animation.DecelerateInterpolator())
             .withEndAction {
@@ -571,19 +811,29 @@ class QuickCaptureService : Service() {
     @RequiresApi(33)
     private fun registerPredictiveBack(root: View) {
         root.post {
-            root.findOnBackInvokedDispatcher()?.registerOnBackInvokedCallback(
+            if (panel !== root) return@post
+            unregisterPanelBackCallback()
+            val dispatcher = root.findOnBackInvokedDispatcher() ?: return@post
+            val callback = android.window.OnBackInvokedCallback {
+                scheduleInlineEditorSave(immediate = true)
+                dismissPanel(1f)
+            }
+            dispatcher.registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
-                android.window.OnBackInvokedCallback { dismissPanel(1f) },
+                callback,
             )
+            registeredBackDispatcher = dispatcher
+            registeredBackCallback = callback
         }
     }
 
     @RequiresApi(34)
     private fun registerAnimatedPredictiveBack(root: View) {
         root.post {
-            root.findOnBackInvokedDispatcher()?.registerOnBackInvokedCallback(
-                android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
-                object : android.window.OnBackAnimationCallback {
+            if (panel !== root) return@post
+            unregisterPanelBackCallback()
+            val dispatcher = root.findOnBackInvokedDispatcher() ?: return@post
+            val callback = object : android.window.OnBackAnimationCallback {
                     private var direction = 1f
 
                     override fun onBackStarted(backEvent: android.window.BackEvent) {
@@ -593,29 +843,47 @@ class QuickCaptureService : Service() {
 
                     override fun onBackProgressed(backEvent: android.window.BackEvent) {
                         root.translationX = direction * root.width * backEvent.progress * 0.34f
-                        root.alpha = 1f - backEvent.progress * 0.2f
                     }
 
                     override fun onBackCancelled() {
+                        if (dismissingPanel) return
                         root.animate().translationX(0f).alpha(1f).setDuration(140L).start()
                     }
 
                     override fun onBackInvoked() {
+                        scheduleInlineEditorSave(immediate = true)
                         dismissPanel(direction)
                     }
-                },
+                }
+            dispatcher.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
+                callback,
             )
+            registeredBackDispatcher = dispatcher
+            registeredBackCallback = callback
         }
     }
 
+    private fun unregisterPanelBackCallback() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val dispatcher = registeredBackDispatcher as? android.window.OnBackInvokedDispatcher
+        val callback = registeredBackCallback as? android.window.OnBackInvokedCallback
+        if (dispatcher != null && callback != null) {
+            runCatching { dispatcher.unregisterOnBackInvokedCallback(callback) }
+        }
+        registeredBackDispatcher = null
+        registeredBackCallback = null
+    }
+
     private fun hidePanel() {
+        scheduleInlineEditorSave(immediate = true)
+        unregisterPanelBackCallback()
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
         panelScroll = null
         panelScrollY = 0
         dismissingPanel = false
-        composerOpen = false
-        quickDueAt = null
+        inlineEditorDraft = null
         collapsedTodoIds.clear()
         showHandle()
     }
@@ -661,12 +929,30 @@ class QuickCaptureService : Service() {
         android.os.Handler(mainLooper).post(block)
     }
 
+    private data class OverlayTodoDraft(
+        var id: Long,
+        var title: String,
+        var done: Boolean,
+        var dueAt: Long?,
+        var allDay: Boolean,
+        var repeat: RepeatRule,
+        val subs: MutableList<OverlaySubDraft>,
+    )
+
+    private data class OverlaySubDraft(
+        val key: Long,
+        val sourceId: Long?,
+        var text: String,
+        var done: Boolean,
+    )
+
     /** 原生悬浮窗版本的小米待办复选框，与 Compose 主界面的视觉保持一致。 */
     private class NativeTodoCheckbox(
         context: Context,
-        private val checked: Boolean,
+        checked: Boolean,
         boxSizeDp: Float,
     ) : View(context) {
+        private var checked = checked
         private val density = resources.displayMetrics.density
         private val boxSize = boxSizeDp * density
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -676,6 +962,13 @@ class QuickCaptureService : Service() {
             isClickable = true
             isFocusable = true
             contentDescription = if (checked) "取消完成" else "标记完成"
+        }
+
+        fun setChecked(value: Boolean) {
+            if (checked == value) return
+            checked = value
+            contentDescription = if (checked) "取消完成" else "标记完成"
+            invalidate()
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -716,7 +1009,10 @@ class QuickCaptureService : Service() {
     @SuppressLint("ClickableViewAccessibility")
     private class EdgeDismissFrame(context: Context) : FrameLayout(context) {
         var onDismiss: ((Float) -> Unit)? = null
+        var isDismissInProgress: (() -> Boolean)? = null
 
+        /** 左侧这一小段完全交给 Android 的系统返回手势，避免两套动画同时抢占。 */
+        private val systemBackEdge = 48f * resources.displayMetrics.density
         private val dismissDistance = 68f * resources.displayMetrics.density
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
         private val horizontalGestureExclusions = mutableListOf<View>()
@@ -734,9 +1030,8 @@ class QuickCaptureService : Service() {
                 MotionEvent.ACTION_DOWN -> {
                     downX = event.rawX
                     downY = event.rawY
-                    gestureCandidate = horizontalGestureExclusions.none {
-                        isPointInside(it, event.rawX, event.rawY)
-                    }
+                    gestureCandidate = event.x > systemBackEdge &&
+                        horizontalGestureExclusions.none { isPointInside(it, event.rawX, event.rawY) }
                     dragging = false
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -760,7 +1055,6 @@ class QuickCaptureService : Service() {
                     if (!dragging) return false
                     val dx = (event.rawX - downX).coerceAtLeast(0f)
                     translationX = dx
-                    alpha = (1f - dx / width.coerceAtLeast(1) * 0.48f).coerceIn(0.52f, 1f)
                     return true
                 }
                 MotionEvent.ACTION_UP -> {
@@ -775,7 +1069,13 @@ class QuickCaptureService : Service() {
                     return true
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    if (dragging) animate().translationX(0f).alpha(1f).setDuration(140L).start()
+                    if (dragging) {
+                        when {
+                            isDismissInProgress?.invoke() == true -> Unit
+                            translationX > touchSlop * 2f -> onDismiss?.invoke(1f)
+                            else -> animate().translationX(0f).alpha(1f).setDuration(140L).start()
+                        }
+                    }
                     dragging = false
                     return true
                 }
