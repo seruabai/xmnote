@@ -26,13 +26,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatListBulleted
-import androidx.compose.material.icons.outlined.MoveToInbox
-import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DoneAll
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -547,12 +548,53 @@ private fun SelectionBar(
     onMove: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().height(70.dp)) {
-            SelectionItem(Icons.Outlined.SelectAll, if (allSelected) "取消全选" else "全选", Modifier.weight(1f), true, onAll)
-            SelectionItem(Icons.Outlined.PushPin, "置顶", Modifier.weight(1f), enabled, onPin)
-            SelectionItem(Icons.Outlined.MoveToInbox, "分类", Modifier.weight(1f), enabled, onMove)
-            SelectionItem(Icons.Outlined.DeleteOutline, "删除", Modifier.weight(1f), enabled, onDelete)
+    Surface(
+        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+        shadowElevation = 10.dp,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .height(88.dp)
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+        ) {
+            SelectionItem(
+                icon = Icons.Rounded.DoneAll,
+                label = if (allSelected) "取消全选" else "全选",
+                modifier = Modifier.weight(1f),
+                enabled = true,
+                active = allSelected,
+                accent = MaterialTheme.colorScheme.primary,
+                onClick = onAll,
+            )
+            SelectionItem(
+                Icons.Rounded.PushPin,
+                "置顶",
+                Modifier.weight(1f),
+                enabled,
+                accent = MaterialTheme.colorScheme.primary,
+                onClick = onPin,
+            )
+            SelectionItem(
+                Icons.Rounded.Folder,
+                "分类",
+                Modifier.weight(1f),
+                enabled,
+                accent = MaterialTheme.colorScheme.primary,
+                onClick = onMove,
+            )
+            SelectionItem(
+                Icons.Rounded.DeleteOutline,
+                "删除",
+                Modifier.weight(1f),
+                enabled,
+                accent = MaterialTheme.colorScheme.error,
+                onClick = onDelete,
+            )
         }
     }
 }
@@ -563,14 +605,40 @@ private fun SelectionItem(
     label: String,
     modifier: Modifier,
     enabled: Boolean,
+    active: Boolean = false,
+    accent: Color,
     onClick: () -> Unit,
 ) {
+    val enabledAlpha = if (enabled) 1f else 0.32f
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = modifier.fillMaxSize().clickable(enabled = enabled, onClick = onClick),
+        modifier = modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(enabled = enabled, onClick = onClick),
     ) {
-        Icon(icon, label, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .3f))
-        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .3f))
+        Surface(
+            shape = RoundedCornerShape(13.dp),
+            color = accent.copy(alpha = if (active) 0.20f else 0.11f),
+            modifier = Modifier.size(40.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    icon,
+                    contentDescription = label,
+                    tint = accent.copy(alpha = enabledAlpha),
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label,
+            fontSize = 12.sp,
+            lineHeight = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = enabledAlpha),
+        )
     }
 }

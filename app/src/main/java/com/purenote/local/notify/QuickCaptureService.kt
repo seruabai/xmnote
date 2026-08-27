@@ -1,5 +1,8 @@
 package com.purenote.local.notify
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -25,7 +28,9 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.VelocityTracker
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -58,6 +63,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * 跨应用速记侧栏。右缘窄把手点按或向左滑动后打开全屏毛玻璃面板，
@@ -137,6 +143,7 @@ class QuickCaptureService : Service() {
         scheduleInlineEditorSave(immediate = true)
         unregisterPanelBackCallback()
         handle?.let { runCatching { wm.removeView(it) } }
+        (panel as? EdgeDismissFrame)?.cancelMotionAnimation()
         panel?.let { runCatching { wm.removeView(it) } }
         handle = null
         panel = null
@@ -295,15 +302,15 @@ class QuickCaptureService : Service() {
 
         val root = EdgeDismissFrame(this).apply {
             isFocusableInTouchMode = true
-            // API 31+ 由系统提供跨窗口虚化；半透明色同时是旧设备/关闭虚化时的降级效果。
-            setBackgroundColor(0x786A7682)
             onDismiss = { direction -> dismissPanel(direction) }
             isDismissInProgress = { dismissingPanel }
-            if (animateOpening) {
-                translationX = resources.displayMetrics.widthPixels.toFloat()
-                alpha = 0f
-            }
         }
+        // 毛玻璃固定覆盖整个屏幕；下方内容层独立滑动，避免出现边界生硬的玻璃矩形。
+        val glassBackdrop = View(this).apply { setBackgroundColor(0x786A7682) }
+        root.addView(
+            glassBackdrop,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+        )
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -315,6 +322,7 @@ class QuickCaptureService : Service() {
         }
         scroll.addView(content, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         root.addView(scroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        root.motionTarget = scroll
 
         content.addView(noteHeader())
         content.addView(space(18))
@@ -348,6 +356,11 @@ class QuickCaptureService : Service() {
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             applyGlassBlur(this)
         }
+        bindGlassProgress(root, glassBackdrop, params)
+        root.setMotionOffset(
+            offset = if (animateOpening) resources.displayMetrics.widthPixels.toFloat() else 0f,
+            progress = if (animateOpening) 1f else 0f,
+        )
         panel = root
         wm.addView(root, params)
         panelLoading = false
@@ -363,13 +376,7 @@ class QuickCaptureService : Service() {
         if (animateOpening) {
             root.post {
                 if (panel === root && !dismissingPanel) {
-                    root.animate()
-                        .translationX(0f)
-                        .alpha(1f)
-                        .setDuration(PANEL_ENTER_DURATION_MS)
-                        .setInterpolator(android.view.animation.DecelerateInterpolator())
-                        .withLayer()
-                        .start()
+                    root.animateMotionTo(0f, 0f, PANEL_ENTER_DURATION_MS)
                 }
             }
         }
@@ -600,13 +607,23 @@ class QuickCaptureService : Service() {
 
         val root = EdgeDismissFrame(this).apply {
             isFocusableInTouchMode = true
-            setBackgroundColor(0x735F6872)
             onDismiss = { closeEditor() }
             isDismissInProgress = { dismissingPanel }
         }
+        val glassBackdrop = View(this).apply { setBackgroundColor(0x786A7682) }
+        root.addView(
+            glassBackdrop,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+        )
+        val editorLayer = FrameLayout(this)
+        root.addView(
+            editorLayer,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+        )
+        root.motionTarget = editorLayer
 
         // 点击编辑卡片以外的灰色区域直接保存并退出，避免悬浮编辑器把用户困住。
-        root.addView(View(this).apply {
+        editorLayer.addView(View(this).apply {
             isClickable = true
             contentDescription = "关闭待办编辑器"
             setOnClickListener { closeEditor() }
@@ -806,11 +823,11 @@ class QuickCaptureService : Service() {
         sheet.addView(footer)
 
         val sheetHeight = (resources.displayMetrics.heightPixels * 0.64f).toInt()
-        root.addView(
+        editorLayer.addView(
             sheetScroll,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, sheetHeight, Gravity.BOTTOM),
         )
-        root.addView(View(this).apply {
+        editorLayer.addView(View(this).apply {
             background = rounded(0xFFFFB800.toInt(), 12f)
         }, FrameLayout.LayoutParams(dip(8), dip(88), Gravity.END or Gravity.CENTER_VERTICAL))
 
@@ -825,6 +842,8 @@ class QuickCaptureService : Service() {
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             applyGlassBlur(this)
         }
+        bindGlassProgress(root, glassBackdrop, params)
+        root.setMotionOffset(0f, 0f)
         panel = root
         wm.addView(root, params)
         // 保持旧侧栏作为过渡底层，直到编辑器已经成功挂载，避免切换时背景闪白。
@@ -935,18 +954,25 @@ class QuickCaptureService : Service() {
         current.isClickable = false
         val width = current.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
         val target = if (direction >= 0f) width.toFloat() else -width.toFloat()
-        current.animate()
-            .translationX(target)
-            .alpha(0f)
-            .setDuration(PANEL_EXIT_DURATION_MS)
-            .setInterpolator(android.view.animation.DecelerateInterpolator())
-            .withLayer()
-            .withEndAction {
+        val finishDismiss = {
+            // 先隐藏再从 WindowManager 移除，防止 OEM 在窗口销毁前重绘一次原始位置。
+            current.visibility = View.INVISIBLE
+            if (panel === current) hidePanel()
+        }
+        if (current is EdgeDismissFrame) {
+            current.animateMotionTo(target, 1f, PANEL_EXIT_DURATION_MS, finishDismiss)
+        } else {
+            current.animate()
+                .translationX(target)
+                .alpha(0f)
+                .setDuration(PANEL_EXIT_DURATION_MS)
+                .setInterpolator(PathInterpolator(0.32f, 0.72f, 0f, 1f))
+                .withEndAction {
                 // 先隐藏再从 WindowManager 移除，防止 OEM 在窗口销毁前重绘一次原始位置。
-                current.visibility = View.INVISIBLE
-                if (panel === current) hidePanel()
-            }
-            .start()
+                    finishDismiss()
+                }
+                .start()
+        }
     }
 
     @RequiresApi(33)
@@ -979,22 +1005,19 @@ class QuickCaptureService : Service() {
 
                     override fun onBackStarted(backEvent: android.window.BackEvent) {
                         direction = if (backEvent.swipeEdge == android.window.BackEvent.EDGE_RIGHT) -1f else 1f
-                        root.animate().cancel()
+                        (root as? EdgeDismissFrame)?.cancelMotionAnimation() ?: root.animate().cancel()
                     }
 
                     override fun onBackProgressed(backEvent: android.window.BackEvent) {
-                        root.translationX = direction * root.width * backEvent.progress * 0.34f
-                        root.alpha = (1f - backEvent.progress * PANEL_DRAG_FADE).coerceAtLeast(MIN_PANEL_DRAG_ALPHA)
+                        val offset = direction * root.width * backEvent.progress * 0.34f
+                        (root as? EdgeDismissFrame)?.setMotionOffset(offset)
+                            ?: run { root.translationX = offset }
                     }
 
                     override fun onBackCancelled() {
                         if (dismissingPanel) return
-                        val moved = abs(root.translationX)
-                        if (moved > root.width * 0.08f) {
-                            dismissPanel(direction)
-                        } else {
-                            root.animate().translationX(0f).alpha(1f).setDuration(120L).start()
-                        }
+                        (root as? EdgeDismissFrame)?.animateMotionTo(0f, 0f, PANEL_SETTLE_DURATION_MS)
+                            ?: root.animate().translationX(0f).alpha(1f).setDuration(PANEL_SETTLE_DURATION_MS).start()
                     }
 
                     override fun onBackInvoked() {
@@ -1025,6 +1048,7 @@ class QuickCaptureService : Service() {
     private fun hidePanel() {
         scheduleInlineEditorSave(immediate = true)
         unregisterPanelBackCallback()
+        (panel as? EdgeDismissFrame)?.cancelMotionAnimation()
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
         panelScroll = null
@@ -1075,6 +1099,31 @@ class QuickCaptureService : Service() {
         if (Build.VERSION.SDK_INT >= 31) {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
             params.setBlurBehindRadius(dip(PANEL_BLUR_RADIUS_DP))
+        }
+    }
+
+    /**
+     * 固定的全屏毛玻璃与滑动内容共用一个进度。使用平方根曲线后，内容移出一半时
+     * 仍保留约 70.7% 的背景虚化，视觉上连续而不会出现一块移动的矩形玻璃。
+     */
+    private fun bindGlassProgress(
+        root: EdgeDismissFrame,
+        backdrop: View,
+        params: WindowManager.LayoutParams,
+    ) {
+        var lastBlurRadius = -1
+        root.onMotionProgress = { _, strength ->
+            backdrop.alpha = strength
+            if (Build.VERSION.SDK_INT >= 31) {
+                val radius = (dip(PANEL_BLUR_RADIUS_DP) * strength).roundToInt().coerceAtLeast(0)
+                if (radius != lastBlurRadius) {
+                    lastBlurRadius = radius
+                    params.setBlurBehindRadius(radius)
+                    if (root.isAttachedToWindow && panel === root) {
+                        runCatching { wm.updateViewLayout(root, params) }
+                    }
+                }
+            }
         }
     }
 
@@ -1174,19 +1223,95 @@ class QuickCaptureService : Service() {
     private class EdgeDismissFrame(context: Context) : FrameLayout(context) {
         var onDismiss: ((Float) -> Unit)? = null
         var isDismissInProgress: (() -> Boolean)? = null
+        var motionTarget: View? = null
+        var onMotionProgress: ((progress: Float, strength: Float) -> Unit)? = null
 
         /** 左侧这一小段完全交给 Android 的系统返回手势，避免两套动画同时抢占。 */
         private val systemBackEdge = 48f * resources.displayMetrics.density
         private val dismissDistance = 68f * resources.displayMetrics.density
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+        private val minimumFlingVelocity = ViewConfiguration.get(context).scaledMinimumFlingVelocity.toFloat()
+        private val motionInterpolator = PathInterpolator(0.32f, 0.72f, 0f, 1f)
         private val horizontalGestureExclusions = mutableListOf<View>()
         private var downX = 0f
         private var downY = 0f
+        private var gestureStartOffset = 0f
         private var gestureCandidate = false
         private var dragging = false
+        private var motionOffset = 0f
+        private var motionProgress = 0f
+        private var motionAnimator: ValueAnimator? = null
+        private var velocityTracker: VelocityTracker? = null
 
         fun excludeHorizontalGesture(view: View) {
             horizontalGestureExclusions += view
+        }
+
+        fun setMotionOffset(offset: Float, progress: Float = progressForOffset(offset)) {
+            motionOffset = offset
+            motionProgress = progress.coerceIn(0f, 1f)
+            (motionTarget ?: this).translationX = offset
+            val strength = sqrt((1f - motionProgress).coerceAtLeast(0f))
+            onMotionProgress?.invoke(motionProgress, strength)
+        }
+
+        fun animateMotionTo(
+            targetOffset: Float,
+            targetProgress: Float = progressForOffset(targetOffset),
+            durationMs: Long,
+            onEnd: (() -> Unit)? = null,
+        ) {
+            cancelMotionAnimation()
+            val startOffset = motionOffset
+            val startProgress = motionProgress
+            val normalizedTargetProgress = targetProgress.coerceIn(0f, 1f)
+            val animationsEnabled = Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled()
+            if (!animationsEnabled || durationMs <= 0L ||
+                (abs(startOffset - targetOffset) < 0.5f && abs(startProgress - normalizedTargetProgress) < 0.001f)
+            ) {
+                setMotionOffset(targetOffset, normalizedTargetProgress)
+                onEnd?.invoke()
+                return
+            }
+
+            val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = durationMs
+                interpolator = motionInterpolator
+                addUpdateListener { valueAnimator ->
+                    val fraction = valueAnimator.animatedValue as Float
+                    setMotionOffset(
+                        offset = startOffset + (targetOffset - startOffset) * fraction,
+                        progress = startProgress + (normalizedTargetProgress - startProgress) * fraction,
+                    )
+                }
+            }
+            animator.addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+
+                override fun onAnimationCancel(animation: Animator) {
+                    cancelled = true
+                }
+
+                override fun onAnimationEnd(animation: Animator) {
+                    if (motionAnimator === animation) motionAnimator = null
+                    if (!cancelled) {
+                        setMotionOffset(targetOffset, normalizedTargetProgress)
+                        onEnd?.invoke()
+                    }
+                }
+            })
+            motionAnimator = animator
+            animator.start()
+        }
+
+        fun cancelMotionAnimation() {
+            motionAnimator?.cancel()
+            motionAnimator = null
+        }
+
+        private fun progressForOffset(offset: Float): Float {
+            val panelWidth = width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+            return (abs(offset) / panelWidth.toFloat()).coerceIn(0f, 1f)
         }
 
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -1197,56 +1322,96 @@ class QuickCaptureService : Service() {
                     gestureCandidate = event.x > systemBackEdge &&
                         horizontalGestureExclusions.none { isPointInside(it, event.rawX, event.rawY) }
                     dragging = false
+                    velocityTracker?.recycle()
+                    velocityTracker = if (gestureCandidate) {
+                        VelocityTracker.obtain().also { it.addMovement(event) }
+                    } else {
+                        null
+                    }
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    velocityTracker?.addMovement(event)
+                    if (event.pointerCount > 1) {
+                        gestureCandidate = false
+                        return super.onInterceptTouchEvent(event)
+                    }
                     if (gestureCandidate) {
                         val dx = event.rawX - downX
                         val dy = event.rawY - downY
                         if (dx > touchSlop && dx > abs(dy) * 1.15f) {
+                            cancelMotionAnimation()
+                            // 扣除触发拦截前的 touchSlop，接管时不会突然向右跳一截。
+                            gestureStartOffset = motionOffset - dx
                             dragging = true
                             parent?.requestDisallowInterceptTouchEvent(true)
                             return true
                         }
                     }
                 }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!dragging) {
+                        velocityTracker?.recycle()
+                        velocityTracker = null
+                    }
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> gestureCandidate = false
             }
             return super.onInterceptTouchEvent(event)
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
+            velocityTracker?.addMovement(event)
             when (event.actionMasked) {
                 MotionEvent.ACTION_MOVE -> {
                     if (!dragging) return false
                     val dx = (event.rawX - downX).coerceAtLeast(0f)
-                    translationX = dx
-                    val progress = if (width > 0) (dx / width).coerceIn(0f, 1f) else 0f
-                    alpha = (1f - progress * PANEL_DRAG_FADE).coerceAtLeast(MIN_PANEL_DRAG_ALPHA)
+                    setMotionOffset((gestureStartOffset + dx).coerceAtLeast(0f))
                     return true
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!dragging) return false
-                    val shouldDismiss = translationX >= dismissDistance
+                    val xVelocity = velocityTracker?.let { tracker ->
+                        tracker.computeCurrentVelocity(1000)
+                        tracker.xVelocity
+                    } ?: 0f
+                    val shouldDismiss = motionOffset >= dismissDistance || xVelocity >= minimumFlingVelocity
                     if (shouldDismiss) {
                         onDismiss?.invoke(1f)
                     } else {
-                        animate().translationX(0f).alpha(1f).setDuration(140L).start()
+                        animateMotionTo(0f, 0f, PANEL_SETTLE_DURATION_MS)
                     }
                     dragging = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
                     return true
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     if (dragging) {
-                        when {
-                            isDismissInProgress?.invoke() == true -> Unit
-                            translationX > touchSlop * 2f -> onDismiss?.invoke(1f)
-                            else -> animate().translationX(0f).alpha(1f).setDuration(140L).start()
+                        if (isDismissInProgress?.invoke() != true) {
+                            animateMotionTo(0f, 0f, PANEL_SETTLE_DURATION_MS)
                         }
                     }
                     dragging = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    dragging = false
+                    animateMotionTo(0f, 0f, PANEL_SETTLE_DURATION_MS)
+                    velocityTracker?.recycle()
+                    velocityTracker = null
                     return true
                 }
             }
             return true
+        }
+
+        override fun onDetachedFromWindow() {
+            cancelMotionAnimation()
+            velocityTracker?.recycle()
+            velocityTracker = null
+            super.onDetachedFromWindow()
         }
 
         private fun isPointInside(view: View, rawX: Float, rawY: Float): Boolean {
@@ -1284,8 +1449,7 @@ class QuickCaptureService : Service() {
         private const val PANEL_BLUR_RADIUS_DP = 32
         private const val PANEL_ENTER_DURATION_MS = 230L
         private const val PANEL_EXIT_DURATION_MS = 180L
-        private const val PANEL_DRAG_FADE = 0.62f
-        private const val MIN_PANEL_DRAG_ALPHA = 0.38f
+        private const val PANEL_SETTLE_DURATION_MS = 180L
 
         @Volatile
         var running: Boolean = false

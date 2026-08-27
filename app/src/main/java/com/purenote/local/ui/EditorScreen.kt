@@ -68,8 +68,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -326,26 +328,38 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         Column(
             Modifier.padding(padding).fillMaxSize().padding(horizontal = 22.dp),
         ) {
+            val titleTextStyle = TextStyle(
+                fontSize = 31.sp,
+                lineHeight = 38.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both,
+                ),
+            )
             BasicTextField(
                 value = title,
                 onValueChange = { title = it.replace("\n", " "); markDirty() },
                 singleLine = true,
-                textStyle = TextStyle(
-                    fontSize = 31.sp,
-                    lineHeight = 38.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
+                textStyle = titleTextStyle,
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { inner ->
-                    Box {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
                         if (title.isEmpty()) {
-                            Text("标题", fontSize = 31.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.outlineVariant)
+                            Text(
+                                "标题",
+                                style = titleTextStyle.copy(color = MaterialTheme.colorScheme.outlineVariant),
+                            )
                         }
                         inner()
                     }
                 },
-                modifier = Modifier.fillMaxWidth().padding(top = 19.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 19.dp).height(42.dp),
             )
 
             Text(

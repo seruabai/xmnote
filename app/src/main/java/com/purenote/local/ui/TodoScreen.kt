@@ -358,23 +358,24 @@ private fun SwipeTodoRow(
     content: @Composable () -> Unit,
 ) {
     val cardShape = RoundedCornerShape(18.dp)
-    val state = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            when (value) {
-                SwipeToDismissBoxValue.StartToEnd -> {
-                    onFinishToggle()
-                    true
-                }
-                SwipeToDismissBoxValue.EndToStart -> {
-                    onDelete()
-                    true
-                }
-                else -> false
-            }
-        },
-    )
-    // 完成切换后行仍留在列表中，用 key 重置滑动状态使其回弹
+    // 滑动状态必须和「事项 id + 完成状态」属于同一生命周期。完成操作返回 false，
+    // 让当前卡片立即回弹；数据状态更新后 key 再创建一份全新的 Settled 状态。
     key(todo.id, todo.done) {
+        val state = rememberSwipeToDismissBoxState(
+            confirmValueChange = { value ->
+                when (value) {
+                    SwipeToDismissBoxValue.StartToEnd -> {
+                        onFinishToggle()
+                        false
+                    }
+                    SwipeToDismissBoxValue.EndToStart -> {
+                        onDelete()
+                        true
+                    }
+                    else -> false
+                }
+            },
+        )
         SwipeToDismissBox(
             state = state,
             enableDismissFromStartToEnd = true,
