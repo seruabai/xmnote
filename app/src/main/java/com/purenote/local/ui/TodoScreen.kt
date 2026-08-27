@@ -58,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -347,6 +348,7 @@ private fun SwipeTodoRow(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    val cardShape = RoundedCornerShape(18.dp)
     val state = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {
@@ -369,31 +371,38 @@ private fun SwipeTodoRow(
             enableDismissFromStartToEnd = true,
             enableDismissFromEndToStart = true,
             backgroundContent = {
+                val revealingAction = state.currentValue != SwipeToDismissBoxValue.Settled ||
+                    state.targetValue != SwipeToDismissBoxValue.Settled ||
+                    state.dismissDirection != SwipeToDismissBoxValue.Settled
                 val deleting = state.targetValue == SwipeToDismissBoxValue.EndToStart ||
                     state.dismissDirection == SwipeToDismissBoxValue.EndToStart
-                val bg = if (deleting) Color(0xFFFA4039)
-                else if (todo.done) Color(0xFFCDCDCD) else Color(0xFF2C94DE)
+                val bg = when {
+                    !revealingAction -> Color.Transparent
+                    deleting -> Color(0xFFFA4039)
+                    todo.done -> Color(0xFFCDCDCD)
+                    else -> Color(0xFF2C94DE)
+                }
                 val label = if (deleting) "删除" else if (todo.done) "未完成" else "完成"
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = if (deleting) Arrangement.End else Arrangement.Start,
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(bg, RoundedCornerShape(14.dp))
+                        .background(bg, cardShape)
                         .padding(horizontal = 22.dp),
                 ) {
                     Text(
                         label,
-                        color = Color.White,
+                        color = if (revealingAction) Color.White else Color.Transparent,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelLarge,
                     )
                 }
             },
-            modifier = modifier,
+            modifier = modifier.clip(cardShape),
             content = {
                 Surface(
-                    shape = RoundedCornerShape(18.dp),
+                    shape = cardShape,
                     color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.fillMaxWidth(),
                 ) {

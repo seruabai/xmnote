@@ -1,5 +1,6 @@
 package com.purenote.local.notify
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -18,6 +19,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
@@ -27,6 +29,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.RequiresApi
+import androidx.core.view.isVisible
 import com.purenote.local.MainActivity
 import com.purenote.local.PureNoteApp
 import com.purenote.local.R
@@ -53,8 +57,12 @@ class QuickCaptureService : Service() {
     private lateinit var wm: WindowManager
     private var handle: View? = null
     private var panel: View? = null
+    private var panelScroll: ScrollView? = null
+    private var panelScrollY = 0
+    private var dismissingPanel = false
     private var composerOpen = false
     private var quickDueAt: Long? = null
+    private val collapsedTodoIds = mutableSetOf<Long>()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -174,23 +182,29 @@ class QuickCaptureService : Service() {
         val repo = (application as PureNoteApp).repository
         scope.launch {
             val notes = repo.loadNotes(NoteFilter(), SortOrder.BY_UPDATED).take(5)
-            val todos = repo.loadTodos().filter { !it.isSubtask }.sortedWith(compareBy<Todo> { it.done }.thenBy { it.sortIndex })
+            val todos = repo.loadTodos().sortedWith(
+                compareBy<Todo> { it.done }.thenBy { it.sortIndex }.thenByDescending { it.updatedAt },
+            )
             postToMain { renderPanel(notes, todos) }
         }
     }
 
     private fun renderPanel(notes: List<Note>, todos: List<Todo>) {
+        panelScrollY = panelScroll?.scrollY ?: panelScrollY
         panel?.let { runCatching { wm.removeView(it) } }
+        panelScroll = null
+        dismissingPanel = false
 
-        val root = BackFrame(this).apply {
+        val root = EdgeDismissFrame(this).apply {
             isFocusableInTouchMode = true
             setBackgroundColor(0xE76E7A86.toInt())
-            onBack = { hidePanel() }
+            onDismiss = { direction -> dismissPanel(direction) }
         }
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
         }
+        panelScroll = scroll
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dip(18), dip(58), dip(18), dip(28))
@@ -209,11 +223,14 @@ class QuickCaptureService : Service() {
             content.addView(todoComposer())
             content.addView(space(11))
         }
-        if (todos.isEmpty()) {
+        val rootTodos = todos.filter { !it.isSubtask }
+        if (rootTodos.isEmpty()) {
             content.addView(cardText("暂无待办", 17f, 0xFF777777.toInt(), 82))
         } else {
-            todos.forEach { todo ->
-                content.addView(todoCard(todo))
+            rootTodos.forEach { todo ->
+                val children = todos.filter { it.parentId == todo.id }
+                    .sortedWith(compareBy<Todo> { it.sortIndex }.thenBy { it.createdAt })
+                content.addView(todoCard(todo, children))
                 content.addView(space(10))
             }
         }
@@ -231,6 +248,11 @@ class QuickCaptureService : Service() {
         panel = root
         wm.addView(root, params)
         root.requestFocus()
+        scroll.post { scroll.scrollTo(0, panelScrollY) }
+        when {
+            Build.VERSION.SDK_INT >= 34 -> registerAnimatedPredictiveBack(root)
+            Build.VERSION.SDK_INT >= 33 -> registerPredictiveBack(root)
+        }
     }
 
     private fun noteHeader(): View {
@@ -241,7 +263,7 @@ class QuickCaptureService : Service() {
         row.addView(plusButton { openNewNote() }, LinearLayout.LayoutParams(dip(38), dip(38)))
         row.addView(label("笔记 ︿", 18f, Color.WHITE, bold = false).apply {
             setPadding(dip(13), 0, 0, 0)
-            setOnClickListener { hidePanel() }
+            setOnClickListener { dismissPanel(1f) }
         }, LinearLayout.LayoutParams(0, dip(38), 1f))
         row.addView(label("▢  摘录", 15f, Color.WHITE, bold = false).apply {
             gravity = Gravity.CENTER
@@ -307,30 +329,97 @@ class QuickCaptureService : Service() {
         return scroll
     }
 
-    private fun todoCard(todo: Todo): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dip(21), 0, dip(18), 0)
+    private fun todoCard(todo: Todo, children: List<Todo>): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             background = rounded(Color.WHITE, 17f)
             elevation = dip(1).toFloat()
         }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dip(21), 0, dip(18), 0)
+        }
         val check = label(if (todo.done) "✓" else "□", 25f, if (todo.done) 0xFF222222.toInt() else 0xFFCCCCCC.toInt(), false).apply {
             gravity = Gravity.CENTER
-            setOnClickListener {
-                val repo = (application as PureNoteApp).repository
-                scope.launch {
-                    repo.setTodoDone(todo, !todo.done)
-                    loadAndRenderPanel()
-                }
-            }
+            setOnClickListener { toggleTodoFromPanel(todo) }
         }
-        row.addView(check, LinearLayout.LayoutParams(dip(38), dip(76)))
-        row.addView(label(todo.title.ifBlank { "待办清单" }, 18f, if (todo.done) 0xFFAAAAAA.toInt() else 0xFF171717.toInt(), false).apply {
+        header.addView(check, LinearLayout.LayoutParams(dip(38), dip(76)))
+        header.addView(label(todo.title.ifBlank { "待办清单" }, 18f, if (todo.done) 0xFFAAAAAA.toInt() else 0xFF171717.toInt(), false).apply {
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(0, dip(76), 1f))
+
+        if (children.isNotEmpty()) {
+            val doneCount = children.count { it.done }
+            header.addView(label("$doneCount/${children.size}", 14f, 0xFF777777.toInt(), false).apply {
+                gravity = Gravity.CENTER
+            }, LinearLayout.LayoutParams(dip(48), dip(76)))
+            val arrow = label(if (todo.id in collapsedTodoIds) "›" else "⌄", 19f, 0xFF888888.toInt(), false).apply {
+                gravity = Gravity.CENTER
+            }
+            header.addView(arrow, LinearLayout.LayoutParams(dip(29), dip(76)))
+
+            val childrenBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                isVisible = todo.id !in collapsedTodoIds
+            }
+            children.forEach { child ->
+                childrenBox.addView(View(this).apply {
+                    setBackgroundColor(0xFFF0F0F0.toInt())
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(1)).apply {
+                    marginStart = dip(50)
+                })
+                childrenBox.addView(subTodoRow(child))
+            }
+            header.setOnClickListener {
+                val collapsing = childrenBox.isVisible
+                childrenBox.isVisible = !collapsing
+                arrow.text = if (collapsing) "›" else "⌄"
+                if (collapsing) collapsedTodoIds.add(todo.id) else collapsedTodoIds.remove(todo.id)
+            }
+            card.addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(76)))
+            card.addView(childrenBox)
+        } else {
+            card.addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(76)))
+        }
+        return card
+    }
+
+    private fun subTodoRow(todo: Todo): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dip(49), 0, dip(18), 0)
+        }
+        row.addView(label(if (todo.done) "✓" else "□", 22f, if (todo.done) 0xFF777777.toInt() else 0xFFCCCCCC.toInt(), false).apply {
+            gravity = Gravity.CENTER
+            setOnClickListener { toggleTodoFromPanel(todo) }
+        }, LinearLayout.LayoutParams(dip(34), dip(54)))
+        row.addView(label(todo.title, 15.5f, if (todo.done) 0xFFA0A0A0.toInt() else 0xFF666666.toInt(), false).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setOnClickListener { toggleTodoFromPanel(todo) }
+        }, LinearLayout.LayoutParams(0, dip(54), 1f))
         return row
+    }
+
+    private fun toggleTodoFromPanel(todo: Todo) {
+        val repo = (application as PureNoteApp).repository
+        scope.launch {
+            val markingDone = !todo.done
+            repo.setTodoDone(todo, markingDone)
+            if (markingDone && todo.isSubtask) {
+                val refreshed = repo.loadTodos()
+                val siblings = refreshed.filter { it.parentId == todo.parentId }
+                if (siblings.isNotEmpty() && siblings.all { it.done }) {
+                    refreshed.firstOrNull { it.id == todo.parentId }?.let { parent ->
+                        repo.setTodoDone(parent, true)
+                    }
+                }
+            }
+            loadAndRenderPanel()
+        }
     }
 
     private fun todoComposer(): View {
@@ -422,11 +511,72 @@ class QuickCaptureService : Service() {
         )
     }
 
+    private fun dismissPanel(direction: Float) {
+        if (dismissingPanel) return
+        val current = panel ?: return
+        dismissingPanel = true
+        val width = current.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val target = if (direction >= 0f) width.toFloat() else -width.toFloat()
+        current.animate()
+            .translationX(target)
+            .alpha(0f)
+            .setDuration(170L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .withEndAction {
+                if (panel === current) hidePanel()
+            }
+            .start()
+    }
+
+    @RequiresApi(33)
+    private fun registerPredictiveBack(root: View) {
+        root.post {
+            root.findOnBackInvokedDispatcher()?.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
+                android.window.OnBackInvokedCallback { dismissPanel(1f) },
+            )
+        }
+    }
+
+    @RequiresApi(34)
+    private fun registerAnimatedPredictiveBack(root: View) {
+        root.post {
+            root.findOnBackInvokedDispatcher()?.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
+                object : android.window.OnBackAnimationCallback {
+                    private var direction = 1f
+
+                    override fun onBackStarted(backEvent: android.window.BackEvent) {
+                        direction = if (backEvent.swipeEdge == android.window.BackEvent.EDGE_RIGHT) -1f else 1f
+                        root.animate().cancel()
+                    }
+
+                    override fun onBackProgressed(backEvent: android.window.BackEvent) {
+                        root.translationX = direction * root.width * backEvent.progress * 0.34f
+                        root.alpha = 1f - backEvent.progress * 0.2f
+                    }
+
+                    override fun onBackCancelled() {
+                        root.animate().translationX(0f).alpha(1f).setDuration(140L).start()
+                    }
+
+                    override fun onBackInvoked() {
+                        dismissPanel(direction)
+                    }
+                },
+            )
+        }
+    }
+
     private fun hidePanel() {
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
+        panelScroll = null
+        panelScrollY = 0
+        dismissingPanel = false
         composerOpen = false
         quickDueAt = null
+        collapsedTodoIds.clear()
         showHandle()
     }
 
@@ -471,12 +621,83 @@ class QuickCaptureService : Service() {
         android.os.Handler(mainLooper).post(block)
     }
 
-    private class BackFrame(context: Context) : FrameLayout(context) {
-        var onBack: (() -> Unit)? = null
+    /**
+     * 悬浮窗不会在所有厂商系统上自动收到全面屏返回手势，因此在左右边缘补充一层
+     * 与系统返回一致的跟手滑动。竖向滚动和卡片内部横滑不会被拦截。
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private class EdgeDismissFrame(context: Context) : FrameLayout(context) {
+        var onDismiss: ((Float) -> Unit)? = null
+
+        private val edgeWidth = 38f * resources.displayMetrics.density
+        private val dismissDistance = 68f * resources.displayMetrics.density
+        private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+        private var downX = 0f
+        private var downY = 0f
+        private var edgeDirection = 0f
+        private var dragging = false
+
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    edgeDirection = when {
+                        downX <= edgeWidth -> 1f
+                        downX >= width - edgeWidth -> -1f
+                        else -> 0f
+                    }
+                    dragging = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (edgeDirection != 0f) {
+                        val dx = event.x - downX
+                        val dy = event.y - downY
+                        val followsEdge = dx * edgeDirection > 0f
+                        if (followsEdge && abs(dx) > touchSlop && abs(dx) > abs(dy) * 1.15f) {
+                            dragging = true
+                            parent?.requestDisallowInterceptTouchEvent(true)
+                            return true
+                        }
+                    }
+                }
+            }
+            return super.onInterceptTouchEvent(event)
+        }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_MOVE -> {
+                    if (!dragging) return false
+                    val rawDx = event.x - downX
+                    val dx = if (rawDx * edgeDirection > 0f) rawDx else 0f
+                    translationX = dx
+                    alpha = (1f - abs(dx) / width.coerceAtLeast(1) * 0.48f).coerceIn(0.52f, 1f)
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!dragging) return false
+                    val shouldDismiss = abs(translationX) >= dismissDistance
+                    if (shouldDismiss) {
+                        onDismiss?.invoke(if (translationX >= 0f) 1f else -1f)
+                    } else {
+                        animate().translationX(0f).alpha(1f).setDuration(140L).start()
+                    }
+                    dragging = false
+                    return true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    if (dragging) animate().translationX(0f).alpha(1f).setDuration(140L).start()
+                    dragging = false
+                    return true
+                }
+            }
+            return true
+        }
 
         override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
             if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                onBack?.invoke()
+                onDismiss?.invoke(1f)
                 return true
             }
             return super.dispatchKeyEventPreIme(event)
