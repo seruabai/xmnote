@@ -1,9 +1,10 @@
-﻿package com.purenote.local.ui
+package com.purenote.local.ui
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -30,18 +32,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Draw
+import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Title
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,8 +55,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -63,61 +66,43 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import com.purenote.local.NoteTextSize
 import com.purenote.local.NoteViewModel
 import com.purenote.local.Screen
 import com.purenote.local.core.ImageStore
-import com.purenote.local.core.PreviewBuilder
 import com.purenote.local.data.ChecklistItem
 import com.purenote.local.data.NoteKind
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-/** 首行即标题：输入时首行自动加粗放大（小米笔记式流式正文） */
-private val TitleFirstLineTransform = VisualTransformation { text ->
-    val idx = text.text.indexOf('\n')
-    if (idx <= 0) {
-        TransformedText(text, OffsetMapping.Identity)
-    } else {
-        val annotated = buildAnnotatedString {
-            withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontSize = 20.sp)) {
-                append(text.text.substring(0, idx))
-            }
-            append(text.text.substring(idx))
-        }
-        TransformedText(annotated, OffsetMapping.Identity)
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
+/** 小米笔记式编辑器：独立大标题、时间/字数、留白正文和底部五项工具栏。 */
+@OptIn(FlowPreview::class)
 @Composable
 fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     val context = LocalContext.current
     val folders by vm.folders.collectAsState()
+    val preferredTextSize by vm.noteTextSize.collectAsState()
+    val kind = screen.kind
 
     var loaded by remember { mutableStateOf(screen.noteId <= 0) }
     var prefillApplied by remember { mutableStateOf(false) }
     var noteId by remember { mutableStateOf(screen.noteId) }
     var creating by remember { mutableStateOf(false) }
-    val kind = screen.kind
-
-    var text by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var body by remember { mutableStateOf("") }
     val items = remember { mutableStateListOf<ChecklistItem>() }
     val imageNames = remember { mutableStateListOf<String>() }
     var colorIndex by remember { mutableStateOf(0) }
@@ -126,70 +111,62 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     var remindAt by remember { mutableStateOf<Long?>(null) }
     var revision by remember { mutableStateOf(0) }
 
-    var menuOpen by remember { mutableStateOf(false) }
-    var imageMenuOpen by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
-    var moveOpen by remember { mutableStateOf(false) }
+    var moreMenu by remember { mutableStateOf(false) }
+    var imageMenu by remember { mutableStateOf(false) }
     var colorOpen by remember { mutableStateOf(false) }
+    var moveOpen by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
     if (screen.noteId > 0 && !loaded) {
-        vm.getNoteOnce(screen.noteId) { n ->
-            if (n != null) {
-                text = PreviewBuilder.joinTitleBody(n.title, n.body)
-                items.clear()
-                items.addAll(n.items)
-                imageNames.clear()
-                imageNames.addAll(n.images)
-                colorIndex = n.colorIndex
-                folderId = n.folderId
-                pinned = n.pinned
-                remindAt = n.remindAt
-            } else {
+        vm.getNoteOnce(screen.noteId) { note ->
+            if (note == null) {
                 vm.goHome()
+            } else {
+                title = note.title
+                body = note.body
+                items.clear()
+                items.addAll(note.items)
+                imageNames.clear()
+                imageNames.addAll(note.images)
+                colorIndex = note.colorIndex
+                folderId = note.folderId
+                pinned = note.pinned
+                remindAt = note.remindAt
             }
             loaded = true
         }
     }
 
-    // 分享进入的预填内容（只应用一次）
     LaunchedEffect(loaded, prefillApplied) {
         if (loaded && !prefillApplied && screen.noteId <= 0) {
-            val p = screen.prefill
-            if (p.title.isNotBlank() || p.body.isNotBlank()) {
-                text = PreviewBuilder.joinTitleBody(p.title, p.body)
-            }
-            prefillApplied = true
-            if (text.isNotBlank() || p.imageUris.isNotEmpty()) revision++
-            p.imageUris.forEach { uri ->
+            title = screen.prefill.title
+            body = screen.prefill.body
+            screen.prefill.imageUris.forEach { raw ->
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching { ImageStore.importFromUri(context, android.net.Uri.parse(uri)) }.getOrNull()
-                }?.let { name ->
-                    imageNames.add(name)
-                    revision++
-                }
+                    runCatching { ImageStore.importFromUri(context, android.net.Uri.parse(raw)) }.getOrNull()
+                }?.let(imageNames::add)
             }
+            if (kind == NoteKind.CHECKLIST && items.isEmpty()) items.add(ChecklistItem(""))
+            prefillApplied = true
+            if (title.isNotBlank() || body.isNotBlank() || imageNames.isNotEmpty()) revision++
         }
     }
 
-    fun markDirty() {
-        revision++
-    }
+    fun markDirty() { revision++ }
 
-    fun isEmptyDraft(): Boolean =
-        when (kind) {
-            NoteKind.TEXT -> text.isBlank() && imageNames.isEmpty()
-            NoteKind.CHECKLIST -> items.all { it.text.isBlank() } && imageNames.isEmpty()
-        }
+    fun emptyDraft(): Boolean = when (kind) {
+        NoteKind.TEXT -> title.isBlank() && body.isBlank() && imageNames.isEmpty()
+        NoteKind.CHECKLIST -> title.isBlank() && items.all { it.text.isBlank() } && imageNames.isEmpty()
+    }
 
     fun persist() {
-        if (!loaded || isEmptyDraft()) return
-        val (titlePart, bodyPart) = PreviewBuilder.splitTitle(text)
+        if (!loaded || emptyDraft()) return
         if (noteId > 0) {
             vm.updateNote(
                 noteId = noteId,
                 kind = kind,
-                title = titlePart,
-                body = bodyPart,
+                title = title.trim(),
+                body = body,
                 items = items.filter { it.text.isNotBlank() },
                 images = imageNames.toList(),
                 colorIndex = colorIndex,
@@ -201,15 +178,15 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             creating = true
             vm.createNote(
                 kind = kind,
-                title = titlePart,
-                body = bodyPart,
+                title = title.trim(),
+                body = body,
                 items = items.filter { it.text.isNotBlank() },
                 images = imageNames.toList(),
                 colorIndex = colorIndex,
                 folderId = folderId,
                 remindAt = remindAt,
-            ) { newId ->
-                noteId = newId
+            ) { id ->
+                noteId = id
                 creating = false
             }
         }
@@ -222,10 +199,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
 
     LaunchedEffect(loaded) {
         if (loaded) {
-            snapshotFlow { Triple(text, kind, revision) }
-                .drop(1)
-                .debounce(500)
-                .collect { persist() }
+            snapshotFlow { revision }.drop(1).debounce(500).collect { persist() }
         }
     }
 
@@ -237,86 +211,91 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         pendingCameraFile = null
         if (ok && target != null) {
             ImageStore.importCaptured(context, target)?.let {
-                imageNames.add(it); markDirty(); persist()
+                imageNames.add(it)
+                markDirty()
             }
         }
     }
-    val pickImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             ImageStore.importFromUri(context, uri)?.let {
-                imageNames.add(it); markDirty(); persist()
+                imageNames.add(it)
+                markDirty()
             }
         }
     }
 
-    // 签名交互：编辑器背景就是这张便签纸的颜色
+    val createdLabel = remember(screen.noteId) {
+        SimpleDateFormat("M月d日 HH:mm", Locale.getDefault()).format(Date())
+    }
+    val words = title.length + body.length + items.sumOf { it.text.length }
+
     Scaffold(
         containerColor = noteContainerColor(colorIndex),
         topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                ),
-                navigationIcon = {
-                    IconButton(onClick = { saveAndClose() }) {
-                        Icon(Icons.Outlined.ArrowBack, "返回")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 9.dp, vertical = 5.dp),
+            ) {
+                IconButton(onClick = ::saveAndClose) {
+                    Icon(Icons.Outlined.ArrowBack, "返回", modifier = Modifier.size(30.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = {
+                    shareNoteText(
+                        context,
+                        title,
+                        if (kind == NoteKind.TEXT) body
+                        else items.joinToString("\n") { "${if (it.done) "☑" else "☐"} ${it.text}" },
+                    )
+                }) {
+                    Icon(Icons.Outlined.Share, "分享", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(27.dp))
+                }
+                IconButton(onClick = { colorOpen = true }) {
+                    Icon(Icons.Outlined.Palette, "更换纸色", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(27.dp))
+                }
+                Box {
+                    IconButton(onClick = { moreMenu = true }) {
+                        Icon(Icons.Outlined.MoreVert, "更多", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(27.dp))
                     }
-                },
-                title = {},
-                actions = {
-                    IconButton(onClick = {
-                        pinned = !pinned
-                        markDirty()
-                        persist()
-                    }) {
-                        Icon(
-                            Icons.Outlined.PushPin,
-                            "置顶",
-                            tint = if (pinned) MaterialTheme.colorScheme.secondary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(if (pinned) "取消置顶" else "置顶") },
+                            leadingIcon = { Icon(Icons.Outlined.PushPin, null) },
+                            onClick = { pinned = !pinned; moreMenu = false; markDirty() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("设置提醒") },
+                            leadingIcon = { Icon(Icons.Outlined.NotificationsNone, null) },
+                            onClick = {
+                                moreMenu = false
+                                openReminderPicker(context) { remindAt = it; markDirty() }
+                            },
+                        )
+                        DropdownMenuItem(text = { Text("移动到分类") }, onClick = { moreMenu = false; moveOpen = true })
+                        DropdownMenuItem(
+                            text = { Text("删除") },
+                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null) },
+                            onClick = { moreMenu = false; confirmDelete = true },
                         )
                     }
-                    Box {
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Outlined.MoreVert, "更多")
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text("更换纸色") }, onClick = {
-                                menuOpen = false; colorOpen = true
-                            })
-                            DropdownMenuItem(text = { Text("移动到分类") }, onClick = {
-                                menuOpen = false; moveOpen = true
-                            })
-                            if (remindAt != null) {
-                                DropdownMenuItem(text = { Text("清除提醒") }, onClick = {
-                                    menuOpen = false
-                                    remindAt = null
-                                    markDirty()
-                                    persist()
-                                })
-                            }
-                        }
-                    }
-                },
-            )
+                }
+            }
         },
         bottomBar = {
             Column {
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .32f))
                 Row(
+                    horizontalArrangement = Arrangement.SpaceAround,
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(61.dp),
                 ) {
+                    EditorTool(Icons.Outlined.GraphicEq, "语音") { }
                     Box {
-                        IconButton(onClick = { imageMenuOpen = true }) {
-                            Icon(Icons.Outlined.Image, "插入图片", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        DropdownMenu(expanded = imageMenuOpen, onDismissRequest = { imageMenuOpen = false }) {
+                        EditorTool(Icons.Outlined.Image, "图片") { imageMenu = true }
+                        DropdownMenu(expanded = imageMenu, onDismissRequest = { imageMenu = false }) {
                             DropdownMenuItem(text = { Text("拍照") }, onClick = {
-                                imageMenuOpen = false
+                                imageMenu = false
                                 val target = ImageStore.newCameraTarget(context)
                                 pendingCameraFile = target
                                 cameraLauncher.launch(
@@ -324,120 +303,77 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                                 )
                             })
                             DropdownMenuItem(text = { Text("从相册选择") }, onClick = {
-                                imageMenuOpen = false
-                                pickImageLauncher.launch("image/*")
+                                imageMenu = false
+                                imageLauncher.launch("image/*")
                             })
                         }
                     }
-                    IconButton(onClick = { colorOpen = true }) {
-                        Icon(Icons.Outlined.Palette, "卡片底色", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(onClick = {
-                        openReminderPicker(context) { newAt ->
-                            remindAt = newAt
+                    EditorTool(Icons.Outlined.Draw, "手写") { colorOpen = true }
+                    EditorTool(Icons.Outlined.CheckBox, "清单") {
+                        if (kind == NoteKind.TEXT) {
+                            body = if (body.isBlank()) "☐ " else "$body\n☐ "
                             markDirty()
-                            persist()
+                        } else {
+                            items.add(ChecklistItem(""))
+                            markDirty()
                         }
-                    }) {
-                        Icon(Icons.Outlined.NotificationsNone, "提醒", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = {
-                        val (t, b) = PreviewBuilder.splitTitle(text)
-                        shareNoteText(
-                            context,
-                            t.ifBlank { "" },
-                            if (kind == NoteKind.TEXT) b
-                            else items.joinToString("\n") { "${if (it.done) "☑" else "☐"} ${it.text}" },
-                        )
-                    }) {
-                        Icon(Icons.Outlined.Share, "分享", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(onClick = { confirmDelete = true }) {
-                        Icon(Icons.Outlined.DeleteOutline, "删除", tint = MaterialTheme.colorScheme.error)
-                    }
+                    EditorTool(Icons.Outlined.Title, "文本") { }
                 }
             }
         },
     ) { padding ->
         Column(
-            Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .padding(horizontal = 18.dp),
+            Modifier.padding(padding).fillMaxSize().padding(horizontal = 22.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
-            ) {
-                Text(
-                    folders.firstOrNull { it.id == folderId }?.name ?: "未分类",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
-                Spacer(Modifier.weight(1f))
-                if (remindAt != null) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(start = 10.dp),
-                        ) {
-                            Icon(
-                                Icons.Outlined.NotificationsNone,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                formatNoteTime(remindAt ?: 0L),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.secondary,
-                            )
-                            IconButton(onClick = {
-                                remindAt = null
-                                markDirty()
-                                persist()
-                            }, modifier = Modifier.size(26.dp)) {
-                                Icon(
-                                    Icons.Outlined.Close,
-                                    "清除提醒",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(13.dp),
-                                )
-                            }
+            BasicTextField(
+                value = title,
+                onValueChange = { title = it.replace("\n", " "); markDirty() },
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontSize = 31.sp,
+                    lineHeight = 38.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                decorationBox = { inner ->
+                    Box {
+                        if (title.isEmpty()) {
+                            Text("标题", fontSize = 31.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.outlineVariant)
                         }
+                        inner()
                     }
-                }
-            }
+                },
+                modifier = Modifier.fillMaxWidth().padding(top = 19.dp),
+            )
+
+            Text(
+                "$createdLabel  |  ${words}字",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 20.dp, bottom = 22.dp),
+            )
 
             if (imageNames.isNotEmpty()) {
-                ImagesStrip(
-                    names = imageNames.toList(),
-                    onDelete = { name ->
-                        imageNames.remove(name)
-                        ImageStore.deleteFile(context, name)
-                        markDirty()
-                        persist()
-                    },
-                )
-                Spacer(Modifier.height(10.dp))
+                ImagesStrip(imageNames.toList()) { name ->
+                    imageNames.remove(name)
+                    ImageStore.deleteFile(context, name)
+                    markDirty()
+                }
+                Spacer(Modifier.height(12.dp))
             }
 
             when (kind) {
-                NoteKind.TEXT -> FlowTextField(
-                    value = text,
-                    onChange = { text = it; markDirty() },
+                NoteKind.TEXT -> TextNoteBody(
+                    value = body,
+                    textSize = preferredTextSize,
+                    onChange = { body = it; markDirty() },
                     modifier = Modifier.weight(1f),
                 )
                 NoteKind.CHECKLIST -> ChecklistEditor(
                     items = items,
-                    onChangeList = { markDirty() },
+                    onChangeList = ::markDirty,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -448,16 +384,14 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("删除这条笔记？") },
-            text = { Text("会移入废纸篓，30 天后自动清除。") },
+            text = { Text("笔记会移入废纸篓。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
                     if (noteId > 0) vm.trash(noteId) else vm.goHome()
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
-            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
         )
     }
 
@@ -466,12 +400,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             current = folderId,
             folders = folders,
             onDismiss = { moveOpen = false },
-            onPick = { target ->
-                folderId = target
-                moveOpen = false
-                markDirty()
-                persist()
-            },
+            onPick = { folderId = it; moveOpen = false; markDirty() },
         )
     }
 
@@ -479,79 +408,136 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         ColorPickDialog(
             current = colorIndex,
             onDismiss = { colorOpen = false },
-            onPick = { idx ->
-                colorIndex = idx
-                colorOpen = false
-                markDirty()
-                persist()
-            },
+            onPick = { colorIndex = it; colorOpen = false; markDirty() },
         )
     }
 }
 
-/** 小米式流式正文：首行标题加粗；外层可滚动保证长文可达 */
 @Composable
-private fun FlowTextField(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
-    val scroll = rememberScrollState()
-    Box(modifier.verticalScroll(scroll)) {
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            textStyle = TextStyle(
-                fontSize = 17.sp,
-                lineHeight = 26.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-            ),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            visualTransformation = TitleFirstLineTransform,
-            decorationBox = { inner ->
-                Box {
-                    if (value.isEmpty()) {
-                        Text(
-                            "标题",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                        )
-                    }
-                    inner()
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp, bottom = 24.dp),
-        )
+private fun EditorTool(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+    Icon(
+        icon,
+        contentDescription = description,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.size(28.dp).clickable(onClick = onClick).padding(1.dp),
+    )
+}
+
+@Composable
+private fun TextNoteBody(
+    value: String,
+    textSize: NoteTextSize,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val fontSize = when (textSize) {
+        NoteTextSize.SMALL -> 16.sp
+        NoteTextSize.DEFAULT -> 18.sp
+        NoteTextSize.LARGE -> 21.sp
     }
+    val scroll = rememberScrollState()
+    BasicTextField(
+        value = value,
+        onValueChange = onChange,
+        textStyle = TextStyle(
+            fontSize = fontSize,
+            lineHeight = fontSize * 1.55f,
+            color = MaterialTheme.colorScheme.onSurface,
+        ),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        decorationBox = { inner ->
+            Box {
+                if (value.isEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("开始书写或", fontSize = 19.sp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Spacer(Modifier.width(9.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = .08f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .2f)),
+                        ) {
+                            Text(
+                                "☷ 创建思维笔记",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                            )
+                        }
+                    }
+                }
+                inner()
+            }
+        },
+        modifier = modifier.fillMaxWidth().verticalScroll(scroll),
+    )
 }
 
 @Composable
 private fun ImagesStrip(names: List<String>, onDelete: (String) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(names, key = { it }) { name ->
             Box {
-                AsyncThumb(
-                    fileName = name,
-                    modifier = Modifier.size(width = 112.dp, height = 112.dp),
-                )
+                AsyncThumb(name, Modifier.size(width = 112.dp, height = 112.dp))
                 Surface(
                     shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                    shadowElevation = 1.dp,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(5.dp)
-                        .size(22.dp)
-                        .clickable { onDelete(name) },
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = .88f),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).size(23.dp).clickable { onDelete(name) },
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Outlined.Close,
-                            "移除图片",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(14.dp),
-                        )
+                        Icon(Icons.Outlined.Close, "移除图片", modifier = Modifier.size(14.dp))
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChecklistEditor(
+    items: MutableList<ChecklistItem>,
+    onChangeList: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        itemsIndexed(items) { index, item ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                MiCheckbox(done = item.done, size = 21.dp, onClick = {
+                    items[index] = item.copy(done = !item.done)
+                    onChangeList()
+                })
+                BasicTextField(
+                    value = item.text,
+                    onValueChange = { items[index] = item.copy(text = it); onChangeList() },
+                    textStyle = TextStyle(
+                        fontSize = 17.sp,
+                        lineHeight = 23.sp,
+                        color = if (item.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        textDecoration = if (item.done) TextDecoration.LineThrough else null,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { inner ->
+                        Box {
+                            if (item.text.isEmpty()) Text("清单内容", color = MaterialTheme.colorScheme.outlineVariant)
+                            inner()
+                        }
+                    },
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                )
+                IconButton(onClick = { items.removeAt(index); onChangeList() }) {
+                    Icon(Icons.Outlined.Close, "移除", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(17.dp))
+                }
+            }
+        }
+        item {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable {
+                    items.add(ChecklistItem(""))
+                    onChangeList()
+                }.padding(vertical = 11.dp),
+            ) {
+                Icon(Icons.Outlined.Add, null, tint = MaterialTheme.colorScheme.primary)
+                Text("添加条目", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 9.dp))
             }
         }
     }
@@ -564,28 +550,20 @@ private fun ColorPickDialog(current: Int, onDismiss: () -> Unit, onPick: (Int) -
         title = { Text("便签纸色") },
         text = {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                (0 until 6).forEach { idx ->
-                    val selected = ((current % 6) + 6) % 6 == idx
+                repeat(6) { index ->
+                    val selected = current.mod(6) == index
                     Surface(
                         shape = CircleShape,
-                        color = noteContainerColor(idx),
-                        border = androidx.compose.foundation.BorderStroke(
+                        color = noteContainerColor(index),
+                        border = BorderStroke(
                             if (selected) 2.dp else 1.dp,
-                            if (selected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outlineVariant,
+                            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                         ),
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clickable { onPick(idx) },
+                        modifier = Modifier.size(40.dp).clickable { onPick(index) },
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            if (selected) {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = "已选择",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(18.dp),
-                                )
+                        if (selected) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Check, "已选择", modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -593,102 +571,23 @@ private fun ColorPickDialog(current: Int, onDismiss: () -> Unit, onPick: (Int) -
             }
         },
         confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 
-@Composable
-private fun ChecklistEditor(
-    items: MutableList<ChecklistItem>,
-    onChangeList: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    LazyColumn(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        itemsIndexed(items) { index, item ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                MiCheckbox(
-                    done = item.done,
-                    size = 20.dp,
-                    onClick = {
-                        items[index] = items[index].copy(done = !items[index].done)
-                        onChangeList()
-                    },
-                )
-                Box(Modifier.weight(1f).padding(start = 10.dp)) {
-                    BasicTextField(
-                        value = item.text,
-                        onValueChange = { newText ->
-                            items[index] = items[index].copy(text = newText)
-                            onChangeList()
-                        },
-                        textStyle = TextStyle(
-                            fontSize = 16.sp,
-                            lineHeight = 22.sp,
-                            color = if (item.done) MaterialTheme.colorScheme.onSurfaceVariant
-                            else MaterialTheme.colorScheme.onSurface,
-                            textDecoration = if (item.done) TextDecoration.LineThrough else null,
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        decorationBox = { inner ->
-                            Box {
-                                if (item.text.isEmpty()) {
-                                    Text("条目内容", color = MaterialTheme.colorScheme.outlineVariant)
-                                }
-                                inner()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                IconButton(onClick = {
-                    items.removeAt(index)
-                    onChangeList()
-                }, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        Icons.Outlined.Close,
-                        "移除条目",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
-        item {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        items.add(ChecklistItem(""))
-                        onChangeList()
-                    }
-                    .padding(vertical = 12.dp),
-            ) {
-                Icon(Icons.Outlined.Add, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("添加条目", color = MaterialTheme.colorScheme.secondary)
-            }
-        }
-        item { Spacer(Modifier.height(60.dp)) }
-    }
-}
-
-/** 直接打开系统日期/时间选择器，仅接受未来时间 */
 fun openReminderPicker(context: Context, onPicked: (Long) -> Unit) {
     val now = java.util.Calendar.getInstance()
     android.app.DatePickerDialog(
         context,
-        { _, y, m, d ->
+        { _, year, month, day ->
             android.app.TimePickerDialog(
                 context,
-                { _, h, min ->
-                    val c = java.util.Calendar.getInstance().apply {
-                        set(y, m, d, h, min, 0)
+                { _, hour, minute ->
+                    val picked = java.util.Calendar.getInstance().apply {
+                        set(year, month, day, hour, minute, 0)
                         set(java.util.Calendar.MILLISECOND, 0)
                     }
-                    if (c.timeInMillis > System.currentTimeMillis()) onPicked(c.timeInMillis)
+                    if (picked.timeInMillis > System.currentTimeMillis()) onPicked(picked.timeInMillis)
                 },
                 now.get(java.util.Calendar.HOUR_OF_DAY),
                 now.get(java.util.Calendar.MINUTE),

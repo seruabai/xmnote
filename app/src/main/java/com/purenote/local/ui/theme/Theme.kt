@@ -15,13 +15,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.purenote.local.ThemeMode
 
-// 小米笔记风格：暖纸底 + 标志性黄
-private val PaperBg = Color(0xFFF7F5F0)
+// 小米笔记浅色界面：中性灰背景、纯白卡片和标志性黄色强调色。
+private val PaperBg = Color(0xFFF7F7F7)
 private val PaperSurface = Color(0xFFFFFFFF)
-private val PaperVariant = Color(0xFFF0EDE5)
-private val Ink = Color(0xFF201D17)
-private val InkSoft = Color(0xFF8A8577)
-private val MiYellow = Color(0xFFF7B500)
+private val PaperVariant = Color(0xFFEDEDED)
+private val Ink = Color(0xFF111111)
+private val InkSoft = Color(0xFF8F8F8F)
+private val MiYellow = Color(0xFFFFB800)
 private val MiYellowDark = Color(0xFFFFD350)
 
 private val NightBg = Color(0xFF141310)
@@ -35,7 +35,7 @@ private val LightColors = lightColorScheme(
     onPrimary = Color(0xFF221A00),
     primaryContainer = Color(0xFFFFEFC2),
     onPrimaryContainer = Color(0xFF221A00),
-    secondary = Color(0xFF7C6427),
+    secondary = Color(0xFFB57D00),
     onSecondary = Color.White,
     secondaryContainer = Color(0xFFF2E9CF),
     onSecondaryContainer = Color(0xFF2B230C),
@@ -47,12 +47,12 @@ private val LightColors = lightColorScheme(
     surfaceVariant = PaperVariant,
     onSurfaceVariant = InkSoft,
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFFBF9F5),
-    surfaceContainer = Color(0xFFF5F2EB),
-    surfaceContainerHigh = Color(0xFFEFEBE2),
-    surfaceContainerHighest = Color(0xFFEAE5DB),
-    outline = Color(0xFFB4AD9C),
-    outlineVariant = Color(0xFFE8E3D7),
+    surfaceContainerLow = Color(0xFFFAFAFA),
+    surfaceContainer = Color(0xFFF5F5F5),
+    surfaceContainerHigh = Color(0xFFEDEDED),
+    surfaceContainerHighest = Color(0xFFE7E7E7),
+    outline = Color(0xFFAAAAAA),
+    outlineVariant = Color(0xFFD8D8D8),
     error = Color(0xFFBA3B30),
     onError = Color.White,
     errorContainer = Color(0xFFFFDAD4),
@@ -89,7 +89,7 @@ private val DarkColors = darkColorScheme(
 )
 
 private val MiTypography = Typography(
-    headlineSmall = TextStyle(fontSize = 24.sp, lineHeight = 30.sp, fontWeight = FontWeight.Bold),
+    headlineSmall = TextStyle(fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.Normal),
     titleLarge = TextStyle(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold),
     titleMedium = TextStyle(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
     titleSmall = TextStyle(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold),

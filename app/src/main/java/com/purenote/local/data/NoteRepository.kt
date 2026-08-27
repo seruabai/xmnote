@@ -19,6 +19,8 @@ class NoteRepository(context: Context) {
             if (!filter.trashed && filter.folderId != null) {
                 selection.append(" AND folder_id = ?")
                 args += filter.folderId.toString()
+            } else if (!filter.trashed && filter.unclassifiedOnly) {
+                selection.append(" AND folder_id IS NULL")
             }
             filter.query.trim().takeIf { it.isNotEmpty() }?.let { q ->
                 selection.append(" AND (title LIKE ? OR body LIKE ?)")

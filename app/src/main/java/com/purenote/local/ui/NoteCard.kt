@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.purenote.local.core.ChecklistCodec
 import com.purenote.local.core.PreviewBuilder
 import com.purenote.local.data.Note
@@ -52,11 +53,11 @@ fun NoteCard(
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongPress),
         colors = CardDefaults.cardColors(containerColor = noteContainerColor(note.colorIndex)),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (selected) 0.dp else 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
     ) {
         Box {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
                 if (note.images.isNotEmpty()) {
                     AsyncThumb(
                         fileName = note.images.first(),
@@ -109,12 +110,13 @@ fun NoteCard(
 @Composable
 private fun TextCardBody(note: Note) {
     val (firstLine, rest) = PreviewBuilder.splitTitle(note.body)
-    val head = firstLine.ifBlank { note.title }
+    val head = note.title.ifBlank { firstLine }
+    val preview = if (note.title.isBlank()) rest else note.body
     if (head.isNotBlank()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 head,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -126,10 +128,10 @@ private fun TextCardBody(note: Note) {
     } else {
         PinBadge(note.pinned)
     }
-    if (rest.isNotBlank()) {
+    if (preview.isNotBlank()) {
         Text(
-            PreviewBuilder.textPreview(rest),
-            style = MaterialTheme.typography.bodyMedium,
+            PreviewBuilder.textPreview(preview),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 6,
             overflow = TextOverflow.Ellipsis,

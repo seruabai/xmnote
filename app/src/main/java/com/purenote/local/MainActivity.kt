@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import com.purenote.local.data.NotePrefill
+import com.purenote.local.data.NoteKind
 import com.purenote.local.notify.Reminders
 import com.purenote.local.ui.AppRoot
 import com.purenote.local.ui.theme.PureNoteTheme
@@ -53,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private fun handleIncoming(intent: Intent?) {
         if (intent == null) return
         when (intent.action) {
+            ACTION_NEW_NOTE -> vm.openEditor(kind = NoteKind.TEXT)
             Intent.ACTION_SEND -> {
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
                     .ifBlank { intent.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty() }
@@ -77,10 +79,15 @@ class MainActivity : ComponentActivity() {
             else -> {
                 val id = intent.getLongExtra(Reminders.EXTRA_ID, -1L)
                 if (id > 0) {
+                    (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(id.toInt())
                     val kind = intent.getStringExtra(Reminders.EXTRA_KIND) ?: Reminders.KIND_NOTE
                     vm.pendingOpenTarget = kind to id
                 }
             }
         }
+    }
+
+    companion object {
+        const val ACTION_NEW_NOTE = "com.purenote.local.action.NEW_NOTE"
     }
 }

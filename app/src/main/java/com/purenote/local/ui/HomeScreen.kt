@@ -1,17 +1,8 @@
 package com.purenote.local.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,101 +12,73 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatListBulleted
-import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material.icons.outlined.ManageSearch
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.MoveToInbox
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SelectAll
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Sort
-import androidx.compose.material.icons.outlined.ViewAgenda
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.purenote.local.MainTab
 import com.purenote.local.NoteViewModel
-import com.purenote.local.core.PreviewBuilder
+import com.purenote.local.data.Folder
 import com.purenote.local.data.Note
 import com.purenote.local.data.NoteKind
-import com.purenote.local.data.SortOrder
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** 小米笔记式主页：大标题、常驻搜索、宫格卡片、黄色 FAB 与底部双标签。 */
 @Composable
 fun HomeScreen(vm: NoteViewModel) {
     val notes by vm.notes.collectAsState()
     val folders by vm.folders.collectAsState()
-    val trashCount by vm.trashCount.collectAsState()
     val filter by vm.filter.collectAsState()
-    val searchActive by vm.searchActive.collectAsState()
-    val gridMode by vm.gridMode.collectAsState()
     val tab by vm.tab.collectAsState()
-    val sortOrder by vm.sortOrder.collectAsState()
+    val gridMode by vm.gridMode.collectAsState()
 
-    // 多选模式
     var selecting by remember { mutableStateOf(false) }
     val selectedIds = remember { mutableStateListOf<Long>() }
-    var batchMoveOpen by remember { mutableStateOf(false) }
-    var newFolderOpen by remember { mutableStateOf(false) }
-
-    var switchMenuOpen by remember { mutableStateOf(false) }
-    var moreMenuOpen by remember { mutableStateOf(false) }
-    var sortMenuOpen by remember { mutableStateOf(false) }
-    var fabOpen by remember { mutableStateOf(false) }
+    var moveOpen by remember { mutableStateOf(false) }
 
     fun exitSelection() {
         selecting = false
@@ -123,648 +86,491 @@ fun HomeScreen(vm: NoteViewModel) {
     }
 
     BackHandler(enabled = selecting) { exitSelection() }
-    BackHandler(enabled = searchActive) { vm.setQuery(""); vm.setSearchActive(false) }
-    BackHandler(enabled = fabOpen) { fabOpen = false }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                ),
-                navigationIcon = {
-                    if (selecting) {
-                        IconButton(onClick = { exitSelection() }) {
-                            Icon(Icons.Outlined.Close, "退出多选")
-                        }
-                    } else if (searchActive) {
-                        IconButton(onClick = { vm.setQuery(""); vm.setSearchActive(false) }) {
-                            Icon(Icons.Outlined.ArrowBack, "取消搜索")
-                        }
-                    }
-                },
-                title = {
-                    if (selecting) {
-                        Text("已选 ${selectedIds.size} 项", style = MaterialTheme.typography.titleMedium)
-                    } else {
-                        Box {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.clickable { switchMenuOpen = true },
-                            ) {
-                                Text(
-                                    text = when {
-                                        tab == MainTab.TODO -> "待办"
-                                        filter.folderId != null ->
-                                            folders.firstOrNull { it.id == filter.folderId }?.name ?: "全部笔记"
-                                        else -> "笔记"
-                                    },
-                                    style = MaterialTheme.typography.headlineSmall,
-                                )
-                                Icon(
-                                    Icons.Outlined.ArrowDropDown,
-                                    contentDescription = "切换",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(26.dp),
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = switchMenuOpen,
-                                onDismissRequest = { switchMenuOpen = false },
-                            ) {
-                                DropdownMenuItem(text = { Text("笔记") }, onClick = {
-                                    switchMenuOpen = false
-                                    vm.switchTab(MainTab.NOTES); vm.selectFolder(vm.filter.value.folderId)
-                                })
-                                DropdownMenuItem(text = { Text("待办") }, onClick = {
-                                    switchMenuOpen = false
-                                    vm.switchTab(MainTab.TODO)
-                                })
-                                DropdownMenuItem(text = { Text("废纸篓 ($trashCount)") }, onClick = {
-                                    switchMenuOpen = false
-                                    vm.goTrash()
-                                })
-                                DropdownMenuItem(text = { Text("设置") }, onClick = {
-                                    switchMenuOpen = false
-                                    vm.goSettings()
-                                })
-                            }
-                        }
-                    }
-                },
-                actions = {
-                    if (selecting) {
-                        TextButton(onClick = {
-                            if (selectedIds.size == notes.size) selectedIds.clear()
-                            else { selectedIds.clear(); selectedIds.addAll(notes.map { it.id }) }
-                        }) { Text(if (selectedIds.size == notes.size && notes.isNotEmpty()) "取消全选" else "全选") }
-                    } else {
-                        if (tab == MainTab.NOTES && !searchActive) {
-                            Box {
-                                IconButton(onClick = { sortMenuOpen = true }) {
-                                    Icon(Icons.Outlined.Sort, "排序")
-                                }
-                                DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
-                                    SortItem("按更新时间", sortOrder == SortOrder.BY_UPDATED) {
-                                        sortMenuOpen = false; vm.setSortOrder(SortOrder.BY_UPDATED)
-                                    }
-                                    SortItem("按创建时间", sortOrder == SortOrder.BY_CREATED) {
-                                        sortMenuOpen = false; vm.setSortOrder(SortOrder.BY_CREATED)
-                                    }
-                                }
-                            }
-                            IconButton(onClick = { vm.setSearchActive(true) }) {
-                                Icon(Icons.Outlined.Search, "搜索")
-                            }
-                            IconButton(onClick = { vm.toggleGrid() }) {
-                                Icon(
-                                    if (gridMode) Icons.Outlined.ViewAgenda else Icons.Outlined.GridView,
-                                    "切换布局",
-                                )
-                            }
-                        }
-                        Box {
-                            IconButton(onClick = { moreMenuOpen = true }) {
-                                Icon(Icons.Outlined.MoreVert, "更多")
-                            }
-                            DropdownMenu(expanded = moreMenuOpen, onDismissRequest = { moreMenuOpen = false }) {
-                                DropdownMenuItem(text = { Text(if (tab == MainTab.TODO) "切换到笔记" else "切换到待办") }, onClick = {
-                                    moreMenuOpen = false
-                                    if (tab == MainTab.TODO) vm.selectFolder(null) else vm.switchTab(MainTab.TODO)
-                                })
-                                DropdownMenuItem(text = { Text("设置") }, onClick = {
-                                    moreMenuOpen = false; vm.goSettings()
-                                })
-                                DropdownMenuItem(text = { Text("废纸篓") }, onClick = {
-                                    moreMenuOpen = false; vm.goTrash()
-                                })
-                            }
-                        }
-                    }
-                },
-            )
-        },
+        containerColor = MaterialTheme.colorScheme.background,
         floatingActionButton = {
             if (!selecting) {
-                if (tab == MainTab.NOTES) {
-                    val rotation by animateFloatAsState(
-                        targetValue = if (fabOpen) 45f else 0f,
-                        label = "fabRotate",
-                    )
-                    Column(horizontalAlignment = Alignment.End) {
-                        AnimatedVisibility(
-                            visible = fabOpen,
-                            enter = fadeIn() + scaleIn(
-                                initialScale = 0.6f,
-                                transformOrigin = TransformOrigin(1f, 1f),
-                            ),
-                            exit = fadeOut() + scaleOut(
-                                targetScale = 0.6f,
-                                transformOrigin = TransformOrigin(1f, 1f),
-                            ),
-                        ) {
-                            Column(horizontalAlignment = Alignment.End) {
-                                FabMenuItem("新建清单", Icons.Outlined.FormatListBulleted) {
-                                    fabOpen = false
-                                    vm.openEditor(kind = NoteKind.CHECKLIST)
-                                }
-                                Spacer(Modifier.height(12.dp))
-                                FabMenuItem("新建笔记", Icons.Outlined.Edit) {
-                                    fabOpen = false
-                                    vm.openEditor(kind = NoteKind.TEXT)
-                                }
-                                Spacer(Modifier.height(14.dp))
-                            }
-                        }
-                        FloatingActionButton(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp),
-                            onClick = {
-                                if (!fabOpen) fabOpen = true else {
-                                    fabOpen = false
-                                    vm.openEditor(kind = NoteKind.TEXT)
-                                }
-                            },
-                        ) {
-                            Icon(
-                                Icons.Outlined.Add,
-                                contentDescription = if (fabOpen) "关闭" else "新建",
-                                modifier = Modifier.rotate(rotation),
-                            )
-                        }
-                    }
-                } else {
-                    ExtendedFloatingActionButton(onClick = { vm.openNewTodo() }) {
-                        Icon(Icons.Outlined.Add, null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("新建待办")
-                    }
+                FloatingActionButton(
+                    onClick = {
+                        if (tab == MainTab.NOTES) vm.openEditor(kind = NoteKind.TEXT)
+                        else vm.openNewTodo()
+                    },
+                    shape = CircleShape,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 5.dp),
+                    modifier = Modifier.size(58.dp),
+                ) {
+                    Icon(Icons.Outlined.Add, "添加", modifier = Modifier.size(35.dp))
                 }
             }
         },
         bottomBar = {
-            AnimatedVisibility(
-                visible = selecting,
-                enter = expandVertically(),
-                exit = shrinkVertically(),
-            ) {
-                Surface(tonalElevation = 3.dp, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                    ) {
-                        SelectAction(
-                            icon = Icons.Outlined.SelectAll,
-                            label = if (selectedIds.size == notes.size && notes.isNotEmpty()) "取消全选" else "全选",
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            if (selectedIds.size == notes.size) selectedIds.clear()
-                            else { selectedIds.clear(); selectedIds.addAll(notes.map { it.id }) }
+            if (selecting) {
+                SelectionBar(
+                    allSelected = notes.isNotEmpty() && selectedIds.size == notes.size,
+                    enabled = selectedIds.isNotEmpty(),
+                    onAll = {
+                        if (selectedIds.size == notes.size) selectedIds.clear()
+                        else {
+                            selectedIds.clear()
+                            selectedIds.addAll(notes.map { it.id })
                         }
-                        SelectAction(
-                            icon = Icons.Outlined.PushPin,
-                            label = "置顶",
-                            modifier = Modifier.weight(1f),
-                            enabled = selectedIds.isNotEmpty(),
-                        ) {
-                            val allPinned = notes.filter { it.id in selectedIds }.all { it.pinned }
-                            vm.setPinnedBatch(selectedIds.toList(), !allPinned)
-                            exitSelection()
-                        }
-                        SelectAction(
-                            icon = Icons.Outlined.MoveToInbox,
-                            label = "分类",
-                            modifier = Modifier.weight(1f),
-                            enabled = selectedIds.isNotEmpty(),
-                        ) {
-                            batchMoveOpen = selectedIds.isNotEmpty()
-                        }
-                        SelectAction(
-                            icon = Icons.Outlined.DeleteOutline,
-                            label = "删除",
-                            modifier = Modifier.weight(1f),
-                            enabled = selectedIds.isNotEmpty(),
-                            tint = MaterialTheme.colorScheme.error,
-                        ) {
-                            vm.trashNotes(selectedIds.toList())
-                            exitSelection()
-                        }
-                    }
-                }
+                    },
+                    onPin = {
+                        val allPinned = notes.filter { it.id in selectedIds }.all { it.pinned }
+                        vm.setPinnedBatch(selectedIds.toList(), !allPinned)
+                        exitSelection()
+                    },
+                    onMove = { moveOpen = true },
+                    onDelete = {
+                        vm.trashNotes(selectedIds.toList())
+                        exitSelection()
+                    },
+                )
+            } else {
+                MiBottomNavigation(selected = tab, onSelect = vm::switchTab)
             }
         },
-    ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
-            Column(Modifier.fillMaxSize()) {
-                if (tab == MainTab.NOTES && !selecting) {
-                    FolderChipsRow(
-                        folders = folders,
-                        currentId = filter.folderId,
-                        onSelect = { vm.selectFolder(it) },
-                        onAddFolder = { newFolderOpen = true },
-                        onManage = { vm.goFolders() },
-                    )
-                }
-
-                Crossfade(targetState = tab, label = "homeTab") { current ->
-                    if (current == MainTab.TODO) {
-                        TodoPane(vm)
-                    } else {
-                        NotesBody(
-                            vm = vm,
+    ) { scaffoldPadding ->
+        Column(Modifier.padding(scaffoldPadding).fillMaxSize()) {
+            if (tab == MainTab.NOTES) {
+                NotesHeader(
+                    query = filter.query,
+                    folders = folders,
+                    selectedFolderId = filter.folderId,
+                    unclassifiedOnly = filter.unclassifiedOnly,
+                    selecting = selecting,
+                    selectionCount = selectedIds.size,
+                    onQuery = vm::setQuery,
+                    onFolder = vm::selectFolder,
+                    onUnclassified = vm::selectUnclassified,
+                    onFolders = vm::goFolders,
+                    onSettings = vm::goSettings,
+                    onCloseSelection = ::exitSelection,
+                )
+                if (notes.isEmpty()) {
+                    EmptyState("还没有笔记", "点击右下角 + 开始记录")
+                } else {
+                    val onLongPress: (Note) -> Unit = { note ->
+                        if (!selecting) selecting = true
+                        if (note.id !in selectedIds) selectedIds.add(note.id)
+                    }
+                    val onToggle: (Note) -> Unit = { note ->
+                        if (note.id in selectedIds) selectedIds.remove(note.id)
+                        else selectedIds.add(note.id)
+                    }
+                    if (gridMode) {
+                        NotesMasonry(
                             notes = notes,
                             folders = folders,
-                            searchActive = searchActive,
-                            gridMode = gridMode,
-                            query = filter.query,
-                            selecting = selecting,
                             selectedIds = selectedIds,
-                            onStartSelect = { id ->
-                                selecting = true
-                                selectedIds.add(id)
-                            },
+                            selecting = selecting,
+                            onOpen = vm::openEditor,
+                            onLongPress = onLongPress,
+                            onToggleSelected = onToggle,
+                        )
+                    } else {
+                        NotesList(
+                            notes = notes,
+                            folders = folders,
+                            selectedIds = selectedIds,
+                            selecting = selecting,
+                            onOpen = vm::openEditor,
+                            onLongPress = onLongPress,
+                            onToggleSelected = onToggle,
                         )
                     }
                 }
-            }
-
-            if (fabOpen) {
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { fabOpen = false },
-                )
+            } else {
+                TodoHeader(onSettings = vm::goSettings)
+                TodoPane(vm, modifier = Modifier.weight(1f))
             }
         }
     }
 
-    if (batchMoveOpen) {
+    if (moveOpen) {
         MoveFolderDialog(
             current = null,
             folders = folders,
-            onDismiss = { batchMoveOpen = false },
-            onPick = { target ->
-                vm.moveToFolderBatch(selectedIds.toList(), target)
-                batchMoveOpen = false
+            onDismiss = { moveOpen = false },
+            onPick = { folder ->
+                vm.moveToFolderBatch(selectedIds.toList(), folder)
+                moveOpen = false
                 exitSelection()
             },
         )
     }
+}
 
-    if (newFolderOpen) {
-        NewFolderDialog(
-            onCreate = { name ->
-                vm.createFolder(name) { ok -> if (ok) newFolderOpen = false }
-            },
-            onDismiss = { newFolderOpen = false },
+@Composable
+private fun NotesHeader(
+    query: String,
+    folders: List<Folder>,
+    selectedFolderId: Long?,
+    unclassifiedOnly: Boolean,
+    selecting: Boolean,
+    selectionCount: Int,
+    onQuery: (String) -> Unit,
+    onFolder: (Long?) -> Unit,
+    onUnclassified: () -> Unit,
+    onFolders: () -> Unit,
+    onSettings: () -> Unit,
+    onCloseSelection: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
+        if (selecting) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 16.dp),
+            ) {
+                Icon(
+                    Icons.Outlined.Close,
+                    "退出多选",
+                    modifier = Modifier.size(28.dp).clickable(onClick = onCloseSelection),
+                )
+                Spacer(Modifier.width(20.dp))
+                Text("已选 $selectionCount 项", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+            }
+            return@Column
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+        ) {
+            Icon(
+                Icons.Outlined.FolderOpen,
+                contentDescription = "分类",
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(31.dp).clickable(onClick = onFolders),
+            )
+            Spacer(Modifier.width(24.dp))
+            MiSettingsButton(onClick = onSettings)
+        }
+
+        Text(
+            "笔记",
+            color = MaterialTheme.colorScheme.onBackground,
+            fontSize = 39.sp,
+            lineHeight = 46.sp,
+            fontWeight = FontWeight.Normal,
+            modifier = Modifier.padding(start = 27.dp, top = 25.dp, bottom = 22.dp),
+        )
+
+        SearchPill(query = query, onQuery = onQuery)
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
+        ) {
+            item("all") {
+                CategoryChip("全部", selectedFolderId == null && !unclassifiedOnly) { onFolder(null) }
+            }
+            items(folders, key = { it.id }) { folder ->
+                CategoryChip(folder.name, selectedFolderId == folder.id) { onFolder(folder.id) }
+            }
+            if (folders.none { it.name == "未分类" }) {
+                item("uncategorized") { CategoryChip("未分类", unclassifiedOnly, onUnclassified) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoHeader(onSettings: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.End,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+        ) {
+            MiSettingsButton(onClick = onSettings)
+        }
+        Text(
+            "待办",
+            fontSize = 39.sp,
+            lineHeight = 46.sp,
+            fontWeight = FontWeight.Normal,
+            modifier = Modifier.padding(start = 27.dp, top = 25.dp, bottom = 19.dp),
         )
     }
 }
 
 @Composable
-private fun SortItem(label: String, checked: Boolean, onClick: () -> Unit) {
-    DropdownMenuItem(
-        text = { Text(if (checked) "✓ $label" else label) },
-        onClick = onClick,
-    )
+private fun SearchPill(query: String, onQuery: (String) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(52.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 17.dp)) {
+            Icon(
+                Icons.Outlined.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                modifier = Modifier.size(27.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = onQuery,
+                singleLine = true,
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                textStyle = TextStyle(fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurface),
+                decorationBox = { inner ->
+                    Box {
+                        if (query.isEmpty()) {
+                            Text(
+                                "搜索笔记",
+                                fontSize = 17.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
+                            )
+                        }
+                        inner()
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            )
+            if (query.isNotEmpty()) {
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "清空搜索",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp).clickable { onQuery("") },
+                )
+            }
+        }
+    }
 }
 
-/** FAB 展开项：文字标签 + 圆形小按钮 */
 @Composable
-private fun FabMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 2.dp,
-        ) {
+private fun CategoryChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(15.dp),
+        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surface,
+        modifier = Modifier.height(42.dp).clickable(onClick = onClick),
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 14.dp)) {
             Text(
                 label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = 15.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Spacer(Modifier.width(10.dp))
-        SmallFloatingActionButton(
-            onClick = onClick,
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 2.dp),
-        ) {
-            Icon(icon, contentDescription = label)
-        }
     }
 }
 
-/** 分类横滑行（小米笔记首页样式，选中为黄底） */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FolderChipsRow(
-    folders: List<com.purenote.local.data.Folder>,
-    currentId: Long?,
-    onSelect: (Long?) -> Unit,
-    onAddFolder: () -> Unit,
-    onManage: () -> Unit,
-) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(vertical = 8.dp),
-    ) {
-        item(key = "all") {
-            MiChip(selected = currentId == null, label = "全部笔记", onClick = { onSelect(null) })
+fun MiSettingsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(32.dp).clickable(onClick = onClick)) {
+        val stroke = 2.1.dp.toPx()
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val radius = size.minDimension * 0.42f
+        val path = Path()
+        repeat(6) { index ->
+            val angle = Math.toRadians((index * 60.0) - 30.0)
+            val point = Offset(
+                cx + (radius * kotlin.math.cos(angle)).toFloat(),
+                cy + (radius * kotlin.math.sin(angle)).toFloat(),
+            )
+            if (index == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)
         }
-        items(folders, key = { it.id }) { folder ->
-            MiChip(selected = currentId == folder.id, label = folder.name, onClick = { onSelect(folder.id) })
-        }
-        item(key = "add") {
-            MiChip(selected = false, label = "＋ 分类", onClick = onAddFolder)
-        }
-        item(key = "manage") {
-            MiChip(selected = false, label = "管理", onClick = onManage)
-        }
+        path.close()
+        drawPath(path, Color(0xFF222222), style = Stroke(width = stroke, cap = StrokeCap.Round))
+        drawCircle(
+            color = Color(0xFF222222),
+            radius = size.minDimension * 0.115f,
+            center = Offset(cx, cy),
+            style = Stroke(width = stroke),
+        )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MiChip(selected: Boolean, label: String, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        shape = RoundedCornerShape(50),
-        label = { Text(label, maxLines = 1) },
-        colors = FilterChipDefaults.filterChipColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            selectedContainerColor = MaterialTheme.colorScheme.primary,
-            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-        ),
-        border = if (selected) null else androidx.compose.foundation.BorderStroke(
-            1.dp,
-            MaterialTheme.colorScheme.outlineVariant,
-        ),
-    )
-}
-
-@Composable
-private fun NotesBody(
-    vm: NoteViewModel,
+private fun NotesMasonry(
     notes: List<Note>,
-    folders: List<com.purenote.local.data.Folder>,
-    searchActive: Boolean,
-    gridMode: Boolean,
-    query: String,
-    selecting: Boolean,
+    folders: List<Folder>,
     selectedIds: MutableList<Long>,
-    onStartSelect: (Long) -> Unit,
+    selecting: Boolean,
+    onOpen: (Note) -> Unit,
+    onLongPress: (Note) -> Unit,
+    onToggleSelected: (Note) -> Unit,
 ) {
-    Column(Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = searchActive,
-            enter = expandVertically(),
-            exit = shrinkVertically(),
-        ) {
-            val focusRequester = remember { FocusRequester() }
-            OutlinedTextField(
-                value = query,
-                onValueChange = { vm.setQuery(it) },
-                placeholder = { Text("搜索标题与内容") },
-                leadingIcon = { Icon(Icons.Outlined.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                singleLine = true,
-                shape = RoundedCornerShape(50),
-                colors = OutlinedTextFieldDefaults.colors(
-                    unfocusedBorderColor = Color.Transparent,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .focusRequester(focusRequester),
-            )
-            androidx.compose.runtime.LaunchedEffect(Unit) {
-                kotlinx.coroutines.delay(120)
-                runCatching { focusRequester.requestFocus() }
+    val left = mutableListOf<Note>()
+    val right = mutableListOf<Note>()
+    var leftHeight = 0
+    var rightHeight = 0
+    notes.forEach { note ->
+        val estimate = 95 + (note.body.length / 16).coerceAtMost(5) * 18 + if (note.images.isNotEmpty()) 135 else 0
+        if (leftHeight <= rightHeight) {
+            left += note
+            leftHeight += estimate
+        } else {
+            right += note
+            rightHeight += estimate
+        }
+    }
+
+    Row(Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
+        listOf(left, right).forEach { columnNotes ->
+            LazyColumn(
+                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                contentPadding = PaddingValues(bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(columnNotes, key = { it.id }) { note ->
+                    NoteCard(
+                        note = note,
+                        folderName = folders.firstOrNull { it.id == note.folderId }?.name,
+                        selected = note.id in selectedIds,
+                        onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
+                        onLongPress = { onLongPress(note) },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
             }
         }
+    }
+}
 
-        if (notes.isEmpty()) {
-            EmptyNotes(searchActive = searchActive)
-        } else {
-            NotesListArea(
-                vm = vm, notes = notes, folders = folders,
-                searchActive = searchActive, gridMode = gridMode,
-                selecting = selecting, selectedIds = selectedIds, onStartSelect = onStartSelect,
+@Composable
+private fun NotesList(
+    notes: List<Note>,
+    folders: List<Folder>,
+    selectedIds: MutableList<Long>,
+    selecting: Boolean,
+    onOpen: (Note) -> Unit,
+    onLongPress: (Note) -> Unit,
+    onToggleSelected: (Note) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(notes, key = { it.id }) { note ->
+            NoteCard(
+                note = note,
+                folderName = folders.firstOrNull { it.id == note.folderId }?.name,
+                selected = note.id in selectedIds,
+                onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
+                onLongPress = { onLongPress(note) },
+                modifier = Modifier.animateItem(),
             )
         }
     }
 }
 
 @Composable
-private fun EmptyNotes(searchActive: Boolean) {
+private fun EmptyState(title: String, subtitle: String) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(bottom = 120.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxSize().padding(bottom = 100.dp),
     ) {
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.size(92.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    if (searchActive) Icons.Outlined.ManageSearch else Icons.Outlined.Edit,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                    modifier = Modifier.size(34.dp),
-                )
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        Text(
-            if (searchActive) "没有匹配的笔记" else "还没有笔记",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (!searchActive) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "点右下角按钮开始记录",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-        }
+        Text(title, fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        Text(subtitle, fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
     }
-}
-
-/** 粗略估算卡片高度，用于把新卡片放进较矮的一列 */
-private fun estimateCardHeight(note: Note): Int {
-    var h = 78
-    if (note.images.isNotEmpty()) h += 150
-    h += when (note.kind) {
-        NoteKind.TEXT -> {
-            val rest = PreviewBuilder.splitTitle(note.body).second
-            ((rest.length / 15).coerceAtMost(6)) * 19
-        }
-        NoteKind.CHECKLIST -> {
-            val pending = note.items.count { !it.done }.coerceAtMost(4)
-            pending * 21 + 22
-        }
-    }
-    return h
 }
 
 @Composable
-private fun NotesListArea(
-    vm: NoteViewModel,
-    notes: List<Note>,
-    folders: List<com.purenote.local.data.Folder>,
-    searchActive: Boolean,
-    gridMode: Boolean,
-    selecting: Boolean,
-    selectedIds: MutableList<Long>,
-    onStartSelect: (Long) -> Unit,
-) {
-    fun openOrToggle(note: Note) {
-        if (selecting) {
-            if (note.id in selectedIds) selectedIds.remove(note.id) else selectedIds.add(note.id)
-        } else {
-            vm.openEditor(note)
-        }
-    }
-
-    fun longPress(note: Note) {
-        if (!selecting) onStartSelect(note.id) else openOrToggle(note)
-    }
-
-    if (gridMode && !searchActive) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-            val left = mutableListOf<Note>()
-            val right = mutableListOf<Note>()
-            var lh = 0
-            var rh = 0
-            notes.forEach { n ->
-                val eh = estimateCardHeight(n)
-                if (lh <= rh) { left += n; lh += eh } else { right += n; rh += eh }
-            }
-            listOf(left, right).forEach { columnNotes ->
-                LazyColumn(
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 130.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    items(columnNotes, key = { it.id }) { note ->
-                        NoteCard(
-                            note = note,
-                            folderName = folders.firstOrNull { it.id == note.folderId }?.name,
-                            onClick = { openOrToggle(note) },
-                            onLongPress = { longPress(note) },
-                            selected = note.id in selectedIds,
-                            modifier = Modifier.animateItem(),
-                        )
-                    }
-                }
-            }
-        }
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = 16.dp, end = 16.dp, top = 4.dp, bottom = 130.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            val pinnedCount = notes.count { it.pinned }
-            itemsIndexed(notes, key = { _, n -> n.id }) { index, note ->
-                if (index == 0 && pinnedCount > 0) {
-                    SectionLabel("置顶", MaterialTheme.colorScheme.secondary)
-                }
-                if (index == pinnedCount && pinnedCount in 1 until notes.size) {
-                    SectionLabel("其他笔记", MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                NoteCard(
-                    note = note,
-                    folderName = folders.firstOrNull { it.id == note.folderId }?.name,
-                    onClick = { openOrToggle(note) },
-                    onLongPress = { longPress(note) },
-                    selected = note.id in selectedIds,
-                    modifier = Modifier.animateItem(),
-                )
-            }
+private fun MiBottomNavigation(selected: MainTab, onSelect: (MainTab) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+        Row(modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(66.dp)) {
+            BottomItem(
+                label = "笔记",
+                selected = selected == MainTab.NOTES,
+                icon = Icons.Outlined.FormatListBulleted,
+                modifier = Modifier.weight(1f),
+            ) { onSelect(MainTab.NOTES) }
+            BottomItem(
+                label = "待办",
+                selected = selected == MainTab.TODO,
+                icon = Icons.Outlined.CheckBox,
+                modifier = Modifier.weight(1f),
+            ) { onSelect(MainTab.TODO) }
         }
     }
 }
 
 @Composable
-private fun SectionLabel(text: String, color: Color) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp, start = 2.dp),
-    ) {
-        Icon(
-            Icons.Outlined.PushPin,
-            contentDescription = null,
-            tint = color,
-            modifier = Modifier.size(13.dp),
-        )
-        Spacer(Modifier.width(4.dp))
-        Text(text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = color)
-    }
-}
-
-@Composable
-private fun NewFolderDialog(onCreate: (String) -> Unit, onDismiss: () -> Unit) {
-    var name by rememberSaveable { mutableStateOf("") }
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("新建分类") },
-        text = {
-            OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true)
-        },
-        confirmButton = {
-            TextButton(onClick = { onCreate(name) }) { Text("创建") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
-    )
-}
-
-/** 多选底栏的操作项：图标 + 文字 */
-@Composable
-private fun SelectAction(
-    icon: ImageVector,
+private fun BottomItem(
     label: String,
+    selected: Boolean,
+    icon: ImageVector,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    tint: Color = MaterialTheme.colorScheme.onSurface,
     onClick: () -> Unit,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier.fillMaxSize().clickable(onClick = onClick),
     ) {
-        Icon(
-            icon,
-            contentDescription = label,
-            tint = if (enabled) tint else tint.copy(alpha = 0.38f),
-            modifier = Modifier.size(22.dp),
-        )
+        Surface(
+            shape = RoundedCornerShape(5.dp),
+            color = if (selected) Color.Black else Color.Transparent,
+            modifier = Modifier.size(29.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    icon,
+                    contentDescription = label,
+                    tint = if (selected) Color.White else Color(0xFF9B9B9B),
+                    modifier = Modifier.size(23.dp),
+                )
+            }
+        }
         Spacer(Modifier.height(3.dp))
         Text(
             label,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (enabled) tint else tint.copy(alpha = 0.38f),
+            fontSize = 13.sp,
+            color = if (selected) Color.Black else Color(0xFF9B9B9B),
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
         )
+    }
+}
+
+@Composable
+private fun SelectionBar(
+    allSelected: Boolean,
+    enabled: Boolean,
+    onAll: () -> Unit,
+    onPin: () -> Unit,
+    onMove: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
+        Row(Modifier.fillMaxWidth().navigationBarsPadding().height(70.dp)) {
+            SelectionItem(Icons.Outlined.SelectAll, if (allSelected) "取消全选" else "全选", Modifier.weight(1f), true, onAll)
+            SelectionItem(Icons.Outlined.PushPin, "置顶", Modifier.weight(1f), enabled, onPin)
+            SelectionItem(Icons.Outlined.MoveToInbox, "分类", Modifier.weight(1f), enabled, onMove)
+            SelectionItem(Icons.Outlined.DeleteOutline, "删除", Modifier.weight(1f), enabled, onDelete)
+        }
+    }
+}
+
+@Composable
+private fun SelectionItem(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier.fillMaxSize().clickable(enabled = enabled, onClick = onClick),
+    ) {
+        Icon(icon, label, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .3f))
+        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .3f))
     }
 }

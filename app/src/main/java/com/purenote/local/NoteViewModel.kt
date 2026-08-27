@@ -39,6 +39,9 @@ sealed interface Screen {
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
+/** 小米笔记设置页中的三档正文尺寸。 */
+enum class NoteTextSize { SMALL, DEFAULT, LARGE }
+
 enum class MainTab { NOTES, TODO }
 
 class NoteViewModel(app: Application) : AndroidViewModel(app) {
@@ -73,8 +76,17 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     private val searchActiveInternal = MutableStateFlow(false)
     val searchActive: StateFlow<Boolean> = searchActiveInternal.asStateFlow()
 
-    private val gridInternal = MutableStateFlow(prefs.getBoolean(KEY_GRID, false))
+    private val gridInternal = MutableStateFlow(prefs.getBoolean(KEY_GRID, true))
     val gridMode: StateFlow<Boolean> = gridInternal.asStateFlow()
+
+    private val textSizeInternal = MutableStateFlow(
+        runCatching { NoteTextSize.valueOf(prefs.getString(KEY_TEXT_SIZE, null) ?: "DEFAULT") }
+            .getOrDefault(NoteTextSize.DEFAULT),
+    )
+    val noteTextSize: StateFlow<NoteTextSize> = textSizeInternal.asStateFlow()
+
+    private val strongReminderInternal = MutableStateFlow(prefs.getBoolean(KEY_STRONG_REMINDER, false))
+    val strongReminder: StateFlow<Boolean> = strongReminderInternal.asStateFlow()
 
     private val sortInternal = MutableStateFlow(
         runCatching { SortOrder.valueOf(prefs.getString(KEY_SORT, null) ?: "BY_UPDATED") }
@@ -207,6 +219,13 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    fun selectUnclassified() {
+        _tab.value = MainTab.NOTES
+        _filter.value = NoteFilter(unclassifiedOnly = true)
+        _screen.value = Screen.Home
+        refresh()
+    }
+
     fun setQuery(query: String) {
         _filter.value = _filter.value.copy(query = query)
         viewModelScope.launch { _notes.value = repo.loadNotes(_filter.value, sortInternal.value) }
@@ -223,8 +242,12 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     // ---- 布局/排序/主题 ----
 
     fun toggleGrid() {
-        gridInternal.value = !gridInternal.value
-        prefs.edit().putBoolean(KEY_GRID, gridInternal.value).apply()
+        setGridMode(!gridInternal.value)
+    }
+
+    fun setGridMode(grid: Boolean) {
+        gridInternal.value = grid
+        prefs.edit().putBoolean(KEY_GRID, grid).apply()
     }
 
     fun setSortOrder(order: SortOrder) {
@@ -236,6 +259,16 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     fun setThemeMode(mode: ThemeMode) {
         themeInternal.value = mode
         prefs.edit().putString(KEY_THEME, mode.name).apply()
+    }
+
+    fun setNoteTextSize(size: NoteTextSize) {
+        textSizeInternal.value = size
+        prefs.edit().putString(KEY_TEXT_SIZE, size.name).apply()
+    }
+
+    fun setStrongReminder(enabled: Boolean) {
+        strongReminderInternal.value = enabled
+        prefs.edit().putBoolean(KEY_STRONG_REMINDER, enabled).apply()
     }
 
     // ---- 笔记操作 ----
@@ -511,5 +544,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         const val KEY_GRID = "layout_grid"
         const val KEY_THEME = "theme_mode"
         const val KEY_SORT = "sort_order"
+        const val KEY_TEXT_SIZE = "note_text_size"
+        const val KEY_STRONG_REMINDER = "strong_reminder"
     }
 }

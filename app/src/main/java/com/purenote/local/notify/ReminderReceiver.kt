@@ -43,14 +43,21 @@ class ReminderReceiver : BroadcastReceiver() {
 
     private fun post(context: Context, kind: String, id: Long, title: String, text: String) {
         Reminders.ensureChannel(context)
+        val strong = context.getSharedPreferences("pure_prefs", Context.MODE_PRIVATE)
+            .getBoolean("strong_reminder", false)
         val notification: Notification = NotificationCompat.Builder(context, Reminders.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_reminder)
             .setContentTitle(title.ifBlank { context.getString(R.string.app_name) })
             .setContentText(text)
-            .setAutoCancel(true)
+            .setAutoCancel(!strong)
+            .setOngoing(strong)
+            .setPriority(if (strong) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(Reminders.openTargetIntent(context, kind, id))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .build()
+            .apply {
+                if (strong) flags = flags or Notification.FLAG_INSISTENT
+            }
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(id.toInt(), notification)
     }

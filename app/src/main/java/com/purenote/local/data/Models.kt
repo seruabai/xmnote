@@ -35,6 +35,7 @@ data class NoteFilter(
     val folderId: Long? = null,
     val query: String = "",
     val trashed: Boolean = false,
+    val unclassifiedOnly: Boolean = false,
 )
 
 /** 列表排序方式 */

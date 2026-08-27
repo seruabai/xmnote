@@ -111,15 +111,18 @@ fun MiCheckbox(done: Boolean, size: Dp, onClick: () -> Unit, modifier: Modifier 
 
 private data class SubDraft(val text: String, val done: Boolean)
 
-/** 待办列表（嵌入首页主体，小米六分组：已过期/今天/明天/更远/未计划/已完成） */
+/** 待办主页：参考图采用没有分节标题的连续大卡片列表。 */
 @Composable
 fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier) {
     val todos by vm.todos.collectAsState()
-    val groups = remember(todos) { TodoGrouper.group(todos) }
-    val collapsed = remember { mutableStateMapOf<TodoGroup, Boolean>() }
     val expandedLists = remember { mutableStateMapOf<Long, Boolean>() }
+    val rootTodos = remember(todos) {
+        todos.filter { !it.isSubtask }.sortedWith(
+            compareBy<Todo> { it.done }.thenBy { it.sortIndex }.thenByDescending { it.updatedAt },
+        )
+    }
 
-    if (todos.isEmpty()) {
+    if (rootTodos.isEmpty()) {
         Column(
             modifier.fillMaxSize(),
             verticalArrangement = Arrangement.Center,
@@ -143,33 +146,19 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 14.dp, end = 14.dp, top = 4.dp, bottom = 140.dp,
+            start = 14.dp, end = 14.dp, top = 2.dp, bottom = 110.dp,
         ),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        groups.forEach { (group, list) ->
-            if (list.isEmpty()) return@forEach
-            val isCollapsed = collapsed[group] == true
-            item(key = "header_$group") {
-                GroupHeader(
-                    group = group,
-                    count = list.size,
-                    collapsed = isCollapsed,
-                    onToggle = { collapsed[group] = !isCollapsed },
-                    extra = if (group == TodoGroup.DONE && !isCollapsed) ({ ClearDoneButton(vm) }) else null,
-                )
-            }
-            if (!isCollapsed) {
-                itemsIndexed(list, key = { _, t -> t.id }) { _, todo ->
-                    TodoCardRow(
-                        vm = vm,
-                        todo = todo,
-                        subs = TodoGrouper.subsOf(todo.id, todos),
-                        expanded = expandedLists[todo.id] ?: true,
-                        onExpandToggle = { expandedLists[todo.id] = !(expandedLists[todo.id] ?: true) },
-                        modifier = Modifier.animateItem(),
-                    )
-                }
-            }
+        itemsIndexed(rootTodos, key = { _, todo -> todo.id }) { _, todo ->
+            TodoCardRow(
+                vm = vm,
+                todo = todo,
+                subs = TodoGrouper.subsOf(todo.id, todos),
+                expanded = expandedLists[todo.id] ?: false,
+                onExpandToggle = { expandedLists[todo.id] = !(expandedLists[todo.id] ?: false) },
+                modifier = Modifier.animateItem(),
+            )
         }
     }
 }
@@ -250,7 +239,7 @@ private fun TodoCardRow(
         todo = todo,
         onFinishToggle = { vm.toggleTodo(todo) },
         onDelete = { vm.deleteTodo(todo) },
-        modifier = modifier.padding(top = 4.dp),
+        modifier = modifier,
     ) {
         Column(Modifier.fillMaxWidth()) {
             Row(
@@ -258,7 +247,7 @@ private fun TodoCardRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(enabled = isListTodo, onClick = onExpandToggle)
-                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                    .padding(horizontal = 19.dp, vertical = 23.dp),
             ) {
                 MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
@@ -404,7 +393,7 @@ private fun SwipeTodoRow(
             modifier = modifier,
             content = {
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(18.dp),
                     color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -559,32 +548,23 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
     ) {
         Surface(
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            color = MaterialTheme.colorScheme.background,
+            color = MaterialTheme.colorScheme.surface,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .fillMaxHeight(0.88f)
+                .fillMaxHeight(if (listMode || subs.isNotEmpty() || id > 0) 0.62f else 0.24f)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                 ) { /* 吞掉点击，避免穿透到遮罩 */ },
         ) {
             Column(Modifier.fillMaxSize().padding(horizontal = 18.dp)) {
-                Box(
-                    Modifier
-                        .padding(top = 8.dp, bottom = 2.dp)
-                        .align(Alignment.CenterHorizontally)
-                        .width(36.dp)
-                        .height(4.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp)),
-                )
-
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                    if (id > 0 || isNewSaved) {
-                        MiCheckbox(
-                            done = done,
-                            size = 20.dp,
-                            onClick = {
+                Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(top = 24.dp, bottom = 4.dp)) {
+                    MiCheckbox(
+                        done = done,
+                        size = 20.dp,
+                        onClick = {
+                            if (id > 0 || isNewSaved) {
                                 val direction = !done
                                 persist {
                                     vm.toggleTodo(
@@ -596,17 +576,17 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
                                     )
                                 }
                                 done = direction
-                            },
-                        )
-                        Spacer(Modifier.width(10.dp))
-                    }
+                            }
+                        },
+                    )
+                    Spacer(Modifier.width(13.dp))
                     BasicTextField(
                         value = title,
                         onValueChange = ::onTitleInput,
                         textStyle = TextStyle(
-                            fontSize = 18.sp,
-                            lineHeight = 25.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 17.sp,
+                            lineHeight = 23.sp,
+                            fontWeight = FontWeight.Normal,
                             color = MaterialTheme.colorScheme.onSurface,
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -614,16 +594,16 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
                             Box {
                                 if (title.isEmpty()) {
                                     Text(
-                                        if (listMode) "待办清单" else "请输入待办事项…",
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.SemiBold,
+                                        if (listMode) "待办清单" else "回车即可连续添加待办",
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Normal,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.42f),
                                     )
                                 }
                                 inner()
                             }
                         },
-                        modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+                        modifier = Modifier.weight(1f),
                     )
                     if (id > 0) {
                         IconButton(onClick = { confirmDelete = true }) {
@@ -698,7 +678,7 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
                     }
                 }
 
-                // 底部标签栏：今天/明天快捷胶囊 + 设置提醒 + 完成
+                // 参考图七的底部操作：设置提醒 + 完成。
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -706,29 +686,6 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
                         .navigationBarsPadding()
                         .padding(top = 6.dp, bottom = 10.dp),
                 ) {
-                    val todayStart = TodoDates.startOfDay(System.currentTimeMillis())
-                    val tomorrowStart = TodoDates.startOfDay(System.currentTimeMillis(), 1)
-                    QuickDayChip(
-                        label = "今天",
-                        selected = dueAt != null && TodoDates.startOfDay(dueAt!!) == todayStart,
-                    ) {
-                        dueAt =
-                            if (dueAt != null && TodoDates.startOfDay(dueAt!!) == todayStart) null
-                            else TodoDates.dayRemindFromToday(0)
-                        allDay = false
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    QuickDayChip(
-                        label = "明天",
-                        selected = dueAt != null && TodoDates.startOfDay(dueAt!!) == tomorrowStart,
-                    ) {
-                        dueAt =
-                            if (dueAt != null && TodoDates.startOfDay(dueAt!!) == tomorrowStart) null
-                            else TodoDates.dayRemindFromToday(1)
-                        allDay = false
-                    }
-                    Spacer(Modifier.width(8.dp))
-
                     Surface(
                         shape = RoundedCornerShape(50),
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
