@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.purenote.local.NoteTextSize
 import com.purenote.local.core.ChecklistCodec
 import com.purenote.local.core.PreviewBuilder
 import com.purenote.local.data.Note
@@ -45,6 +46,7 @@ fun NoteCard(
     onClick: () -> Unit,
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
+    textSize: NoteTextSize = NoteTextSize.DEFAULT,
     selected: Boolean = false,
 ) {
     Card(
@@ -69,8 +71,8 @@ fun NoteCard(
                 }
 
                 when (note.kind) {
-                    NoteKind.TEXT -> TextCardBody(note)
-                    NoteKind.CHECKLIST -> ChecklistCardBody(note)
+                    NoteKind.TEXT -> TextCardBody(note, textSize)
+                    NoteKind.CHECKLIST -> ChecklistCardBody(note, textSize)
                 }
 
                 Spacer(Modifier.height(10.dp))
@@ -108,7 +110,8 @@ fun NoteCard(
 }
 
 @Composable
-private fun TextCardBody(note: Note) {
+private fun TextCardBody(note: Note, textSize: NoteTextSize) {
+    val typeScale = textSize.typeScale()
     val (firstLine, rest) = PreviewBuilder.splitTitle(note.body)
     val head = note.title.ifBlank { firstLine }
     val preview = if (note.title.isBlank()) rest else note.body
@@ -116,7 +119,10 @@ private fun TextCardBody(note: Note) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 head,
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = typeScale.cardTitleSp.sp,
+                    lineHeight = typeScale.cardTitleLineHeightSp.sp,
+                ),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -131,7 +137,10 @@ private fun TextCardBody(note: Note) {
     if (preview.isNotBlank()) {
         Text(
             PreviewBuilder.textPreview(preview),
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = typeScale.cardBodySp.sp,
+                lineHeight = typeScale.cardBodyLineHeightSp.sp,
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 6,
             overflow = TextOverflow.Ellipsis,
@@ -140,7 +149,8 @@ private fun TextCardBody(note: Note) {
 }
 
 @Composable
-private fun ChecklistCardBody(note: Note) {
+private fun ChecklistCardBody(note: Note, textSize: NoteTextSize) {
+    val typeScale = textSize.typeScale()
     val (done, total) = ChecklistCodec.progress(note.items)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -171,7 +181,10 @@ private fun ChecklistCardBody(note: Note) {
             Spacer(Modifier.width(7.dp))
             Text(
                 "全部已完成",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = typeScale.cardBodySp.sp,
+                    lineHeight = typeScale.cardBodyLineHeightSp.sp,
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
             )
@@ -188,7 +201,10 @@ private fun ChecklistCardBody(note: Note) {
                 Spacer(Modifier.width(7.dp))
                 Text(
                     item.text,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = typeScale.cardBodySp.sp,
+                        lineHeight = typeScale.cardBodyLineHeightSp.sp,
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

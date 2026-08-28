@@ -66,7 +66,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * 跨应用速记侧栏。右缘窄把手点按或向左滑动后打开全屏毛玻璃面板，
+ * 跨应用速记侧栏。右缘窄把手点按或向左滑动后打开全屏虚化面板，
  * 可浏览最近笔记、勾选待办、内联新增待办或跳转到完整笔记编辑器。
  */
 class QuickCaptureService : Service() {
@@ -305,10 +305,10 @@ class QuickCaptureService : Service() {
             onDismiss = { direction -> dismissPanel(direction) }
             isDismissInProgress = { dismissingPanel }
         }
-        // 毛玻璃固定覆盖整个屏幕；下方内容层独立滑动，避免出现边界生硬的玻璃矩形。
-        val glassBackdrop = View(this).apply { setBackgroundColor(0x786A7682) }
+        // 背景虚化层固定覆盖全屏；只有内容层位移，拖动过程中不会露出矩形色块边界。
+        val blurBackdrop = View(this).apply { setBackgroundColor(blurScrimColor()) }
         root.addView(
-            glassBackdrop,
+            blurBackdrop,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
         )
         val scroll = ScrollView(this).apply {
@@ -354,9 +354,9 @@ class QuickCaptureService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-            applyGlassBlur(this)
+            applyBackgroundBlur(this)
         }
-        bindGlassProgress(root, glassBackdrop, params)
+        bindBackgroundBlurProgress(root, blurBackdrop, params)
         root.setMotionOffset(
             offset = if (animateOpening) resources.displayMetrics.widthPixels.toFloat() else 0f,
             progress = if (animateOpening) 1f else 0f,
@@ -610,9 +610,9 @@ class QuickCaptureService : Service() {
             onDismiss = { closeEditor() }
             isDismissInProgress = { dismissingPanel }
         }
-        val glassBackdrop = View(this).apply { setBackgroundColor(0x786A7682) }
+        val blurBackdrop = View(this).apply { setBackgroundColor(blurScrimColor()) }
         root.addView(
-            glassBackdrop,
+            blurBackdrop,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
         )
         val editorLayer = FrameLayout(this)
@@ -840,9 +840,9 @@ class QuickCaptureService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-            applyGlassBlur(this)
+            applyBackgroundBlur(this)
         }
-        bindGlassProgress(root, glassBackdrop, params)
+        bindBackgroundBlurProgress(root, blurBackdrop, params)
         root.setMotionOffset(0f, 0f)
         panel = root
         wm.addView(root, params)
@@ -1091,11 +1091,11 @@ class QuickCaptureService : Service() {
     private fun dip(dp: Float): Int = (dp * resources.displayMetrics.density).toInt()
 
     /**
-     * Android 12 及以上让 WindowManager 对悬浮窗背后的桌面/应用执行跨窗口虚化。
-     * 若系统或省电模式关闭了该能力，View 自身的半透明底色仍提供可读的柔和降级层。
+     * Android 12 及以上让 WindowManager 对悬浮窗背后的桌面/应用执行真正的跨窗口虚化。
+     * 旧系统无法在不申请录屏权限的情况下读取其他应用画面，因此使用无色偏暗化层降级。
      */
     @Suppress("DEPRECATION")
-    private fun applyGlassBlur(params: WindowManager.LayoutParams) {
+    private fun applyBackgroundBlur(params: WindowManager.LayoutParams) {
         if (Build.VERSION.SDK_INT >= 31) {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
             params.setBlurBehindRadius(dip(PANEL_BLUR_RADIUS_DP))
@@ -1103,19 +1103,23 @@ class QuickCaptureService : Service() {
     }
 
     /**
-     * 固定的全屏毛玻璃与滑动内容共用一个进度。使用平方根曲线后，内容移出一半时
-     * 仍保留约 70.7% 的背景虚化，视觉上连续而不会出现一块移动的矩形玻璃。
+     * 全屏虚化与内容位移共用一个可中断进度。平方根响应使内容移出一半时仍保留
+     * 约 70.7% 的虚化；半径按 2dp 量化，减少跨进程窗口参数逐像素更新产生的闪烁。
      */
-    private fun bindGlassProgress(
+    private fun bindBackgroundBlurProgress(
         root: EdgeDismissFrame,
         backdrop: View,
         params: WindowManager.LayoutParams,
     ) {
         var lastBlurRadius = -1
+        val maxBlurRadius = dip(PANEL_BLUR_RADIUS_DP)
+        val blurStep = dip(PANEL_BLUR_STEP_DP).coerceAtLeast(1)
         root.onMotionProgress = { _, strength ->
-            backdrop.alpha = strength
+            backdrop.alpha = strength.coerceIn(0f, 1f)
             if (Build.VERSION.SDK_INT >= 31) {
-                val radius = (dip(PANEL_BLUR_RADIUS_DP) * strength).roundToInt().coerceAtLeast(0)
+                val rawRadius = (maxBlurRadius * strength).coerceIn(0f, maxBlurRadius.toFloat())
+                val radius = ((rawRadius / blurStep).roundToInt() * blurStep)
+                    .coerceIn(0, maxBlurRadius)
                 if (radius != lastBlurRadius) {
                     lastBlurRadius = radius
                     params.setBlurBehindRadius(radius)
@@ -1125,6 +1129,12 @@ class QuickCaptureService : Service() {
                 }
             }
         }
+    }
+
+    /** 真虚化只需要轻微压暗保证白色标题可读；降级层更深，但不再带蓝灰色偏。 */
+    private fun blurScrimColor(): Int {
+        val crossWindowBlur = Build.VERSION.SDK_INT >= 31 && wm.isCrossWindowBlurEnabled
+        return if (crossWindowBlur) 0x48000000 else 0x68000000
     }
 
     @Suppress("DEPRECATION")
@@ -1446,7 +1456,8 @@ class QuickCaptureService : Service() {
         private const val HANDLE_GESTURE_UNDECIDED = 0
         private const val HANDLE_GESTURE_OPEN = 1
         private const val HANDLE_GESTURE_MOVE = 2
-        private const val PANEL_BLUR_RADIUS_DP = 32
+        private const val PANEL_BLUR_RADIUS_DP = 46
+        private const val PANEL_BLUR_STEP_DP = 2
         private const val PANEL_ENTER_DURATION_MS = 230L
         private const val PANEL_EXIT_DURATION_MS = 180L
         private const val PANEL_SETTLE_DURATION_MS = 180L

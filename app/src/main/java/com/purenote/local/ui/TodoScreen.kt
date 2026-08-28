@@ -256,7 +256,7 @@ private fun TodoCardRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = isListTodo, onClick = onExpandToggle)
+                    .clickable { vm.openTodoEditor(todo.id) }
                     .padding(horizontal = 19.dp, vertical = 23.dp),
             ) {
                 MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
@@ -279,26 +279,33 @@ private fun TodoCardRow(
                     }
                 }
                 if (isListTodo) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "$doneCount/${subs.size}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    )
                     val arrowRotation by animateFloatAsState(
                         targetValue = if (expanded) 0f else -90f,
                         animationSpec = tween(200),
                         label = "expandArrow",
                     )
-                    Icon(
-                        Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = if (expanded) "收起清单" else "展开清单",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .padding(start = 4.dp)
-                            .size(18.dp)
-                            .rotate(arrowRotation),
-                    )
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onExpandToggle)
+                            .padding(start = 8.dp, end = 2.dp, top = 7.dp, bottom = 7.dp),
+                    ) {
+                        Text(
+                            "$doneCount/${subs.size}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        )
+                        Icon(
+                            Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = if (expanded) "收起清单" else "展开清单",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .padding(start = 4.dp)
+                                .size(18.dp)
+                                .rotate(arrowRotation),
+                        )
+                    }
                 }
             }
 

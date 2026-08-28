@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -231,6 +232,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         SimpleDateFormat("M月d日 HH:mm", Locale.getDefault()).format(Date())
     }
     val words = title.length + body.length + items.sumOf { it.text.length }
+    val typeScale = preferredTextSize.typeScale()
 
     Scaffold(
         containerColor = noteContainerColor(colorIndex),
@@ -329,8 +331,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             Modifier.padding(padding).fillMaxSize().padding(horizontal = 22.dp),
         ) {
             val titleTextStyle = TextStyle(
-                fontSize = 31.sp,
-                lineHeight = 38.sp,
+                fontSize = typeScale.editorTitleSp.sp,
+                lineHeight = typeScale.editorTitleLineHeightSp.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
                 platformStyle = PlatformTextStyle(includeFontPadding = false),
@@ -347,7 +349,9 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { inner ->
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = (typeScale.editorTitleLineHeightSp + 4f).dp),
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         if (title.isEmpty()) {
@@ -359,7 +363,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                         inner()
                     }
                 },
-                modifier = Modifier.fillMaxWidth().padding(top = 19.dp).height(42.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 19.dp),
             )
 
             Text(
@@ -387,6 +391,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 )
                 NoteKind.CHECKLIST -> ChecklistEditor(
                     items = items,
+                    textSize = preferredTextSize,
                     onChangeList = ::markDirty,
                     modifier = Modifier.weight(1f),
                 )
@@ -444,26 +449,34 @@ private fun TextNoteBody(
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val fontSize = when (textSize) {
-        NoteTextSize.SMALL -> 16.sp
-        NoteTextSize.DEFAULT -> 18.sp
-        NoteTextSize.LARGE -> 21.sp
-    }
+    val typeScale = textSize.typeScale()
+    val bodyTextStyle = TextStyle(
+        fontSize = typeScale.editorBodySp.sp,
+        lineHeight = typeScale.editorBodyLineHeightSp.sp,
+        color = MaterialTheme.colorScheme.onSurface,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Top,
+            trim = LineHeightStyle.Trim.Both,
+        ),
+    )
     val scroll = rememberScrollState()
     BasicTextField(
         value = value,
         onValueChange = onChange,
-        textStyle = TextStyle(
-            fontSize = fontSize,
-            lineHeight = fontSize * 1.55f,
-            color = MaterialTheme.colorScheme.onSurface,
-        ),
+        textStyle = bodyTextStyle,
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         decorationBox = { inner ->
-            Box {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopStart,
+            ) {
                 if (value.isEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("开始书写或", fontSize = 19.sp, color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(
+                            "开始书写或",
+                            style = bodyTextStyle.copy(color = MaterialTheme.colorScheme.outlineVariant),
+                        )
                         Spacer(Modifier.width(9.dp))
                         Surface(
                             shape = RoundedCornerShape(10.dp),
@@ -509,9 +522,11 @@ private fun ImagesStrip(names: List<String>, onDelete: (String) -> Unit) {
 @Composable
 private fun ChecklistEditor(
     items: MutableList<ChecklistItem>,
+    textSize: NoteTextSize,
     onChangeList: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val typeScale = textSize.typeScale()
     LazyColumn(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         itemsIndexed(items) { index, item ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
@@ -523,15 +538,30 @@ private fun ChecklistEditor(
                     value = item.text,
                     onValueChange = { items[index] = item.copy(text = it); onChangeList() },
                     textStyle = TextStyle(
-                        fontSize = 17.sp,
-                        lineHeight = 23.sp,
+                        fontSize = typeScale.checklistSp.sp,
+                        lineHeight = typeScale.checklistLineHeightSp.sp,
                         color = if (item.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                         textDecoration = if (item.done) TextDecoration.LineThrough else null,
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both,
+                        ),
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { inner ->
                         Box {
-                            if (item.text.isEmpty()) Text("清单内容", color = MaterialTheme.colorScheme.outlineVariant)
+                            if (item.text.isEmpty()) {
+                                Text(
+                                    "清单内容",
+                                    style = TextStyle(
+                                        fontSize = typeScale.checklistSp.sp,
+                                        lineHeight = typeScale.checklistLineHeightSp.sp,
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    ),
+                                )
+                            }
                             inner()
                         }
                     },

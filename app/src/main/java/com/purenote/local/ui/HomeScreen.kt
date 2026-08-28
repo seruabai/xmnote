@@ -63,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.purenote.local.MainTab
+import com.purenote.local.NoteTextSize
 import com.purenote.local.NoteViewModel
 import com.purenote.local.data.Folder
 import com.purenote.local.data.Note
@@ -76,6 +77,7 @@ fun HomeScreen(vm: NoteViewModel) {
     val filter by vm.filter.collectAsState()
     val tab by vm.tab.collectAsState()
     val gridMode by vm.gridMode.collectAsState()
+    val noteTextSize by vm.noteTextSize.collectAsState()
 
     var selecting by remember { mutableStateOf(false) }
     val selectedIds = remember { mutableStateListOf<Long>() }
@@ -166,6 +168,7 @@ fun HomeScreen(vm: NoteViewModel) {
                         NotesMasonry(
                             notes = notes,
                             folders = folders,
+                            noteTextSize = noteTextSize,
                             selectedIds = selectedIds,
                             selecting = selecting,
                             onOpen = vm::openEditor,
@@ -176,6 +179,7 @@ fun HomeScreen(vm: NoteViewModel) {
                         NotesList(
                             notes = notes,
                             folders = folders,
+                            noteTextSize = noteTextSize,
                             selectedIds = selectedIds,
                             selecting = selecting,
                             onOpen = vm::openEditor,
@@ -398,6 +402,7 @@ fun MiSettingsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
 private fun NotesMasonry(
     notes: List<Note>,
     folders: List<Folder>,
+    noteTextSize: NoteTextSize,
     selectedIds: MutableList<Long>,
     selecting: Boolean,
     onOpen: (Note) -> Unit,
@@ -430,6 +435,7 @@ private fun NotesMasonry(
                     NoteCard(
                         note = note,
                         folderName = folders.firstOrNull { it.id == note.folderId }?.name,
+                        textSize = noteTextSize,
                         selected = note.id in selectedIds,
                         onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
                         onLongPress = { onLongPress(note) },
@@ -445,6 +451,7 @@ private fun NotesMasonry(
 private fun NotesList(
     notes: List<Note>,
     folders: List<Folder>,
+    noteTextSize: NoteTextSize,
     selectedIds: MutableList<Long>,
     selecting: Boolean,
     onOpen: (Note) -> Unit,
@@ -460,6 +467,7 @@ private fun NotesList(
             NoteCard(
                 note = note,
                 folderName = folders.firstOrNull { it.id == note.folderId }?.name,
+                textSize = noteTextSize,
                 selected = note.id in selectedIds,
                 onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
                 onLongPress = { onLongPress(note) },
