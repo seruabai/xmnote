@@ -49,7 +49,7 @@
 
 - 仓库：`seruabai/xmnote`（GitHub 仓库名，与内部名 PureNote 不同）
 - 包名 / 应用 id：`com.purenote.local`
-- 当前版本：**1.2.5**（versionCode 8）
+- 当前版本：**1.2.6**（versionCode 9）
 - 核心卖点：完全本地、无网络权限、数据不出设备
 
 > ⚠️ 命名注意：GitHub 仓库名是 `xmnote`，但 `settings.gradle.kts` 中 `rootProject.name` 是 `PureNote`，应用 displayName 为“纯记”。文档与代码中这两种写法都存在，**不要用“xmnote”当产品名**。
@@ -129,27 +129,30 @@ NoteRepository ←  SQLite 读写
 
 ---
 
-## 7. 版本发布流程（重要：修改代码≠发布版本）
+## 7. 版本发布流程（每次代码改动都必须升一个小版本并打 tag）
 
-**当你完成用户要求的功能/重构后，AI 默认只做「代码改动」，但不会自动发布版本。** 是否发布、升版本、打 tag，以用户明确指令为准。一旦用户说「发版」「发布新版本」「发一版」，就执行下面的完整闭环：
+**开发者要求：每一个代码改动都升级一个小版本并打 tag，防止版本混淆。** 因此当你完成**任何代码改动**（功能、重构、修复、甚至很小的调整）时，**自动执行下面的完整闭环，不需要等用户说「发版」**。
 
-### 7.1 版本号规则
+> 例外：仅修改文档/规范类文件（`AGENTS.md`、`wiki/`、`.agents/`、`README.md` 等）时**不升版本、不打 tag**，正常提交即可。只有动了 `app/` 下代码才升版本。
+
+### 7.1 版本号规则（小版本 = patch 位递增）
 - 版本号在 `app/build.gradle.kts` 的 `defaultConfig`：`versionName`（如 `1.2.5`）与 `versionCode`（整数，必须递增）。
-- 大版本（UI 重构、架构变更）→ `versionName` 升主/次位（如 `1.3.0`、`2.0.0`），`versionCode` +1。
-- 小修（bug fix、微调）→ `versionName` 升 patch（如 `1.2.6`），`versionCode` +1。
-- **`versionCode` 每次发布都必须比上次大**（Android 上架硬性要求），`versionName` 只在对外有意义。
+- **每次代码改动**：`versionCode` +1，`versionName` 的 **patch 位** +1（如 `1.2.5` → `1.2.6` → `1.2.7`）。
+- 仅当用户明确要求「大版本」时才升主/次位（如 `2.0.0`），否则一律走 patch 位。
+- **`versionCode` 每次都必须比上一次大**（Android 硬性要求），`versionName` 对外展示。
 
-### 7.2 发布完整步骤（按序执行，缺一不可）
-1. **确认代码完整**：功能全部实现、`./gradlew assembleDebug` 与 `./gradlew test` 通过。
-2. **更新 `app/build.gradle.kts`**：递增 `versionName` + `versionCode`，并更新 `AGENTS.md` 第 1 节的「当前版本」。
-3. **更新 `wiki/CHANGELOG.md`**：顶部追加一行版本记录，标注新版本号与主要改动。
-4. **`git add` + `git commit`**：提交信息用仓库风格，如 `feat: ...`。
-5. **打 tag**：`git tag v<versionName>`（如 `v1.3.0`），需与 `versionName` 一致。
-6. **推送到 GitHub**：`git push origin main --tags`（把代码和 tag 一起推上去）。
+### 7.2 每次代码改动的完整步骤（按序执行，缺一不可）
+1. **确认代码完整**：改动实现完毕、`./gradlew assembleDebug` 与 `./gradlew test` 通过。
+2. **更新 `app/build.gradle.kts`**：`versionCode` +1、`versionName` patch +1。
+3. **更新 `AGENTS.md` 第 1 节**的「当前版本」为新的 `versionName`。
+4. **更新 `wiki/CHANGELOG.md`**：顶部追加一行，标注新版本号与主要改动。
+5. **`git add` + `git commit`**：把代码改动和版本号放**同一个提交**，提交信息带版本号，如 `feat: 奶油暖黄主题 (v1.2.6)`。
+6. **打 tag**：`git tag v<versionName>`（与 `versionName` 完全一致），指向刚提交的版本。
+7. **推送到 GitHub**：`git push origin main --tags`（代码和 tag 一起推上去）。
 
 ### 7.3 禁止事项
-- **不要**在用户没要求发版时擅自升版本或打 tag。
-- **不要** 提交不完整/编译不过的代码当"发布"。
-- 若改动很大还没到发版阶段，只做普通功能提交（commit），**不升级版本、不打 tag**——等用户说发版再做 7.2。
+- **不要**只提交代码而漏掉升版本号或打 tag——每个代码改动都必须是完整的版本闭环。
+- **不要**重复使用已存在的版本号/tag；每个新代码改动都必须用一个新的 `vX.Y.Z`。
+- **不要** 提交编译不过的代码当"发布"。
 
-> 当前版本基线：**1.2.5**（versionCode 8），tag `v1.2.5`。下次发版时以此为起点递增。
+> 当前版本基线：**1.2.6**（versionCode 9），tag `v1.2.6`。下次代码改动 → `1.2.7`（versionCode 10）。
