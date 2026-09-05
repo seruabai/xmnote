@@ -53,23 +53,23 @@ fun formatNoteTime(ts: Long): String {
     }
 }
 
-/** 便签纸色盘：浅色/深色两套，index 0 为默认白纸 */
+/** 便签纸色盘：浅色/深色两套，index 0 为默认白纸。暖奶油纸感，无冷蓝/绿/紫。 */
 private val PaperLight = intArrayOf(
-    0xFFFFFFFF.toInt(),
-    0xFFFFF1C9.toInt(),
-    0xFFE2F0DF.toInt(),
-    0xFFE2EDFA.toInt(),
-    0xFFFAE5E1.toInt(),
-    0xFFEFEAF9.toInt(),
+    0xFFFFFDF7.toInt(),   // 奶油白纸
+    0xFFFFF1C9.toInt(),   // 乳黄
+    0xFFFCEBCB.toInt(),   // 杏黄
+    0xFFFAE9CF.toInt(),   // 蜜枣
+    0xFFF7E4D2.toInt(),   // 奶茶粉
+    0xFFF2DDD0.toInt(),   // 暖陶土
 )
 
 private val PaperDark = intArrayOf(
-    0xFF262420.toInt(),
-    0xFF3A3016.toInt(),
-    0xFF22301F.toInt(),
-    0xFF1F2A36.toInt(),
-    0xFF352422.toInt(),
-    0xFF292433.toInt(),
+    0xFF2B251C.toInt(),   // 暖奶咖
+    0xFF42341A.toInt(),   // 深乳黄
+    0xFF483918.toInt(),   // 深杏
+    0xFF4A3B1E.toInt(),   // 深蜜枣
+    0xFF4A3626.toInt(),   // 深奶茶
+    0xFF402A23.toInt(),   // 深陶土
 )
 
 /** 卡片纸色：跟随主题自动取浅/暗纸盘 */
