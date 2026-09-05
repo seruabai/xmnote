@@ -49,7 +49,7 @@
 
 - 仓库：`seruabai/xmnote`（GitHub 仓库名，与内部名 PureNote 不同）
 - 包名 / 应用 id：`com.purenote.local`
-- 当前版本：**1.2.6**（versionCode 9）
+- 当前版本：**1.2.7**（versionCode 10）
 - 核心卖点：完全本地、无网络权限、数据不出设备
 
 > ⚠️ 命名注意：GitHub 仓库名是 `xmnote`，但 `settings.gradle.kts` 中 `rootProject.name` 是 `PureNote`，应用 displayName 为“纯记”。文档与代码中这两种写法都存在，**不要用“xmnote”当产品名**。
@@ -155,4 +155,4 @@ NoteRepository ←  SQLite 读写
 - **不要**重复使用已存在的版本号/tag；每个新代码改动都必须用一个新的 `vX.Y.Z`。
 - **不要** 提交编译不过的代码当"发布"。
 
-> 当前版本基线：**1.2.6**（versionCode 9），tag `v1.2.6`。下次代码改动 → `1.2.7`（versionCode 10）。
+> 当前版本基线：**1.2.7**（versionCode 10），tag `v1.2.7`。下次代码改动 → `1.2.8`（versionCode 11）。

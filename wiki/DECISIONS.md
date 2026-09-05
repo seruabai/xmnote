@@ -10,6 +10,7 @@
 | - | 纯 SQLite 手写 SQL，无 Room/Hilt/Retrofit | 最小依赖 | 人工 |
 | - | 用 Jetpack Compose + Material 3，单 Activity 单模块 | 架构选择 | 人工 |
 | 2026-09-05 | 引入多AI协作规范：统一 AGENTS.md + .agents/skills + wiki/ 状态文件 | 避免多AI互相冲突、重复劳动 | 人工 |
+| 2026-09-05 | 侧栏把手由高饱和黄改为白色半透明并缩矮；展开背景去掉暗化层，仅保留纯模糊；拖动把手时面板跟手实时拉出 | 把手存在感过强、磨砂/暗化背景不符合预期 | opencode |
 
 ## 需要特别注意的既定结论
 

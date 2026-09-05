@@ -1,7 +1,5 @@
 package com.purenote.local.ui
 
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -126,11 +124,14 @@ private data class SubDraft(
 fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier) {
     val todos by vm.todos.collectAsState()
     val expandedLists = remember { mutableStateMapOf<Long, Boolean>() }
+    var editingId by remember { mutableStateOf<Long?>(null) }
     val rootTodos = remember(todos) {
         todos.filter { !it.isSubtask }.sortedWith(
             compareBy<Todo> { it.done }.thenBy { it.sortIndex }.thenByDescending { it.updatedAt },
         )
     }
+
+    BackHandler(enabled = editingId != null) { editingId = null }
 
     if (rootTodos.isEmpty()) {
         Column(
@@ -167,6 +168,8 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier) {
                 subs = TodoGrouper.subsOf(todo.id, todos),
                 expanded = expandedLists[todo.id] ?: false,
                 onExpandToggle = { expandedLists[todo.id] = !(expandedLists[todo.id] ?: false) },
+                editingId = editingId,
+                onEditRequest = { editingId = it },
                 modifier = Modifier.animateItem(),
             )
         }
@@ -232,7 +235,11 @@ private fun GroupHeader(
     }
 }
 
-/** 单条待办卡片：白色圆角行 + 方形勾选 + 时间行；左右滑动 = 完成/删除（小米手势） */
+/**
+ * 单条待办卡片：白色圆角行 + 方形勾选 + 时间行；左右滑动 = 完成/删除（小米手势）。
+ * 点击文字直接进入行内编辑：标题变为输入栏，栏框下边多出一段，
+ * 左侧是选择提醒时间，右侧是完成按钮。
+ */
 @Composable
 private fun TodoCardRow(
     vm: NoteViewModel,
@@ -240,10 +247,53 @@ private fun TodoCardRow(
     subs: List<Todo>,
     expanded: Boolean,
     onExpandToggle: () -> Unit,
+    editingId: Long?,
+    onEditRequest: (Long?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val isListTodo = subs.isNotEmpty()
     val doneCount = subs.count { it.done }
+    val editing = editingId == todo.id
+
+    var wasEditing by remember { mutableStateOf(false) }
+    var editTitle by remember { mutableStateOf("") }
+    var editDueAt by remember { mutableStateOf<Long?>(null) }
+    var editAllDay by remember { mutableStateOf(false) }
+    var editRepeat by remember { mutableStateOf(RepeatRule.NONE) }
+    val drafts = remember { mutableStateListOf<SubDraft>() }
+    var remindOpen by remember { mutableStateOf(false) }
+    val titleFocus = remember { FocusRequester() }
+
+    fun saveEdits() {
+        val newTitle = editTitle.trim().ifBlank { todo.title.ifBlank { "待办清单" } }
+        if (newTitle != todo.title || editDueAt != todo.dueAt ||
+            editAllDay != todo.allDay || editRepeat != todo.repeat
+        ) {
+            vm.updateTodo(todo.id, newTitle, editDueAt, editAllDay, editRepeat)
+        }
+        if (isListTodo || drafts.isNotEmpty()) {
+            val current = subs.map { it.title.trim() to it.done }
+            val next = drafts.map { it.text.trim() to it.done }.filter { it.first.isNotBlank() }
+            if (next != current) vm.saveTodoSubs(todo.id, next)
+        }
+    }
+
+    LaunchedEffect(editing) {
+        if (editing) {
+            editTitle = todo.title
+            editDueAt = todo.dueAt
+            editAllDay = todo.allDay
+            editRepeat = todo.repeat
+            drafts.clear()
+            drafts.addAll(subs.map { SubDraft(it.title, it.done) })
+            wasEditing = true
+            kotlinx.coroutines.delay(80)
+            runCatching { titleFocus.requestFocus() }
+        } else if (wasEditing) {
+            wasEditing = false
+            saveEdits()
+        }
+    }
 
     SwipeTodoRow(
         todo = todo,
@@ -256,29 +306,61 @@ private fun TodoCardRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { vm.openTodoEditor(todo.id) }
-                    .padding(horizontal = 19.dp, vertical = 23.dp),
+                    .clickable { if (!editing) onEditRequest(todo.id) }
+                    .padding(horizontal = 19.dp, vertical = if (editing) 14.dp else 23.dp),
             ) {
                 MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
-                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(
-                        todo.title.ifBlank { "待办清单" },
-                        style = TextStyle(
+                if (editing) {
+                    BasicTextField(
+                        value = editTitle,
+                        onValueChange = { editTitle = it },
+                        textStyle = TextStyle(
                             fontSize = 16.sp,
                             lineHeight = 21.sp,
-                            color = if (todo.done) MaterialTheme.colorScheme.outlineVariant
-                            else MaterialTheme.colorScheme.onSurface,
+                            color = MaterialTheme.colorScheme.onSurface,
                         ),
-                        textDecoration = if (todo.done) TextDecoration.LineThrough else null,
-                        maxLines = if (isListTodo) 1 else 2,
-                        overflow = TextOverflow.Ellipsis,
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { onEditRequest(null) }),
+                        decorationBox = { inner ->
+                            Box {
+                                if (editTitle.isEmpty()) {
+                                    Text(
+                                        if (isListTodo) "待办清单" else "待办内容",
+                                        fontSize = 16.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.42f),
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 12.dp)
+                            .focusRequester(titleFocus),
                     )
-                    Spacer(Modifier.height(3.dp))
-                    if (todo.dueAt != null) {
-                        DueTimeText(todo = todo)
+                } else {
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(
+                            todo.title.ifBlank { "待办清单" },
+                            style = TextStyle(
+                                fontSize = 16.sp,
+                                lineHeight = 21.sp,
+                                color = if (todo.done) MaterialTheme.colorScheme.outlineVariant
+                                else MaterialTheme.colorScheme.onSurface,
+                            ),
+                            textDecoration = if (todo.done) TextDecoration.LineThrough else null,
+                            maxLines = if (isListTodo) 1 else 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        if (todo.dueAt != null) {
+                            DueTimeText(todo = todo)
+                        }
                     }
                 }
-                if (isListTodo) {
+                if (isListTodo && !editing) {
                     val arrowRotation by animateFloatAsState(
                         targetValue = if (expanded) 0f else -90f,
                         animationSpec = tween(200),
@@ -309,26 +391,186 @@ private fun TodoCardRow(
                 }
             }
 
-            if (isListTodo && expanded) {
-                subs.forEachIndexed { idx, sub ->
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 45.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (idx == 0) 0.45f else 0.25f),
+            if (editing) {
+                drafts.forEachIndexed { idx, draft ->
+                    InlineSubEditRow(
+                        draft = draft,
+                        onTextChange = { drafts[idx] = draft.copy(text = it) },
+                        onToggle = { drafts[idx] = draft.copy(done = !draft.done) },
+                        onRemove = { drafts.removeAt(idx) },
                     )
-                    SubListRow(vm = vm, sub = sub)
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 19.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 19.dp, end = 19.dp, top = 6.dp, bottom = 14.dp),
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clickable { remindOpen = true }
+                                .padding(start = 11.dp),
+                        ) {
+                            Icon(
+                                Icons.Outlined.Schedule,
+                                contentDescription = null,
+                                tint = if (editDueAt != null) MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                editDueAt?.let { TodoDates.formatDue(it, editAllDay, editRepeat) } ?: "设置提醒",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (editDueAt != null) MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                            if (editDueAt != null) {
+                                IconButton(onClick = {
+                                    editDueAt = null
+                                    editAllDay = false
+                                    editRepeat = RepeatRule.NONE
+                                }, modifier = Modifier.size(26.dp)) {
+                                    Icon(
+                                        Icons.Outlined.Close,
+                                        contentDescription = "取消提醒时间",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(13.dp),
+                                    )
+                                }
+                            } else {
+                                Spacer(Modifier.width(11.dp))
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    Text(
+                        "完成",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable { onEditRequest(null) }
+                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                    )
+                }
+            } else {
+                if (isListTodo && expanded) {
+                    subs.forEachIndexed { idx, sub ->
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 45.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (idx == 0) 0.45f else 0.25f),
+                        )
+                        SubListRow(
+                            vm = vm,
+                            sub = sub,
+                            onEdit = { onEditRequest(todo.id) },
+                        )
+                    }
                 }
             }
         }
     }
+
+    if (remindOpen) {
+        RemindPickerDialog(
+            initialDue = editDueAt,
+            initialAllDay = editAllDay,
+            initialRepeat = editRepeat,
+            onApply = { d, ad, rp ->
+                editDueAt = d
+                editAllDay = ad
+                editRepeat = rp
+                remindOpen = false
+            },
+            onClear = {
+                editDueAt = null
+                editAllDay = false
+                editRepeat = RepeatRule.NONE
+                remindOpen = false
+            },
+            onDismiss = { remindOpen = false },
+        )
+    }
 }
 
+/** 行内编辑模式的子待办输入行：勾选框 + 输入栏 + 删除。 */
 @Composable
-private fun SubListRow(vm: NoteViewModel, sub: Todo) {
+private fun InlineSubEditRow(
+    draft: SubDraft,
+    onTextChange: (String) -> Unit,
+    onToggle: () -> Unit,
+    onRemove: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { vm.openTodoEditor(sub.parentId ?: sub.id) }
+            .padding(start = 45.dp, end = 10.dp),
+    ) {
+        MiCheckbox(done = draft.done, size = 15.dp, onClick = onToggle)
+        BasicTextField(
+            value = draft.text,
+            onValueChange = onTextChange,
+            textStyle = TextStyle(
+                fontSize = 13.5.sp,
+                lineHeight = 18.sp,
+                color = if (draft.done) MaterialTheme.colorScheme.outlineVariant
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                textDecoration = if (draft.done) TextDecoration.LineThrough else null,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            singleLine = true,
+            decorationBox = { inner ->
+                Box {
+                    if (draft.text.isEmpty()) {
+                        Text(
+                            "待办内容",
+                            fontSize = 13.5.sp,
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
+                    }
+                    inner()
+                }
+            },
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 9.dp, vertical = 9.dp),
+        )
+        IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = "删除子待办",
+                tint = MaterialTheme.colorScheme.outlineVariant,
+                modifier = Modifier.size(13.dp),
+            )
+        }
+    }
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 45.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+    )
+}
+
+@Composable
+private fun SubListRow(vm: NoteViewModel, sub: Todo, onEdit: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEdit)
             .padding(start = 45.dp, end = 10.dp),
     ) {
         MiCheckbox(done = sub.done, size = 15.dp, onClick = { vm.toggleTodo(sub) })
@@ -933,7 +1175,8 @@ fun repeatLabel(rule: RepeatRule): String = when (rule) {
     RepeatRule.YEARLY -> "每年"
 }
 
-/** 提醒时间对话框：整天开关 + 到期日/时刻 + 重复规则（对应小米 RemindTimePickerDialog） */
+/** 提醒时间对话框：整天开关 + 日期/时间 + 重复规则（对应小米 RemindTimePickerDialog） */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun RemindPickerDialog(
     initialDue: Long?,
@@ -957,6 +1200,8 @@ private fun RemindPickerDialog(
     var allDay by remember { mutableStateOf(initialAllDay) }
     var repeat by remember { mutableStateOf(initialRepeat) }
     var repeatPickOpen by remember { mutableStateOf(false) }
+    var datePickOpen by remember { mutableStateOf(false) }
+    var timePickOpen by remember { mutableStateOf(false) }
 
     fun buildDue(): Long {
         if (allDay) return TodoDates.endOfDay(pickedDate)
@@ -995,23 +1240,10 @@ private fun RemindPickerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            val c = Calendar.getInstance().apply { timeInMillis = pickedDate }
-                            DatePickerDialog(
-                                context,
-                                { _, y, m, d ->
-                                    pickedDate = TodoDates.startOfDay(
-                                        Calendar.getInstance().apply { set(y, m, d, 12, 0, 0) }.timeInMillis,
-                                    )
-                                },
-                                c.get(Calendar.YEAR),
-                                c.get(Calendar.MONTH),
-                                c.get(Calendar.DAY_OF_MONTH),
-                            ).show()
-                        }
+                        .clickable { datePickOpen = true }
                         .padding(vertical = 12.dp),
                 ) {
-                    Text("到期日", style = MaterialTheme.typography.bodyLarge)
+                    Text("日期", style = MaterialTheme.typography.bodyLarge)
                     Spacer(Modifier.weight(1f))
                     Text(dateText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
                 }
@@ -1020,18 +1252,10 @@ private fun RemindPickerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                TimePickerDialog(
-                                    context,
-                                    { _, hh, mm -> minutes = hh * 60 + mm },
-                                    minutes / 60,
-                                    minutes % 60,
-                                    true,
-                                ).show()
-                            }
+                            .clickable { timePickOpen = true }
                             .padding(vertical = 12.dp),
                     ) {
-                        Text("时刻", style = MaterialTheme.typography.bodyLarge)
+                        Text("时间", style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.weight(1f))
                         Text(timeText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
                     }
@@ -1062,6 +1286,61 @@ private fun RemindPickerDialog(
             }
         },
     )
+
+    if (datePickOpen) {
+        val dateState = androidx.compose.material3.rememberDatePickerState(
+            initialSelectedDateMillis = pickedDate,
+        )
+        androidx.compose.material3.DatePickerDialog(
+            onDismissRequest = { datePickOpen = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dateState.selectedDateMillis?.let { millis ->
+                        // DatePicker 返回 UTC 零点，取 y/m/d 字段重建本地零点，避免时区偏移一天。
+                        val utc = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                            timeInMillis = millis
+                        }
+                        pickedDate = TodoDates.startOfDay(
+                            Calendar.getInstance().apply {
+                                set(utc.get(Calendar.YEAR), utc.get(Calendar.MONTH), utc.get(Calendar.DAY_OF_MONTH), 12, 0, 0)
+                            }.timeInMillis,
+                        )
+                    }
+                    datePickOpen = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { datePickOpen = false }) { Text("取消") }
+            },
+        ) {
+            androidx.compose.material3.DatePicker(state = dateState)
+        }
+    }
+
+    if (timePickOpen) {
+        val timeState = androidx.compose.material3.rememberTimePickerState(
+            initialHour = minutes / 60,
+            initialMinute = minutes % 60,
+            is24Hour = android.text.format.DateFormat.is24HourFormat(context),
+        )
+        AlertDialog(
+            onDismissRequest = { timePickOpen = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    minutes = timeState.hour * 60 + timeState.minute
+                    timePickOpen = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { timePickOpen = false }) { Text("取消") }
+            },
+            text = {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
+                    androidx.compose.material3.TimePicker(state = timeState)
+                }
+            },
+        )
+    }
 
     if (repeatPickOpen) {
         AlertDialog(

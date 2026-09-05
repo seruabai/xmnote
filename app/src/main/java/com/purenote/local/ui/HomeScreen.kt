@@ -33,13 +33,16 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -151,6 +154,7 @@ fun HomeScreen(vm: NoteViewModel) {
                     onUnclassified = vm::selectUnclassified,
                     onFolders = vm::goFolders,
                     onSettings = vm::goSettings,
+                    onCreateFolder = vm::createFolder,
                     onCloseSelection = ::exitSelection,
                 )
                 if (notes.isEmpty()) {
@@ -222,8 +226,13 @@ private fun NotesHeader(
     onUnclassified: () -> Unit,
     onFolders: () -> Unit,
     onSettings: () -> Unit,
+    onCreateFolder: (String, (Boolean) -> Unit) -> Unit,
     onCloseSelection: () -> Unit,
 ) {
+    var addFolderOpen by remember { mutableStateOf(false) }
+    var newFolderName by remember { mutableStateOf("") }
+    var newFolderError by remember { mutableStateOf<String?>(null) }
+
     Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
         if (selecting) {
             Row(
@@ -281,6 +290,78 @@ private fun NotesHeader(
             if (folders.none { it.name == "未分类" }) {
                 item("uncategorized") { CategoryChip("未分类", unclassifiedOnly, onUnclassified) }
             }
+            item("add_folder") {
+                AddCategoryChip(
+                    onClick = {
+                        newFolderName = ""
+                        newFolderError = null
+                        addFolderOpen = true
+                    },
+                )
+            }
+        }
+    }
+
+    if (addFolderOpen) {
+        AlertDialog(
+            onDismissRequest = { addFolderOpen = false },
+            title = { Text("新建分类") },
+            text = {
+                OutlinedTextField(
+                    value = newFolderName,
+                    onValueChange = {
+                        newFolderName = it
+                        newFolderError = null
+                    },
+                    placeholder = { Text("分类名称") },
+                    singleLine = true,
+                    isError = newFolderError != null,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = newFolderName.isNotBlank(),
+                    onClick = {
+                        onCreateFolder(newFolderName.trim()) { ok ->
+                            if (ok) {
+                                addFolderOpen = false
+                            } else {
+                                newFolderError = "名称重复或为空"
+                            }
+                        }
+                    },
+                ) { Text("创建") }
+            },
+            dismissButton = {
+                TextButton(onClick = { addFolderOpen = false }) { Text("取消") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun AddCategoryChip(onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(15.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.height(42.dp).clickable(onClick = onClick),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 14.dp),
+        ) {
+            Icon(
+                Icons.Outlined.Add,
+                contentDescription = "新建分类",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(17.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                "新建分类",
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

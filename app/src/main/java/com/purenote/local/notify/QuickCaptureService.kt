@@ -75,10 +75,17 @@ class QuickCaptureService : Service() {
     private lateinit var wm: WindowManager
     private var handle: View? = null
     private var panel: View? = null
+    private var panelParams: WindowManager.LayoutParams? = null
     private var panelLoading = false
     private var panelScroll: ScrollView? = null
     private var panelScrollY = 0
     private var dismissingPanel = false
+
+    // 跟手拖拽打开：把手左滑时面板实时跟随，松手后按阈值决定展开或退回。
+    private var interactiveOpen = false
+    private var dragDistance = 0f
+    private var openOnMount = false
+    private var discardOnMount = false
     private var inlineEditorDraft: OverlayTodoDraft? = null
     private var inlineSaveRevision = 0L
     private val inlineSaveMutex = Mutex()
@@ -147,7 +154,12 @@ class QuickCaptureService : Service() {
         panel?.let { runCatching { wm.removeView(it) } }
         handle = null
         panel = null
+        panelParams = null
         panelLoading = false
+        interactiveOpen = false
+        dragDistance = 0f
+        openOnMount = false
+        discardOnMount = false
     }
 
     private fun handleParams() = WindowManager.LayoutParams(
@@ -184,7 +196,7 @@ class QuickCaptureService : Service() {
             contentDescription = "纯记侧栏，左滑展开，上下拖动位置"
             addView(
                 View(this@QuickCaptureService).apply {
-                    background = rounded(0xCCFFB800.toInt(), 12f)
+                    background = rounded(HANDLE_COLOR, 12f)
                 },
                 FrameLayout.LayoutParams(
                     dip(HANDLE_VISIBLE_WIDTH_DP),
@@ -223,7 +235,14 @@ class QuickCaptureService : Service() {
                     }
                     when (gestureMode) {
                         HANDLE_GESTURE_OPEN -> {
+                            if (panel == null && !panelLoading && !interactiveOpen) showPanelInteractive()
+                            dragDistance = (-dx).coerceAtLeast(0f)
                             view.translationX = dx.coerceIn(-dip(HANDLE_SWIPE_PREVIEW_DP).toFloat(), 0f)
+                            (panel as? EdgeDismissFrame)
+                                ?.takeIf { interactiveOpen && !panelLoading }
+                                ?.setMotionOffset(
+                                    (resources.displayMetrics.widthPixels - dragDistance).coerceAtLeast(0f),
+                                )
                         }
                         HANDLE_GESTURE_MOVE -> {
                             params.y = (startY + dy.roundToInt()).coerceIn(0, handleTravelRange())
@@ -234,13 +253,7 @@ class QuickCaptureService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     when (gestureMode) {
-                        HANDLE_GESTURE_OPEN -> {
-                            if (-view.translationX >= dip(HANDLE_OPEN_THRESHOLD_DP)) {
-                                showPanel()
-                            } else {
-                                view.animate().translationX(0f).setDuration(130L).start()
-                            }
-                        }
+                        HANDLE_GESTURE_OPEN -> resolveOpenGesture(view)
                         HANDLE_GESTURE_MOVE -> persistHandleY(params.y)
                         else -> view.performClick()
                     }
@@ -248,13 +261,7 @@ class QuickCaptureService : Service() {
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     if (gestureMode == HANDLE_GESTURE_MOVE) persistHandleY(params.y)
-                    if (gestureMode == HANDLE_GESTURE_OPEN) {
-                        if (-view.translationX >= dip(HANDLE_OPEN_THRESHOLD_DP)) {
-                            showPanel()
-                        } else {
-                            view.animate().translationX(0f).setDuration(130L).start()
-                        }
-                    }
+                    if (gestureMode == HANDLE_GESTURE_OPEN) resolveOpenGesture(view)
                     gestureMode = HANDLE_GESTURE_UNDECIDED
                     true
                 }
@@ -269,10 +276,21 @@ class QuickCaptureService : Service() {
         if (panel != null || panelLoading) return
         panelLoading = true
         // 数据准备期间保留悬浮柄，面板真正挂载后再移除，避免桌面短暂空闪。
-        loadAndRenderPanel(animateIn = true)
+        loadAndRenderPanel(interactive = false)
     }
 
-    private fun loadAndRenderPanel(animateIn: Boolean = false) {
+    /** 把手左滑触发：面板先挂载为不可触摸并停在屏幕外，随手指实时跟进。 */
+    private fun showPanelInteractive() {
+        if (panel != null || panelLoading) return
+        panelLoading = true
+        interactiveOpen = true
+        dragDistance = 0f
+        openOnMount = false
+        discardOnMount = false
+        loadAndRenderPanel(interactive = true)
+    }
+
+    private fun loadAndRenderPanel(interactive: Boolean = false) {
         val repo = (application as PureNoteApp).repository
         scope.launch {
             runCatching {
@@ -282,19 +300,29 @@ class QuickCaptureService : Service() {
                 )
                 notes to todos
             }.onSuccess { (notes, todos) ->
-                postToMain { renderPanel(notes, todos, animateIn) }
+                postToMain { renderPanel(notes, todos, interactive = interactive) }
             }.onFailure {
                 postToMain {
-                    if (animateIn) panelLoading = false
+                    if (panel == null) panelLoading = false
+                    interactiveOpen = false
                     handle?.animate()?.translationX(0f)?.setDuration(130L)?.start()
                 }
             }
         }
     }
 
-    private fun renderPanel(notes: List<Note>, todos: List<Todo>, animateIn: Boolean = false) {
+    private fun renderPanel(notes: List<Note>, todos: List<Todo>, interactive: Boolean = false) {
+        if (interactive && interactiveOpen && discardOnMount) {
+            // 手指已回弹放弃打开：数据到得晚，直接丢弃这次挂载。
+            discardOnMount = false
+            interactiveOpen = false
+            panelLoading = false
+            return
+        }
+        val mountAsTap = !interactive || (interactiveOpen && openOnMount)
+        openOnMount = false
         val previousPanel = panel
-        val animateOpening = animateIn && previousPanel == null
+        val animateOpening = mountAsTap && previousPanel == null
         panelScrollY = panelScroll?.scrollY ?: panelScrollY
         unregisterPanelBackCallback()
         panelScroll = null
@@ -356,15 +384,25 @@ class QuickCaptureService : Service() {
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             applyBackgroundBlur(this)
         }
+        if (!mountAsTap) {
+            // 跟手阶段面板不吃触摸，事件仍交给把手，松手后才根据结果放开。
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        panelParams = params
         bindBackgroundBlurProgress(root, blurBackdrop, params)
+        val startOffset = if (mountAsTap || interactive) {
+            resources.displayMetrics.widthPixels.toFloat()
+        } else {
+            0f
+        }
         root.setMotionOffset(
-            offset = if (animateOpening) resources.displayMetrics.widthPixels.toFloat() else 0f,
-            progress = if (animateOpening) 1f else 0f,
+            offset = startOffset,
+            progress = if (startOffset > 0f) 1f else 0f,
         )
         panel = root
         wm.addView(root, params)
         panelLoading = false
-        if (previousPanel == null) {
+        if (previousPanel == null && mountAsTap) {
             handle?.let { runCatching { wm.removeView(it) } }
             handle = null
         }
@@ -379,6 +417,10 @@ class QuickCaptureService : Service() {
                     root.animateMotionTo(0f, 0f, PANEL_ENTER_DURATION_MS)
                 }
             }
+        }
+        if (!mountAsTap) {
+            // 挂载期间手指可能已经拖出一段距离，立即对齐当前拖拽进度。
+            root.setMotionOffset((resources.displayMetrics.widthPixels - dragDistance).coerceAtLeast(0f))
         }
         scroll.post { scroll.scrollTo(0, panelScrollY) }
         when {
@@ -828,8 +870,8 @@ class QuickCaptureService : Service() {
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, sheetHeight, Gravity.BOTTOM),
         )
         editorLayer.addView(View(this).apply {
-            background = rounded(0xFFFFB800.toInt(), 12f)
-        }, FrameLayout.LayoutParams(dip(8), dip(88), Gravity.END or Gravity.CENTER_VERTICAL))
+            background = rounded(HANDLE_COLOR, 12f)
+        }, FrameLayout.LayoutParams(dip(8), dip(64), Gravity.END or Gravity.CENTER_VERTICAL))
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -975,6 +1017,61 @@ class QuickCaptureService : Service() {
         }
     }
 
+    /** 松手时确认跟手拖拽结果：超过阈值→展开面板，否则→退回并保持把手。 */
+    private fun resolveOpenGesture(handleView: View) {
+        val dragged = dragDistance
+        if (panel != null && interactiveOpen && !panelLoading) {
+            interactiveOpen = false
+            val root = panel as EdgeDismissFrame
+            val params = panelParams
+            if (dragged >= dip(HANDLE_OPEN_THRESHOLD_DP)) {
+                if (params != null) {
+                    params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                    runCatching { wm.updateViewLayout(root, params) }
+                }
+                root.animateMotionTo(0f, 0f, PANEL_ENTER_DURATION_MS)
+                handle?.let { runCatching { wm.removeView(it) } }
+                handle = null
+            } else {
+                unregisterPanelBackCallback()
+                root.animateMotionTo(
+                    resources.displayMetrics.widthPixels.toFloat(), 1f, PANEL_EXIT_DURATION_MS,
+                ) {
+                    if (panel === root) {
+                        runCatching { wm.removeView(root) }
+                        panel = null
+                        panelParams = null
+                        panelScroll = null
+                        panelScrollY = 0
+                        panelLoading = false
+                        dismissingPanel = false
+                        collapsedTodoIds.clear()
+                    }
+                }
+                handleView.animate().translationX(0f).setDuration(130L).start()
+            }
+            dragDistance = 0f
+            return
+        }
+        if (panelLoading && interactiveOpen) {
+            if (dragged >= dip(HANDLE_OPEN_THRESHOLD_DP)) {
+                openOnMount = true
+            } else {
+                discardOnMount = true
+                interactiveOpen = false
+                handleView.animate().translationX(0f).setDuration(130L).start()
+            }
+            dragDistance = 0f
+            return
+        }
+        if (dragged >= dip(HANDLE_OPEN_THRESHOLD_DP)) {
+            showPanel()
+        } else {
+            handleView.animate().translationX(0f).setDuration(130L).start()
+        }
+        dragDistance = 0f
+    }
+
     @RequiresApi(33)
     private fun registerPredictiveBack(root: View) {
         root.post {
@@ -1051,12 +1148,17 @@ class QuickCaptureService : Service() {
         (panel as? EdgeDismissFrame)?.cancelMotionAnimation()
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
+        panelParams = null
         panelScroll = null
         panelScrollY = 0
         dismissingPanel = false
         inlineEditorDraft = null
         collapsedTodoIds.clear()
         panelLoading = false
+        interactiveOpen = false
+        dragDistance = 0f
+        openOnMount = false
+        discardOnMount = false
         showHandle()
     }
 
@@ -1131,10 +1233,10 @@ class QuickCaptureService : Service() {
         }
     }
 
-    /** 真虚化只需要轻微压暗保证白色标题可读；降级层更深，但不再带蓝灰色偏。 */
+    /** 真虚化时不再叠加任何暗化/磨砂色层，只保留纯粹的模糊背景；降级层仍需压暗保证可读。 */
     private fun blurScrimColor(): Int {
         val crossWindowBlur = Build.VERSION.SDK_INT >= 31 && wm.isCrossWindowBlurEnabled
-        return if (crossWindowBlur) 0x48000000 else 0x68000000
+        return if (crossWindowBlur) 0x00000000 else 0x68000000
     }
 
     @Suppress("DEPRECATION")
@@ -1448,7 +1550,7 @@ class QuickCaptureService : Service() {
         private const val HANDLE_PREFERENCES = "quick_capture_handle"
         private const val HANDLE_Y_FRACTION = "handle_y_fraction"
         private const val DEFAULT_HANDLE_Y_FRACTION = 0.4f
-        private const val HANDLE_HEIGHT_DP = 94
+        private const val HANDLE_HEIGHT_DP = 64
         private const val HANDLE_TOUCH_WIDTH_DP = 22
         private const val HANDLE_VISIBLE_WIDTH_DP = 7
         private const val HANDLE_SWIPE_PREVIEW_DP = 72
@@ -1461,6 +1563,9 @@ class QuickCaptureService : Service() {
         private const val PANEL_ENTER_DURATION_MS = 230L
         private const val PANEL_EXIT_DURATION_MS = 180L
         private const val PANEL_SETTLE_DURATION_MS = 180L
+
+        /** 把手颜色：白色半透明，降低存在感（旧版为高饱和黄）。 */
+        private val HANDLE_COLOR: Int = 0x80FFFFFF.toInt()
 
         @Volatile
         var running: Boolean = false
