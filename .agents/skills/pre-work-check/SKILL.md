@@ -48,6 +48,7 @@ description: 任何 AI 开始改动本仓库代码前必须执行的统一核对
 - 运行 `AGENTS.md` 中列出的全部验证命令，**证明**改动有效，不要仅"声称"完成。
 - 更新 `wiki/TASK_PROGRESS.md` 释放占用，确保下一个 AI 接手时状态干净。
 - 提交时把 `wiki/` 的改动一并提交，保证状态文件随代码同步到 GitHub。
+- **关于发版**：完成功能改动≠发布版本。默认只做功能提交（commit），**不升版本号、不打 tag**；只有用户明确说「发版/发布新版本」时，才按 `AGENTS.md` 第 7 节执行完整发布流程（升 versionCode/versionName → 更新 CHANGELOG → commit → 打 tag → push --tags）。
 
 ## wiki/ 文件格式模板
 

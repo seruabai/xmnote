@@ -126,3 +126,30 @@ NoteRepository ←  SQLite 读写
 ./gradlew assembleDebug     # 构建 Debug APK（自动复制到 ../APP/）
 ./gradlew test              # 运行单元测试
 ```
+
+---
+
+## 7. 版本发布流程（重要：修改代码≠发布版本）
+
+**当你完成用户要求的功能/重构后，AI 默认只做「代码改动」，但不会自动发布版本。** 是否发布、升版本、打 tag，以用户明确指令为准。一旦用户说「发版」「发布新版本」「发一版」，就执行下面的完整闭环：
+
+### 7.1 版本号规则
+- 版本号在 `app/build.gradle.kts` 的 `defaultConfig`：`versionName`（如 `1.2.5`）与 `versionCode`（整数，必须递增）。
+- 大版本（UI 重构、架构变更）→ `versionName` 升主/次位（如 `1.3.0`、`2.0.0`），`versionCode` +1。
+- 小修（bug fix、微调）→ `versionName` 升 patch（如 `1.2.6`），`versionCode` +1。
+- **`versionCode` 每次发布都必须比上次大**（Android 上架硬性要求），`versionName` 只在对外有意义。
+
+### 7.2 发布完整步骤（按序执行，缺一不可）
+1. **确认代码完整**：功能全部实现、`./gradlew assembleDebug` 与 `./gradlew test` 通过。
+2. **更新 `app/build.gradle.kts`**：递增 `versionName` + `versionCode`，并更新 `AGENTS.md` 第 1 节的「当前版本」。
+3. **更新 `wiki/CHANGELOG.md`**：顶部追加一行版本记录，标注新版本号与主要改动。
+4. **`git add` + `git commit`**：提交信息用仓库风格，如 `feat: ...`。
+5. **打 tag**：`git tag v<versionName>`（如 `v1.3.0`），需与 `versionName` 一致。
+6. **推送到 GitHub**：`git push origin main --tags`（把代码和 tag 一起推上去）。
+
+### 7.3 禁止事项
+- **不要**在用户没要求发版时擅自升版本或打 tag。
+- **不要** 提交不完整/编译不过的代码当"发布"。
+- 若改动很大还没到发版阶段，只做普通功能提交（commit），**不升级版本、不打 tag**——等用户说发版再做 7.2。
+
+> 当前版本基线：**1.2.5**（versionCode 8），tag `v1.2.5`。下次发版时以此为起点递增。
