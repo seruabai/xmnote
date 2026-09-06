@@ -1,7 +1,15 @@
 package com.purenote.local.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,16 +21,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -59,8 +68,6 @@ fun TrashScreen(vm: NoteViewModel) {
     val notes by vm.notes.collectAsState()
     val todos by vm.trashedTodos.collectAsState()
     var confirmEmpty by remember { mutableStateOf(false) }
-    var confirmOneNote by remember { mutableStateOf<Note?>(null) }
-    var confirmOneTodo by remember { mutableStateOf<Todo?>(null) }
     var confirmBatch by remember { mutableStateOf(false) }
     var batchAction by remember { mutableStateOf<BatchAction?>(null) }
 
@@ -212,8 +219,9 @@ fun TrashScreen(vm: NoteViewModel) {
                             else MaterialTheme.colorScheme.surface,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Column(
-                                Modifier.combinedClickable(
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.combinedClickable(
                                     onClick = {
                                         if (selectionMode) {
                                             if (isSelected) selectedNoteIds.remove(note.id)
@@ -224,38 +232,31 @@ fun TrashScreen(vm: NoteViewModel) {
                                         if (isSelected) selectedNoteIds.remove(note.id)
                                         else selectedNoteIds.add(note.id)
                                     },
-                                ).padding(horizontal = 16.dp, vertical = 13.dp),
+                                ).padding(horizontal = 16.dp, vertical = 12.dp),
                             ) {
-                                Text(
-                                    note.title.ifBlank { "(无标题)" },
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                )
-                                if (note.title.isNotBlank() && note.body.isNotBlank()) {
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        note.body.replace('\n', ' '),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                    )
-                                }
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    formatNoteTime(note.updatedAt),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                Row(
-                                    horizontalArrangement = Arrangement.End,
-                                    modifier = Modifier.fillMaxWidth(),
+                                AnimatedVisibility(
+                                    visible = selectionMode,
+                                    enter = fadeIn() + expandHorizontally(),
+                                    exit = fadeOut() + shrinkHorizontally(),
                                 ) {
-                                    TextButton(onClick = { vm.restore(note) }) { Text("恢复") }
-                                    TextButton(onClick = { confirmOneNote = note }) {
-                                        Text("彻底删除", color = MaterialTheme.colorScheme.error)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        TrashCheck(selected = isSelected)
+                                        Spacer(Modifier.width(12.dp))
                                     }
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        note.title.ifBlank { "(无标题)" },
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        formatNoteTime(note.updatedAt),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
@@ -273,8 +274,9 @@ fun TrashScreen(vm: NoteViewModel) {
                             else MaterialTheme.colorScheme.surface,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Column(
-                                Modifier.combinedClickable(
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.combinedClickable(
                                     onClick = {
                                         if (selectionMode) {
                                             if (isSelected) selectedTodoIds.remove(todo.id)
@@ -285,29 +287,31 @@ fun TrashScreen(vm: NoteViewModel) {
                                         if (isSelected) selectedTodoIds.remove(todo.id)
                                         else selectedTodoIds.add(todo.id)
                                     },
-                                ).padding(horizontal = 16.dp, vertical = 13.dp),
+                                ).padding(horizontal = 16.dp, vertical = 12.dp),
                             ) {
-                                Text(
-                                    todo.title.ifBlank { "(无标题)" },
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    formatNoteTime(todo.trashedAt ?: todo.updatedAt),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                Row(
-                                    horizontalArrangement = Arrangement.End,
-                                    modifier = Modifier.fillMaxWidth(),
+                                AnimatedVisibility(
+                                    visible = selectionMode,
+                                    enter = fadeIn() + expandHorizontally(),
+                                    exit = fadeOut() + shrinkHorizontally(),
                                 ) {
-                                    TextButton(onClick = { vm.restoreTodo(todo) }) { Text("恢复") }
-                                    TextButton(onClick = { confirmOneTodo = todo }) {
-                                        Text("彻底删除", color = MaterialTheme.colorScheme.error)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        TrashCheck(selected = isSelected)
+                                        Spacer(Modifier.width(12.dp))
                                     }
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        todo.title.ifBlank { "(无标题)" },
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        formatNoteTime(todo.trashedAt ?: todo.updatedAt),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
@@ -341,40 +345,6 @@ fun TrashScreen(vm: NoteViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { confirmEmpty = false }) { Text("取消") }
-            },
-        )
-    }
-
-    confirmOneNote?.let { note ->
-        AlertDialog(
-            onDismissRequest = { confirmOneNote = null },
-            title = { Text("彻底删除？") },
-            text = { Text("「${note.title.ifBlank { "无标题" }}」将被永久移除。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmOneNote = null
-                    vm.deleteForever(note)
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmOneNote = null }) { Text("取消") }
-            },
-        )
-    }
-
-    confirmOneTodo?.let { todo ->
-        AlertDialog(
-            onDismissRequest = { confirmOneTodo = null },
-            title = { Text("彻底删除？") },
-            text = { Text("「${todo.title.ifBlank { "无标题" }}」及其子待办将被永久移除。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmOneTodo = null
-                    vm.deleteTodoForever(todo)
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmOneTodo = null }) { Text("取消") }
             },
         )
     }
@@ -435,6 +405,33 @@ private fun TrashSectionTitle(text: String) {
         fontSize = 15.sp,
         modifier = Modifier.padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
     )
+}
+
+/** 选择模式下卡片左侧的勾选圆圈：选中为主色填充 + 白勾，未选中为空心描边。 */
+@Composable
+private fun TrashCheck(selected: Boolean) {
+    val fill by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        label = "trashCheckFill",
+    )
+    val stroke = if (selected) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.outlineVariant
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(22.dp)
+            .border(1.5.dp, stroke, CircleShape)
+            .background(fill, CircleShape),
+    ) {
+        if (selected) {
+            Icon(
+                Icons.Outlined.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+    }
 }
 
 private enum class BatchAction { RESTORE, DELETE }

@@ -33,9 +33,6 @@ sealed interface Screen {
         val folderId: Long?,
         val prefill: NotePrefill = NotePrefill(),
     ) : Screen
-
-    /** todoId = -1 表示新建 */
-    data class TodoEdit(val todoId: Long) : Screen
 }
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
@@ -64,6 +61,13 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _trashedTodos = MutableStateFlow<List<Todo>>(emptyList())
     val trashedTodos: StateFlow<List<Todo>> = _trashedTodos.asStateFlow()
+
+    /**
+     * 待办底部弹窗编辑器的目标：null = 关闭，-1 = 新建，其余为待编辑的待办 id。
+     * 新建与编辑统一走弹窗，不再有全屏编辑页。
+     */
+    private val _todoSheetId = MutableStateFlow<Long?>(null)
+    val todoSheetId: StateFlow<Long?> = _todoSheetId.asStateFlow()
 
     private val _folders = MutableStateFlow<List<Folder>>(emptyList())
     val folders: StateFlow<List<Folder>> = _folders.asStateFlow()
@@ -170,7 +174,8 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                         goTrash()
                     } else {
                         _tab.value = MainTab.TODO
-                        _screen.value = Screen.TodoEdit(targetId)
+                        _screen.value = Screen.Home
+                        _todoSheetId.value = targetId
                     }
                 }
                 else -> repo.getNote(targetId)?.let { openEditor(it) }
@@ -178,27 +183,15 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun openTodoEditor(todoId: Long) {
+    /** 打开待办底部弹窗：todoId = -1 表示新建 */
+    fun openTodoSheet(todoId: Long) {
         _tab.value = MainTab.TODO
-        _screen.value = Screen.TodoEdit(todoId)
+        if (_screen.value != Screen.Home) _screen.value = Screen.Home
+        _todoSheetId.value = todoId
     }
 
-    fun openNewTodo() {
-        _tab.value = MainTab.TODO
-        _screen.value = Screen.TodoEdit(-1L)
-    }
-
-    fun deleteTodoById(id: Long) {
-        viewModelScope.launch {
-            val todo = repo.getTodo(id)
-            if (todo != null && !todo.trashed) {
-                repo.trashTodoTree(id).forEach { trashedId ->
-                    Reminders.cancel(getApplication(), Reminders.KIND_TODO, trashedId)
-                }
-            }
-            if (_screen.value is Screen.TodoEdit) _screen.value = Screen.Home
-            refresh()
-        }
+    fun closeTodoSheet() {
+        _todoSheetId.value = null
     }
 
     fun consumePendingOpenTarget(): Pair<String, Long>? =
@@ -514,7 +507,6 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                     Reminders.cancel(getApplication(), Reminders.KIND_TODO, trashedId)
                 }
             }
-            if (_screen.value is Screen.TodoEdit) _screen.value = Screen.Home
             refresh()
         }
     }
@@ -551,6 +543,15 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                 Reminders.cancel(getApplication(), Reminders.KIND_TODO, trashedId)
             }
             refresh()
+        }
+    }
+
+    /** 按 id 设置完成态（弹窗新建单条待办时勾选了完成态用），内部复用 toggle 的提醒同步 */
+    fun setTodoDoneById(id: Long, done: Boolean) {
+        viewModelScope.launch {
+            repo.getTodo(id)?.let { todo ->
+                if (todo.done != done) toggleTodo(todo)
+            }
         }
     }
 

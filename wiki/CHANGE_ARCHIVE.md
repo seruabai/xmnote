@@ -6,6 +6,35 @@
 
 ---
 
+## v1.2.10（versionCode 13）
+
+- 日期：2026-09-06
+- 摘要：待办底部弹窗编辑器；图五式滑动删除键；废纸篓卡片紧凑化；虚化半径加大
+
+### 改动明细
+- 待办新建/编辑统一换底部弹窗（标题 + 动态待办行 + 提醒 + 完成）；单条首行回车转清单，标题默认"待办清单"；任何一行回车下方插新行并聚焦；删行内编辑与全屏编辑页。
+- 待办左滑换图五式：卡片左移一键宽露出圆形红删除键，卡片不整个划走；点键删除，点卡片回弹。
+- 废纸篓卡片删单项恢复/彻底删除按钮，只留标题加时间并压紧；选择模式卡片左侧出勾选圈。
+- 设置页「最近删除」移到最上方独立成行，去小标题和副标题。
+- 侧栏背景虚化半径加大到 64dp，底下应用内容化开无可辨形状。
+- TodoScreen.kt 拆为 TodoPane/TodoCard/TodoEditSheet/TodoSwipe/TodoRemindDialog。
+
+### 涉及文件
+- `app/build.gradle.kts`
+- `ui/TodoPane.kt`
+- `ui/TodoCard.kt`
+- `ui/TodoEditSheet.kt`
+- `ui/TodoSwipe.kt`
+- `ui/TodoRemindDialog.kt`
+- `ui/TrashScreen.kt`
+- `ui/SettingsScreen.kt`
+- `ui/AppRoot.kt`
+- `ui/HomeScreen.kt`
+- `NoteViewModel.kt`
+- `notify/QuickCaptureService.kt`
+
+---
+
 ## v1.2.9（versionCode 12）
 
 - 日期：2026-09-06

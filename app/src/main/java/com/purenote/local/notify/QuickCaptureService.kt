@@ -1558,7 +1558,8 @@ class QuickCaptureService : Service() {
         private const val HANDLE_GESTURE_UNDECIDED = 0
         private const val HANDLE_GESTURE_OPEN = 1
         private const val HANDLE_GESTURE_MOVE = 2
-        private const val PANEL_BLUR_RADIUS_DP = 32
+        /** 背景虚化半径：足够重才能把底下应用的文字图标化开成纯色块，不留可辨形状。 */
+        private const val PANEL_BLUR_RADIUS_DP = 64
         private const val PANEL_BLUR_STEP_DP = 2
         private const val PANEL_ENTER_DURATION_MS = 230L
         private const val PANEL_EXIT_DURATION_MS = 180L

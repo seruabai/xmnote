@@ -10,6 +10,7 @@
 | T-001 | 7项UI/交互改进：主页新建分类入口、侧栏把手样式与拖拽跟手、纯模糊背景、待办行内编辑、提醒选择器Material3化 | opencode | 完成 | ui/HomeScreen.kt, ui/TodoScreen.kt, notify/QuickCaptureService.kt, app/build.gradle.kts | 2026-09-05 |
 | T-002 | 5项UI/交互改进：把手白色75%不透明度、虚化去纹路、待办光标定位+回车子待办、左滑删除改滑出按钮、废纸篓长按多选+设置页最近删除入口 | opencode | 完成 | notify/QuickCaptureService.kt, ui/TodoScreen.kt, ui/TrashScreen.kt, ui/SettingsScreen.kt | 2026-09-06 |
 | T-003 | 左滑真划出删除按钮；待办删除进废纸篓 | opencode | 完成 | ui/TodoScreen.kt, data/Db.kt, data/NoteRepository.kt, NoteViewModel.kt, ui/TrashScreen.kt, notify/QuickCaptureService.kt | 2026-09-06 |
+| T-004 | 设置最近删除置顶；废纸篓卡片紧凑去按钮+左侧勾选；待办滑动露圆形红删除键；待办底部弹窗编辑器替代行内/全屏编辑；TodoScreen拆文件 | opencode | 完成 | ui/SettingsScreen.kt, ui/TrashScreen.kt, ui/TodoSwipe.kt, ui/TodoPane.kt, ui/TodoCard.kt, ui/TodoEditSheet.kt, ui/AppRoot.kt, ui/HomeScreen.kt, NoteViewModel.kt | 2026-09-06 |
 
 ## 当前进行中的任务（占用检查）
 

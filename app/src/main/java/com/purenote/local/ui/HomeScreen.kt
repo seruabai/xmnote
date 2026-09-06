@@ -100,7 +100,7 @@ fun HomeScreen(vm: NoteViewModel) {
                 FloatingActionButton(
                     onClick = {
                         if (tab == MainTab.NOTES) vm.openEditor(kind = NoteKind.TEXT)
-                        else vm.openNewTodo()
+                        else vm.openTodoSheet(-1L)
                     },
                     shape = CircleShape,
                     containerColor = MaterialTheme.colorScheme.primary,

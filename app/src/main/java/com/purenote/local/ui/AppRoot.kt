@@ -17,7 +17,7 @@ import com.purenote.local.Screen
 /** 屏幕层级：用于决定转场滑动方向（前进右滑、后退左滑）。 */
 private fun Screen.depth(): Int = when (this) {
     Screen.Home -> 0
-    Screen.Trash, Screen.Folders, Screen.Settings, is Screen.TodoEdit -> 1
+    Screen.Trash, Screen.Folders, Screen.Settings -> 1
     is Screen.Editor -> 2
 }
 
@@ -67,7 +67,6 @@ fun AppRoot(vm: NoteViewModel) {
             Screen.Folders -> FoldersScreen(vm)
             Screen.Settings -> SettingsScreen(vm)
             Screen.Home -> HomeScreen(vm)
-            is Screen.TodoEdit -> TodoEditScreen(vm, s.todoId)
         }
     }
 }
