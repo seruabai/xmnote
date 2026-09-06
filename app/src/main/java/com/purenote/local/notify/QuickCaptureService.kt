@@ -390,8 +390,17 @@ class QuickCaptureService : Service() {
         content.addView(space(17))
 
         val rootTodos = todos.filter { !it.isSubtask }
+        if (editingTodoId == NEW_DRAFT_ID) {
+            // 新建草稿没有对应的列表项，必须单独渲染在待办区顶部，否则点"+"看不到编辑卡
+            editingDraft?.let { draft ->
+                content.addView(editableTodoCard(draft))
+                content.addView(blankSpace(10))
+            }
+        }
         if (rootTodos.isEmpty()) {
-            content.addView(cardText("暂无待办", 17f, 0xFF777777.toInt(), 82))
+            if (editingTodoId != NEW_DRAFT_ID) {
+                content.addView(cardText("暂无待办", 17f, 0xFF777777.toInt(), 82))
+            }
         } else {
             rootTodos.forEach { todo ->
                 val children = todos.filter { it.parentId == todo.id }
@@ -887,7 +896,9 @@ class QuickCaptureService : Service() {
         if (draft.dueAt == null) {
             Reminders.cancel(this, Reminders.KIND_TODO, draft.id)
         } else {
-            Reminders.schedule(this, Reminders.KIND_TODO, draft.id, draft.dueAt!!)
+            // 取局部快照再调度，避免协程执行期间 draft.dueAt 被界面改回 null 后触发非空断言
+            val due = draft.dueAt
+            Reminders.schedule(this, Reminders.KIND_TODO, draft.id, due!!)
         }
         DataChanges.notifyChanged()
     }
@@ -1458,6 +1469,8 @@ class QuickCaptureService : Service() {
         const val CHANNEL_ID = "quick_capture"
         const val NOTIFICATION_ID = 42
 
+        private const val PREFERENCES = "quick_capture"
+        private const val KEY_ENABLED = "enabled"
         private const val HANDLE_PREFERENCES = "quick_capture_handle"
         private const val HANDLE_Y_FRACTION = "handle_y_fraction"
         private const val DEFAULT_HANDLE_Y_FRACTION = 0.4f
@@ -1500,6 +1513,16 @@ class QuickCaptureService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, QuickCaptureService::class.java))
         }
+
+        /** 记住用户是否开启了速记，开机/进程重建后自动恢复侧栏 */
+        fun setEnabled(context: Context, enabled: Boolean) {
+            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+                .edit { putBoolean(KEY_ENABLED, enabled) }
+        }
+
+        fun isEnabled(context: Context): Boolean =
+            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+                .getBoolean(KEY_ENABLED, false)
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < 26) return

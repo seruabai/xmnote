@@ -18,8 +18,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +49,8 @@ fun RevealDeleteRow(
     val revealPx = with(LocalDensity.current) { 78.dp.toPx() }
     val offset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
+    // 用状态直读代替 pointerInput(revealed) 重启：reveal 变化不再重建手势检测，拖拽不被打断
+    val currentRevealed by rememberUpdatedState(revealed)
 
     fun snapTo(reveal: Boolean) {
         scope.launch { offset.animateTo(if (reveal) -revealPx else 0f, tween(180)) }
@@ -79,14 +83,14 @@ fun RevealDeleteRow(
         Box(
             modifier = Modifier
                 .offset { IntOffset(offset.value.roundToInt(), 0) }
-                .pointerInput(revealed) {
+                .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
                             val target = offset.value < -revealPx / 2
                             snapTo(target)
                             onRevealChange(target)
                         },
-                        onDragCancel = { snapTo(revealed) },
+                        onDragCancel = { snapTo(currentRevealed) },
                         onHorizontalDrag = { _, dragAmount ->
                             scope.launch {
                                 offset.snapTo((offset.value + dragAmount).coerceIn(-revealPx, 0f))

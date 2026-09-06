@@ -33,7 +33,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -47,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import com.purenote.local.NoteViewModel
 import com.purenote.local.core.TodoDates
 import com.purenote.local.data.Todo
+import kotlinx.coroutines.delay
 
 /** 小米待办同款方角勾选框：未勾为描边方块，勾选后墨色填充 + 纸色对勾 */
 @Composable
@@ -297,6 +302,14 @@ private fun SubListRow(vm: NoteViewModel, sub: Todo, onEdit: () -> Unit) {
 /** 时间行：时钟图标 + 小米格式文案；过期整行红、完成灰 */
 @Composable
 private fun DueTimeText(todo: Todo) {
+    // 每分钟跳一次驱动重组，"今天/明天"这类相对文案才不会在卡片数据不变时一直显示旧值
+    var nowTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000 - System.currentTimeMillis() % 60_000)
+            nowTick = System.currentTimeMillis()
+        }
+    }
     val expired = todo.isExpired()
     val color = when {
         todo.done -> MaterialTheme.colorScheme.outlineVariant
@@ -312,7 +325,7 @@ private fun DueTimeText(todo: Todo) {
         )
         Spacer(Modifier.width(4.dp))
         Text(
-            TodoDates.formatDue(todo.dueAt ?: 0L, todo.allDay, todo.repeat),
+            TodoDates.formatDue(todo.dueAt ?: 0L, todo.allDay, todo.repeat, nowTick),
             style = MaterialTheme.typography.labelSmall,
             color = color,
         )

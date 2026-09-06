@@ -59,29 +59,34 @@ class ReminderReceiver : BroadcastReceiver() {
                 if (strong) flags = flags or Notification.FLAG_INSISTENT
             }
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        // 提醒通知 id 必须避开速记前台服务的 42，否则会顶掉/合并成第二条常驻视觉。
-        val notifyId = (if (kind == Reminders.KIND_TODO) 4_200_000L + id else 4_100_000L + id).toInt()
-        nm.notify(notifyId, notification)
+        nm.notify(Reminders.notifyId(kind, id), notification)
     }
 }
 
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        val appContext = context.applicationContext
-        val result = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                val repo = NoteRepository(appContext)
-                repo.allFutureReminders().forEach { (id, at) ->
-                    Reminders.schedule(appContext, Reminders.KIND_NOTE, id, at)
+        when (intent.action) {
+            Intent.ACTION_BOOT_COMPLETED -> {
+                val appContext = context.applicationContext
+                val result = goAsync()
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    try {
+                        val repo = NoteRepository(appContext)
+                        repo.allFutureReminders().forEach { (id, at) ->
+                            Reminders.schedule(appContext, Reminders.KIND_NOTE, id, at)
+                        }
+                        repo.allFutureTodoReminders().forEach { (id, at) ->
+                            Reminders.schedule(appContext, Reminders.KIND_TODO, id, at)
+                        }
+                        // 用户此前开启了速记侧栏则开机恢复（BOOT_COMPLETED 允许拉起前台服务）
+                        if (QuickCaptureService.isEnabled(appContext)) {
+                            QuickCaptureService.start(appContext)
+                        }
+                    } finally {
+                        result.finish()
+                    }
                 }
-                repo.allFutureTodoReminders().forEach { (id, at) ->
-                    Reminders.schedule(appContext, Reminders.KIND_TODO, id, at)
-                }
-            } finally {
-                result.finish()
             }
         }
     }

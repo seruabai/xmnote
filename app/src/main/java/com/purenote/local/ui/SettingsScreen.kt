@@ -244,9 +244,11 @@ fun SettingsScreen(vm: NoteViewModel) {
                                     Toast.makeText(context, "授权后请再次开启速记", Toast.LENGTH_SHORT).show()
                                 } else if (enabled) {
                                     QuickCaptureService.start(context)
+                                    QuickCaptureService.setEnabled(context, true)
                                     quickEnabled = true
                                 } else {
                                     QuickCaptureService.stop(context)
+                                    QuickCaptureService.setEnabled(context, false)
                                     quickEnabled = false
                                 }
                             },

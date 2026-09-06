@@ -153,6 +153,11 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
     }
 
     fun saveAndClose() {
+        // 未加载完成就 dismissing（快速连点/弹窗开场被打断）时直接关，绝不能把空状态当"清空"存库
+        if (!loaded) {
+            onClose()
+            return
+        }
         val items = rows.map { it.text.trim() to it.done }.filter { it.first.isNotBlank() }
         if (creating) {
             if (title.isBlank() && items.isEmpty()) {
@@ -229,8 +234,15 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
                         row = row,
                         singleStyle = !listMode,
                         focusRequester = rowFocus.getOrPut(row.key) { FocusRequester() },
-                        onTextChange = { rows[idx] = row.copy(text = it) },
-                        onToggle = { rows[idx] = row.copy(done = !row.done) },
+                        onTextChange = { text ->
+                            // 按 key 定位最新行再写回，避免 forEachIndexed 捕获的 idx 在插行后错位
+                            val i = rows.indexOfFirst { it.key == row.key }
+                            if (i >= 0) rows[i] = rows[i].copy(text = text)
+                        },
+                        onToggle = {
+                            val i = rows.indexOfFirst { it.key == row.key }
+                            if (i >= 0) rows[i] = rows[i].copy(done = !rows[i].done)
+                        },
                         onNext = { enterFromRow(idx) },
                     )
                 }
@@ -296,12 +308,21 @@ private fun SheetTitleField(
     focusRequester: FocusRequester,
 ) {
     var tfv by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
-    if (tfv.text != value) tfv = tfv.copy(text = value)
+    // 只在"外部"改了 value（如异步载入）时同步进输入框；自己刚发出的文本不再回写，
+    // 防止重组滞后时把输入法正在编辑的内容回滚掉。
+    var lastEmitted by remember { mutableStateOf(value) }
+    if (value != lastEmitted) {
+        tfv = tfv.copy(text = value)
+        lastEmitted = value
+    }
     BasicTextField(
         value = tfv,
         onValueChange = {
             tfv = it
-            if (it.text != value) onValueChange(it.text)
+            if (it.text != lastEmitted) {
+                lastEmitted = it.text
+                onValueChange(it.text)
+            }
         },
         textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -340,7 +361,12 @@ private fun SheetItemRow(
 ) {
     val fontSize = if (singleStyle) 16.sp else 15.sp
     var tfv by remember(row.key) { mutableStateOf(TextFieldValue(row.text, TextRange(row.text.length))) }
-    if (tfv.text != row.text) tfv = tfv.copy(text = row.text)
+    // 同 SheetTitleField：只在 row.text 是"外部"变更时同步，避免重组把输入中的文本回滚。
+    var lastEmitted by remember(row.key) { mutableStateOf(row.text) }
+    if (row.text != lastEmitted) {
+        tfv = tfv.copy(text = row.text)
+        lastEmitted = row.text
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth(),
@@ -354,7 +380,10 @@ private fun SheetItemRow(
             value = tfv,
             onValueChange = {
                 tfv = it
-                if (it.text != row.text) onTextChange(it.text)
+                if (it.text != lastEmitted) {
+                    lastEmitted = it.text
+                    onTextChange(it.text)
+                }
             },
             textStyle = TextStyle(
                 fontSize = fontSize,

@@ -79,4 +79,8 @@ object Reminders {
 
     private fun requestCode(kind: String, id: Long): Int =
         ((if (kind == KIND_TODO) BASE_TODO else BASE_NOTE) + id).toInt()
+
+    /** 提醒通知的 id（与速记前台服务固定 id 42 错开），点开通知取消时必须用同一个 id */
+    fun notifyId(kind: String, id: Long): Int =
+        ((if (kind == KIND_TODO) BASE_TODO else BASE_NOTE) + id).toInt()
 }

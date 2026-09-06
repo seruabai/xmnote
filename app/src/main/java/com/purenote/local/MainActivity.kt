@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import com.purenote.local.data.NotePrefill
 import com.purenote.local.data.NoteKind
+import com.purenote.local.notify.QuickCaptureService
 import com.purenote.local.notify.Reminders
 import com.purenote.local.ui.AppRoot
 import com.purenote.local.ui.theme.PureNoteTheme
@@ -29,6 +30,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleIncoming(intent)
+        // 进程被杀后用户重启应用：若速记开关此前是开的，恢复侧栏服务（前台启动不受限制）
+        if (QuickCaptureService.isEnabled(this) && !QuickCaptureService.running) {
+            QuickCaptureService.start(this)
+        }
         setContent {
             val mode by vm.themeMode.collectAsState()
             PureNoteTheme(mode) { AppRoot(vm) }
@@ -79,8 +84,10 @@ class MainActivity : ComponentActivity() {
             else -> {
                 val id = intent.getLongExtra(Reminders.EXTRA_ID, -1L)
                 if (id > 0) {
-                    (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(id.toInt())
                     val kind = intent.getStringExtra(Reminders.EXTRA_KIND) ?: Reminders.KIND_NOTE
+                    // 用与发通知时相同的 notifyId 取消，之前误用 id 本身导致强提醒通知关不掉
+                    (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager)
+                        .cancel(Reminders.notifyId(kind, id))
                     vm.pendingOpenTarget = kind to id
                 }
             }

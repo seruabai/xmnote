@@ -1,6 +1,9 @@
 package com.purenote.local.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +29,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -34,6 +38,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +71,12 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
         onSelectionChange(false)
     }
 
+    // 离开组合（切 Tab）时必须上报退出多选，否则 HomeScreen 的 todoSelecting 卡在 true，FAB 永久消失
+    val latestSelectionCallback by rememberUpdatedState(onSelectionChange)
+    DisposableEffect(Unit) {
+        onDispose { latestSelectionCallback(false) }
+    }
+
     BackHandler(enabled = selecting) { exitSelection() }
     BackHandler(enabled = !selecting && revealedId != null) { revealedId = null }
 
@@ -76,10 +87,21 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
     }
     // 拖拽中的可视顺序：平时跟随 rootTodos，拖拽时本地交换，松手后持久化 sortIndex。
     val displayTodos = remember { mutableStateListOf<Todo>() }
+    // 松手到 Flow 回流之间有个异步窗口，用 pendingOrder 顶住，防止列表先闪回旧序再跳新序
+    var pendingOrder by remember { mutableStateOf<List<Long>?>(null) }
     LaunchedEffect(rootTodos, draggingId) {
         if (draggingId == null) {
+            val pending = pendingOrder
+            val ordered: List<Todo> = if (pending != null && pending != rootTodos.map { it.id }) {
+                val byId = rootTodos.associateBy { it.id }
+                val head = pending.mapNotNull { byId[it] }
+                head + rootTodos.filter { it.id !in pending.toSet() }
+            } else {
+                if (pending != null) pendingOrder = null
+                rootTodos
+            }
             displayTodos.clear()
-            displayTodos.addAll(rootTodos)
+            displayTodos.addAll(ordered)
         } else {
             val ids = displayTodos.map { it.id }.toSet()
             rootTodos.filter { it.id !in ids }.forEach { displayTodos.add(it) }
@@ -89,6 +111,7 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
 
     fun persistOrder() {
         if (displayTodos.map { it.id } != rootTodos.map { it.id }) {
+            pendingOrder = displayTodos.map { it.id }
             vm.reorderTodos(displayTodos.map { it.id })
         }
     }
@@ -168,7 +191,13 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
                             modifier = Modifier
                                 .zIndex(if (dragging) 1f else 0f)
                                 .offset { IntOffset(0, if (dragging) dragOffset.roundToInt() else 0) }
-                                .animateItem(),
+                                // 拖拽中的项关掉位移动画，避免与手动 dragOffset 叠加跳动
+                                .animateItem(
+                                    placementSpec = if (dragging) null else spring(
+                                        stiffness = Spring.StiffnessMediumLow,
+                                        visibilityThreshold = IntOffset.VisibilityThreshold,
+                                    ),
+                                ),
                         ) {
                             TodoCardRow(
                                 vm = vm,

@@ -6,6 +6,38 @@
 
 ---
 
+## v1.2.16（versionCode 19）
+
+- 日期：2026-09-07
+- 摘要：Android 16 真机环境实测，修复 8 处使用途中 bug
+
+### 改动明细
+- [待办弹窗]修点既有清单卡片时弹窗"开了立刻闪退"（连续开合还会把未加载状态存库、触发文本回滚丢字）：未加载完成时 dismiss 直接关闭不落库；行文本回写改按 key 定位最新行 + lastEmitted 防回滚，消除旧快照覆盖。
+- [速记侧栏]修"新建待办"点 + 后无编辑卡（v1.2.14 原地编辑重构时丢失渲染分支）：新草稿单独渲染在待办区顶部。
+- [速记侧栏]修开关不持久化：重启手机/进程被杀后把手消失，需手动重开。换持久化偏好 + BOOT_COMPLETED 与应用前台双路自动恢复。
+- [待办多选]修多选中切 Tab 后 FAB 永久消失：TodoPane 离开组合时补发退出多选回调。
+- [待办拖拽]修松手后列表先闪回旧顺序再跳新序：pendingOrder 桥接异步落库窗口；拖拽项暂停 animateItem 位移动画防跳动。
+- [待办左滑]修 reveal 状态变化时重建手势检测打断拖拽：pointerInput 固定 + rememberUpdatedState。
+- [提醒通知]修点开通知未按正确 id 取消（强提醒模式下通知关不掉）：notifyId 统一由 Reminders 计算（4.1M/4.2M+id）。
+- [时间文案]修"今天/明天"相对文案不随时间刷新（跨天后卡片仍显示旧文案）：时间行加每分钟跳动时钟源。
+
+### 涉及文件
+- `app/build.gradle.kts`
+- `MainActivity.kt`
+- `notify/QuickCaptureService.kt`
+- `notify/ReminderReceiver.kt`
+- `notify/ReminderScheduler.kt`
+- `ui/SettingsScreen.kt`
+- `ui/TodoCard.kt`
+- `ui/TodoEditSheet.kt`
+- `ui/TodoPane.kt`
+- `ui/TodoSwipe.kt`
+
+### 验证
+- `./gradlew assembleDebug test` 通过；API 36 模拟器实测：弹窗开关循环稳定、侧栏新建待办可用、杀进程后把手自动恢复、多选切 Tab 后 FAB 恢复、左滑删除→废纸篓→待办分区正常、提醒通知端到端送达（精确闹钟未授权时按系统 10 分钟窗口降级）。
+
+---
+
 ## v1.2.15（versionCode 18）
 
 - 日期：2026-09-06
