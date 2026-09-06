@@ -4,7 +4,9 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,8 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DragHandle
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -75,7 +80,9 @@ fun MiCheckbox(done: Boolean, size: Dp, onClick: () -> Unit, modifier: Modifier 
 /**
  * 单条待办卡片（只读展示）：白色圆角行 + 方形勾选 + 时间行 + 清单展开。
  * 点击卡片开底部弹窗编辑；左滑露出圆形红删除键。
+ * 长按进入多选模式：左侧变拖动手柄，右侧变选中圆圈，点卡片切换选中。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TodoCardRow(
     vm: NoteViewModel,
@@ -86,10 +93,62 @@ fun TodoCardRow(
     revealed: Boolean,
     onRevealChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onLongPress: () -> Unit = {},
+    onToggleSelect: () -> Unit = {},
+    dragHandle: Modifier = Modifier,
 ) {
     val isListTodo = subs.isNotEmpty()
     val doneCount = subs.count { it.done }
 
+    if (selectionMode) {
+        // 多选模式不走左滑删除，直接整卡可点选，左侧拖动手柄支持上下排序。
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh
+            else MaterialTheme.colorScheme.surface,
+            modifier = modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onToggleSelect, onLongClick = onToggleSelect),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 20.dp),
+            ) {
+                Icon(
+                    Icons.Outlined.DragHandle,
+                    contentDescription = "拖动排序",
+                    tint = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    modifier = dragHandle.size(24.dp),
+                )
+                Text(
+                    todo.title.ifBlank { "待办清单" },
+                    style = TextStyle(fontSize = 16.sp, lineHeight = 21.sp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                )
+                if (isListTodo) {
+                    Text(
+                        "$doneCount/${subs.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.padding(end = 10.dp),
+                    )
+                }
+                Icon(
+                    if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                    contentDescription = if (selected) "已选中" else "未选中",
+                    tint = if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outlineVariant,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        }
+        return
+    }
     RevealDeleteRow(
         revealed = revealed,
         onRevealChange = onRevealChange,
@@ -106,10 +165,13 @@ fun TodoCardRow(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            if (revealed) onRevealChange(false)
-                            else vm.openTodoSheet(todo.id)
-                        }
+                        .combinedClickable(
+                            onClick = {
+                                if (revealed) onRevealChange(false)
+                                else vm.openTodoSheet(todo.id)
+                            },
+                            onLongClick = onLongPress,
+                        )
                         .padding(horizontal = 19.dp, vertical = 23.dp),
                 ) {
                     MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
@@ -169,7 +231,7 @@ fun TodoCardRow(
                         SubListRow(
                             vm = vm,
                             sub = sub,
-                            onEdit = { vm.openTodoSheet(todo.id) },
+                            onEdit = { vm.openTodoSheet(todo.id, focusSubId = sub.id) },
                         )
                     }
                 }

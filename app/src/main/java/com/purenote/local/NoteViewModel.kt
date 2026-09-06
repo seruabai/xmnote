@@ -65,9 +65,13 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 待办底部弹窗编辑器的目标：null = 关闭，-1 = 新建，其余为待编辑的待办 id。
      * 新建与编辑统一走弹窗，不再有全屏编辑页。
+     * focusSubId 用于点子行直接定位到该行末尾，避免每次都落在第一行行首。
      */
     private val _todoSheetId = MutableStateFlow<Long?>(null)
     val todoSheetId: StateFlow<Long?> = _todoSheetId.asStateFlow()
+
+    private val _todoSheetFocusSubId = MutableStateFlow<Long?>(null)
+    val todoSheetFocusSubId: StateFlow<Long?> = _todoSheetFocusSubId.asStateFlow()
 
     private val _folders = MutableStateFlow<List<Folder>>(emptyList())
     val folders: StateFlow<List<Folder>> = _folders.asStateFlow()
@@ -183,15 +187,17 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 打开待办底部弹窗：todoId = -1 表示新建 */
-    fun openTodoSheet(todoId: Long) {
+    /** 打开待办底部弹窗：todoId = -1 表示新建；focusSubId 指定 initially 聚焦的子行 */
+    fun openTodoSheet(todoId: Long, focusSubId: Long? = null) {
         _tab.value = MainTab.TODO
         if (_screen.value != Screen.Home) _screen.value = Screen.Home
+        _todoSheetFocusSubId.value = focusSubId
         _todoSheetId.value = todoId
     }
 
     fun closeTodoSheet() {
         _todoSheetId.value = null
+        _todoSheetFocusSubId.value = null
     }
 
     fun consumePendingOpenTarget(): Pair<String, Long>? =
@@ -541,6 +547,28 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             repo.trashCompletedTodos().forEach { trashedId ->
                 Reminders.cancel(getApplication(), Reminders.KIND_TODO, trashedId)
+            }
+            refresh()
+        }
+    }
+
+    /** 按展示顺序持久化顶层待办排序（长按多选模式下拖动手柄排序用） */
+    fun reorderTodos(orderedIds: List<Long>) {
+        viewModelScope.launch {
+            repo.reorderTodos(orderedIds)
+            _todos.value = repo.loadTodos()
+        }
+    }
+
+    /** 批量删除待办（长按多选底部删除键用，走废纸篓整树） */
+    fun deleteTodos(todos: Collection<Todo>) {
+        viewModelScope.launch {
+            todos.forEach { todo ->
+                if (!todo.trashed) {
+                    repo.trashTodoTree(todo.id).forEach { trashedId ->
+                        Reminders.cancel(getApplication(), Reminders.KIND_TODO, trashedId)
+                    }
+                }
             }
             refresh()
         }

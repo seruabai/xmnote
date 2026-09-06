@@ -259,6 +259,13 @@ class NoteRepository(context: Context) {
         db.setTodoDue(id, nextDue, allDay, System.currentTimeMillis())
     }
 
+    suspend fun reorderTodos(orderedIds: List<Long>) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        orderedIds.forEachIndexed { index, id ->
+            db.updateTodoSortIndex(id, index, now)
+        }
+    }
+
     suspend fun deleteTodoTree(id: Long) = withContext(Dispatchers.IO) { db.deleteTodoTree(id) }
 
     suspend fun trashTodoTree(id: Long): List<Long> = withContext(Dispatchers.IO) {

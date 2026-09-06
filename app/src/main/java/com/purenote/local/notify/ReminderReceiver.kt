@@ -59,7 +59,9 @@ class ReminderReceiver : BroadcastReceiver() {
                 if (strong) flags = flags or Notification.FLAG_INSISTENT
             }
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(id.toInt(), notification)
+        // 提醒通知 id 必须避开速记前台服务的 42，否则会顶掉/合并成第二条常驻视觉。
+        val notifyId = (if (kind == Reminders.KIND_TODO) 4_200_000L + id else 4_100_000L + id).toInt()
+        nm.notify(notifyId, notification)
     }
 }
 

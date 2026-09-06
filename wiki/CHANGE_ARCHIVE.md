@@ -6,6 +6,32 @@
 
 ---
 
+## v1.2.12（versionCode 15）
+
+- 日期：2026-09-06
+- 摘要：待办行末光标；侧栏原地编辑；长按多选排序；单条静默通知；虚化去纹路
+
+### 改动明细
+- 待办弹窗删每次聚焦首行行首，换点哪行聚焦哪行行末（TextFieldValue + 聚焦移到末尾，子行透传 focusSubId）。
+- 侧栏编辑删新页面式底弹窗，换同层行末聚焦编辑（EditText 聚焦移到末尾）；底栏删自动保存换黄色完成键，点完成/空白直接保存退出侧栏；修复卡片内点击误关。
+- 待办新增长按多选（已选择N项 + 全选 + 底部删除）与左侧拖柄上下排序（松手持久化 sortIndex，新增 reorderTodos）。
+- 通知删多余存在感，换单条 MIN 静默（去时间戳/角标/锁屏可见）；提醒通知 id 错开 42 防顶掉前台通知；关侧栏通知彻底消失。
+- 虚化删 64dp 小半径+暗化叠加，换 80dp 纯模糊（清 FLAG_DIM_BEHIND，dimAmount 归零，步进 4 减 banding）。
+
+### 涉及文件
+- `app/build.gradle.kts`
+- `NoteViewModel.kt`
+- `ui/TodoEditSheet.kt`
+- `ui/TodoCard.kt`
+- `ui/TodoPane.kt`
+- `ui/HomeScreen.kt`
+- `data/Db.kt`
+- `data/NoteRepository.kt`
+- `notify/QuickCaptureService.kt`
+- `notify/ReminderReceiver.kt`
+
+---
+
 ## v1.2.11（versionCode 14）
 
 - 日期：2026-09-06

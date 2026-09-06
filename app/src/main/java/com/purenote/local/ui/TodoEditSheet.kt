@@ -40,10 +40,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,6 +59,7 @@ private data class SheetRow(
     val text: String,
     val done: Boolean,
     val key: String = UUID.randomUUID().toString(),
+    val sourceId: Long? = null,
 )
 
 /**
@@ -68,6 +72,7 @@ private data class SheetRow(
 @Composable
 fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
     val allTodos by vm.todos.collectAsState()
+    val focusSubId by vm.todoSheetFocusSubId.collectAsState()
     val creating = todoId <= 0
     var loaded by remember(todoId) { mutableStateOf(creating) }
     var title by remember(todoId) { mutableStateOf("") }
@@ -79,13 +84,22 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
     var origDone by remember(todoId) { mutableStateOf(false) }
     var remindOpen by remember(todoId) { mutableStateOf(false) }
     var pendingFocusKey by remember(todoId) { mutableStateOf<String?>(null) }
+    var pendingTitleFocus by remember(todoId) { mutableStateOf(false) }
     val rowFocus = remember(todoId) { mutableMapOf<String, FocusRequester>() }
+    val titleFocus = remember(todoId) { FocusRequester() }
 
     LaunchedEffect(pendingFocusKey) {
         pendingFocusKey?.let { key ->
             kotlinx.coroutines.delay(90)
             runCatching { rowFocus[key]?.requestFocus() }
             pendingFocusKey = null
+        }
+    }
+    LaunchedEffect(pendingTitleFocus) {
+        if (pendingTitleFocus) {
+            kotlinx.coroutines.delay(90)
+            runCatching { titleFocus.requestFocus() }
+            pendingTitleFocus = false
         }
     }
 
@@ -109,12 +123,19 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
                 val children = allTodos.filter { it.parentId == t.id }
                 if (children.isNotEmpty()) {
                     listMode = true
-                    rows.addAll(children.map { SheetRow(it.title, it.done) })
+                    rows.addAll(children.map { SheetRow(it.title, it.done, sourceId = it.id) })
                 } else {
-                    rows.add(SheetRow(t.title, t.done))
+                    rows.add(SheetRow(t.title, t.done, sourceId = null))
                 }
                 loaded = true
-                pendingFocusKey = rows.firstOrNull()?.key
+                if (listMode) {
+                    val target = rows.firstOrNull { it.sourceId == focusSubId }?.key
+                    if (target != null) pendingFocusKey = target
+                    else if (focusSubId == null) pendingTitleFocus = true
+                    else pendingFocusKey = rows.firstOrNull()?.key
+                } else {
+                    pendingFocusKey = rows.firstOrNull()?.key
+                }
             }
         }
     }
@@ -195,6 +216,7 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
                         value = title,
                         onValueChange = { title = it },
                         onNext = { pendingFocusKey = rows.firstOrNull()?.key },
+                        focusRequester = titleFocus,
                     )
                     Spacer(Modifier.height(6.dp))
                 }
@@ -261,12 +283,22 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
     }
 }
 
-/** 清单模式的标题栏：回车跳到第一行。 */
+/** 清单模式的标题栏：回车跳到第一行；聚焦时光标强制到末尾，点哪行光标就在该行末尾。 */
 @Composable
-private fun SheetTitleField(value: String, onValueChange: (String) -> Unit, onNext: () -> Unit) {
+private fun SheetTitleField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onNext: () -> Unit,
+    focusRequester: FocusRequester,
+) {
+    var tfv by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    if (tfv.text != value) tfv = tfv.copy(text = value)
     BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
+        value = tfv,
+        onValueChange = {
+            tfv = it
+            if (it.text != value) onValueChange(it.text)
+        },
         textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         singleLine = true,
@@ -274,7 +306,7 @@ private fun SheetTitleField(value: String, onValueChange: (String) -> Unit, onNe
         keyboardActions = KeyboardActions(onNext = { onNext() }),
         decorationBox = { inner ->
             Box {
-                if (value.isEmpty()) {
+                if (tfv.text.isEmpty()) {
                     Text(
                         "待办清单",
                         fontSize = 16.sp,
@@ -284,7 +316,11 @@ private fun SheetTitleField(value: String, onValueChange: (String) -> Unit, onNe
                 inner()
             }
         },
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .focusRequester(focusRequester)
+            .onFocusChanged { if (it.isFocused) tfv = tfv.copy(selection = TextRange(tfv.text.length)) },
     )
 }
 
@@ -299,6 +335,8 @@ private fun SheetItemRow(
     onNext: () -> Unit,
 ) {
     val fontSize = if (singleStyle) 16.sp else 15.sp
+    var tfv by remember(row.key) { mutableStateOf(TextFieldValue(row.text, TextRange(row.text.length))) }
+    if (tfv.text != row.text) tfv = tfv.copy(text = row.text)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth(),
@@ -309,8 +347,11 @@ private fun SheetItemRow(
             onClick = onToggle,
         )
         BasicTextField(
-            value = row.text,
-            onValueChange = onTextChange,
+            value = tfv,
+            onValueChange = {
+                tfv = it
+                if (it.text != row.text) onTextChange(it.text)
+            },
             textStyle = TextStyle(
                 fontSize = fontSize,
                 lineHeight = 22.sp,
@@ -324,7 +365,7 @@ private fun SheetItemRow(
             keyboardActions = KeyboardActions(onNext = { onNext() }),
             decorationBox = { inner ->
                 Box {
-                    if (row.text.isEmpty()) {
+                    if (tfv.text.isEmpty()) {
                         Text(
                             "待办内容",
                             fontSize = fontSize,
@@ -338,7 +379,8 @@ private fun SheetItemRow(
                 .weight(1f)
                 .padding(start = 12.dp)
                 .padding(vertical = 10.dp)
-                .focusRequester(focusRequester),
+                .focusRequester(focusRequester)
+                .onFocusChanged { if (it.isFocused) tfv = tfv.copy(selection = TextRange(tfv.text.length)) },
         )
     }
 }

@@ -85,6 +85,7 @@ fun HomeScreen(vm: NoteViewModel) {
     var selecting by remember { mutableStateOf(false) }
     val selectedIds = remember { mutableStateListOf<Long>() }
     var moveOpen by remember { mutableStateOf(false) }
+    var todoSelecting by remember { mutableStateOf(false) }
 
     fun exitSelection() {
         selecting = false
@@ -96,7 +97,7 @@ fun HomeScreen(vm: NoteViewModel) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         floatingActionButton = {
-            if (!selecting) {
+            if (!selecting && !todoSelecting) {
                 FloatingActionButton(
                     onClick = {
                         if (tab == MainTab.NOTES) vm.openEditor(kind = NoteKind.TEXT)
@@ -194,7 +195,7 @@ fun HomeScreen(vm: NoteViewModel) {
                 }
             } else {
                 TodoHeader(onSettings = vm::goSettings)
-                TodoPane(vm, modifier = Modifier.weight(1f))
+                TodoPane(vm, modifier = Modifier.weight(1f), onSelectionChange = { todoSelecting = it })
             }
         }
     }

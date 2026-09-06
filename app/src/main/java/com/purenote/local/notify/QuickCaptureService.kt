@@ -127,8 +127,12 @@ class QuickCaptureService : Service() {
                 .setContentText("速记侧栏已开启")
                 .setContentIntent(openApp)
                 .setOngoing(true)
-                // 前台服务通知系统强制要求，删不掉；压到最低存在感：渠道已是 MIN 静默，这里再去掉时间戳。
+                // 前台服务通知系统强制要求，删不掉；压到最低存在感：渠道已是 MIN 静默，
+                // 这里再去掉时间戳/角标/锁屏可见性，只留单条不打扰。关侧栏则通知彻底消失。
                 .setShowWhen(false)
+                .setOnlyAlertOnce(true)
+                .setBadgeIconType(Notification.BADGE_ICON_NONE)
+                .setVisibility(Notification.VISIBILITY_SECRET)
                 .build()
         } else {
             @Suppress("DEPRECATION")
@@ -677,9 +681,10 @@ class QuickCaptureService : Service() {
             overScrollMode = View.OVER_SCROLL_NEVER
             isFillViewport = true
             background = rounded(Color.WHITE, 25f)
+            // 只消费编辑卡片内部的点击，不关闭；只有卡片外的灰色区域才关闭退出侧栏。
             isClickable = true
-            contentDescription = "待办编辑区域，点击空白处关闭"
-            setOnClickListener { closeEditor() }
+            isFocusableInTouchMode = false
+            contentDescription = "待办编辑区域"
         }
         val sheet = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -861,8 +866,12 @@ class QuickCaptureService : Service() {
         }
         footer.addView(reminder, LinearLayout.LayoutParams(dip(126), dip(40)))
         footer.addView(space(1), LinearLayout.LayoutParams(0, 1, 1f))
-        footer.addView(label("自动保存", 13f, 0xFFAAAAAA.toInt(), false).apply {
+        // 对标图一：右下角黄色"完成"，点后保存并直接退出侧栏。
+        footer.addView(label("完成", 16f, 0xFFFFB800.toInt(), true).apply {
             gravity = Gravity.CENTER
+            setPadding(dip(8), dip(10), dip(8), dip(10))
+            setOnClickListener { closeEditor() }
+            contentDescription = "完成编辑并退出侧栏"
         }, LinearLayout.LayoutParams(dip(72), dip(40)))
         sheet.addView(footer)
 
@@ -919,6 +928,13 @@ class QuickCaptureService : Service() {
         setPadding(0, 0, 0, 0)
         isSingleLine = true
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        // 点哪行光标就落在哪行末尾：聚焦时强制移到末尾，避免落在行首。
+        onFocusChangeListener = View.OnFocusChangeListener { v, hasFocus ->
+            if (hasFocus) {
+                val et = v as? EditText ?: return@OnFocusChangeListener
+                et.post { runCatching { et.setSelection(et.text.length) } }
+            }
+        }
     }
 
     private fun showKeyboard(view: View?) {
@@ -1200,6 +1216,9 @@ class QuickCaptureService : Service() {
      */
     @Suppress("DEPRECATION")
     private fun applyBackgroundBlur(params: WindowManager.LayoutParams) {
+        // 纯虚化不叠暗化：清掉 DIM_BEHIND，dimAmount 归零，避免暗层+模糊叠出纹路/ banding。
+        params.flags = params.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
+        params.dimAmount = 0f
         if (Build.VERSION.SDK_INT >= 31) {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
             params.setBlurBehindRadius(dip(PANEL_BLUR_RADIUS_DP))
@@ -1560,9 +1579,9 @@ class QuickCaptureService : Service() {
         private const val HANDLE_GESTURE_UNDECIDED = 0
         private const val HANDLE_GESTURE_OPEN = 1
         private const val HANDLE_GESTURE_MOVE = 2
-        /** 背景虚化半径：足够重才能把底下应用的文字图标化开成纯色块，不留可辨形状。 */
-        private const val PANEL_BLUR_RADIUS_DP = 64
-        private const val PANEL_BLUR_STEP_DP = 2
+        /** 背景虚化半径：足够重才能把底下应用的文字图标化开成纯色块，不留可辨形状；步进加大减少逐帧 banding 纹路。 */
+        private const val PANEL_BLUR_RADIUS_DP = 80
+        private const val PANEL_BLUR_STEP_DP = 4
         private const val PANEL_ENTER_DURATION_MS = 230L
         private const val PANEL_EXIT_DURATION_MS = 180L
         private const val PANEL_SETTLE_DURATION_MS = 180L

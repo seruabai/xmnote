@@ -5,6 +5,7 @@
 
 | 日期 | 工具 | 改动摘要 | 涉及文件 |
 |------|------|----------|----------|
+| 2026-09-06 | opencode | **v1.2.12**：待办弹窗修复点行光标落行末；侧栏编辑修复新页面改行末聚焦+完成退出；待办新增长按多选+拖柄排序；通知压单条静默+提醒id错开42；虚化半径加大去纹路 | ui/TodoEditSheet.kt, ui/TodoCard.kt, ui/TodoPane.kt, ui/HomeScreen.kt, NoteViewModel.kt, data/Db.kt, data/NoteRepository.kt, notify/QuickCaptureService.kt, notify/ReminderReceiver.kt, app/build.gradle.kts |
 | 2026-09-06 | opencode | **v1.2.11**：滑动删除键改等高对齐；废纸篓删清空键时间改日期时间；前台通知去时间戳 | ui/TodoSwipe.kt, ui/TrashScreen.kt, ui/Common.kt, notify/QuickCaptureService.kt, app/build.gradle.kts |
 | 2026-09-06 | opencode | **v1.2.10**：待办编辑换底部弹窗（单条回车转清单+行行回车加行）；左滑换部分露出圆形红删除键；废纸篓卡片删按钮只留标题时间+左侧勾选；设置最近删除置顶；虚化半径加大去纹路；TodoScreen拆5文件 | ui/TodoPane.kt, ui/TodoCard.kt, ui/TodoEditSheet.kt, ui/TodoSwipe.kt, ui/TodoRemindDialog.kt, ui/TrashScreen.kt, ui/SettingsScreen.kt, ui/AppRoot.kt, NoteViewModel.kt, notify/QuickCaptureService.kt, app/build.gradle.kts |
 | 2026-09-06 | opencode | **v1.2.9**：待办左滑删直接删除换停留露出删除按钮；待办表新增废纸篓字段待办删除进废纸篓；废纸篓新增待办分区恢复/彻底删除/多选；行内回车新增子行自动聚焦 | ui/TodoScreen.kt, ui/TrashScreen.kt, data/Db.kt, data/NoteRepository.kt, data/Models.kt, NoteViewModel.kt, PureNoteApp.kt, app/build.gradle.kts |

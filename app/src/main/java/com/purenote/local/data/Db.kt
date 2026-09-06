@@ -231,6 +231,14 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         return writableDatabase.update("todos", cv, "id = ?", arrayOf(id.toString()))
     }
 
+    fun updateTodoSortIndex(id: Long, sortIndex: Int, now: Long): Int {
+        val cv = ContentValues().apply {
+            put("sort_index", sortIndex)
+            put("updated_at", now)
+        }
+        return writableDatabase.update("todos", cv, "id = ?", arrayOf(id.toString()))
+    }
+
     fun setTodoDone(id: Long, done: Boolean, now: Long): Int {
         val cv = ContentValues().apply {
             put("done", if (done) 1 else 0)
