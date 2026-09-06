@@ -109,11 +109,11 @@ fun TodoCardRow(
     val doneCount = subs.count { it.done }
 
     if (selectionMode) {
-        // 多选模式不走左滑删除，直接整卡可点选，左侧拖动手柄支持上下排序。
-        // 对标图2：未选中白卡，选中暖米黄卡，左侧双横线手柄，右侧圆形单选。
+        // 多选模式不走左滑删除，直接整卡可点选，左侧三条杠手柄支持上下排序。
+        // 对标小米笔记实机：未选中白卡，选中浅灰底，左侧三条杠手柄，右侧圆圈（选中黄底白勾）。
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = if (selected) SelectedCardBeige
+            color = if (selected) SelectedCardGray
             else MaterialTheme.colorScheme.surface,
             modifier = modifier
                 .fillMaxWidth()
@@ -242,7 +242,7 @@ fun TodoCardRow(
     }
 }
 
-/** 多选模式左侧的双横线拖动手柄（对标图2，非三条杠汉堡图标）。 */
+/** 多选模式左侧的三条杠拖动手柄（对标小米笔记实机：三条浅灰横线）。 */
 @Composable
 private fun EqualHandle(modifier: Modifier = Modifier) {
     Column(
@@ -250,20 +250,23 @@ private fun EqualHandle(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.Center,
         modifier = modifier.width(28.dp).height(24.dp),
     ) {
-        Box(
-            modifier = Modifier.width(20.dp).height(2.5.dp)
-                .background(Color(0xFFC4B48F), RoundedCornerShape(2.dp)),
-        )
-        Spacer(Modifier.height(5.dp))
-        Box(
-            modifier = Modifier.width(20.dp).height(2.5.dp)
-                .background(Color(0xFFC4B48F), RoundedCornerShape(2.dp)),
-        )
+        listOf(0, 1, 2).forEach { i ->
+            Box(
+                modifier = Modifier
+                    .width(18.dp)
+                    .height(2.dp)
+                    .background(HandleLineColor, RoundedCornerShape(1.dp)),
+            )
+            if (i < 2) Spacer(Modifier.height(4.dp))
+        }
     }
 }
 
-/** 选中卡的暖米黄底（对标图2选中行：比 surfaceContainerHigh 再深两档，选中态一眼可见）。 */
-private val SelectedCardBeige = Color(0xFFEAD7AE)
+/** 选中卡的浅灰底（对标小米笔记实机：选中行只是淡淡的灰底，不用暖色）。 */
+private val SelectedCardGray = Color(0xFFF0F0F0)
+
+/** 三条杠手柄的浅灰线色 */
+private val HandleLineColor = Color(0xFFC9C9C9)
 
 /** 非编辑态的子待办行：子项属于清单内容，删除直接移除不进废纸篓 */
 @Composable

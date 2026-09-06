@@ -372,9 +372,9 @@ class QuickCaptureService : Service() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dip(18), dip(58), dip(18), dip(28))
-            // 点空白处退出原地编辑、退回列表（面板不收起）；非编辑态时空操作。
+            // 点空白处：先保存正在编辑的草稿，再直接收起整个侧栏（对标小米笔记图1交互）。
             isClickable = true
-            setOnClickListener { exitInlineEdit() }
+            setOnClickListener { exitInlineEditAndDismiss() }
         }
         scroll.addView(content, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         root.addView(scroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -493,8 +493,8 @@ class QuickCaptureService : Service() {
         row.addView(plusButton { startInlineTodoEditor(null) }, LinearLayout.LayoutParams(dip(38), dip(38)))
         row.addView(label("待办", 18f, Color.WHITE, bold = false).apply {
             setPadding(dip(13), 0, 0, dip(0))
-            // 点标题空白同样退出原地编辑、退回列表。
-            setOnClickListener { exitInlineEdit() }
+            // 标题右侧空白同空白处：保存草稿并收起侧栏。
+            setOnClickListener { exitInlineEditAndDismiss() }
         }, LinearLayout.LayoutParams(0, dip(38), 1f))
         return row
     }
@@ -704,6 +704,23 @@ class QuickCaptureService : Service() {
         scope.launch {
             inlineSaveMutex.withLock { persistInlineEditor(draft) }
             loadAndRenderPanel()
+        }
+    }
+
+    /** 点空白处：保存草稿后直接收起整个侧栏（用户指定：编辑完成点空白退出侧边栏）。 */
+    private fun exitInlineEditAndDismiss() {
+        val draft = editingDraft
+        editingTodoId = null
+        editingDraft = null
+        editingFocusSubId = null
+        if (draft == null) {
+            dismissPanel(1f)
+            return
+        }
+        scheduleInlineEditorSave(immediate = true)
+        scope.launch {
+            inlineSaveMutex.withLock { persistInlineEditor(draft) }
+            postToMain { if (panel != null) dismissPanel(1f) }
         }
     }
 
@@ -1128,11 +1145,11 @@ class QuickCaptureService : Service() {
         layoutParams = LinearLayout.LayoutParams(1, dip(dp))
     }
 
-    /** 卡片间/底部空白：可点击，点空白处退出原地编辑退回列表（面板不收起）。 */
+    /** 卡片间/底部空白：可点击，保存草稿并收起整个侧栏。 */
     private fun blankSpace(dp: Int) = View(this).apply {
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(dp))
         isClickable = true
-        setOnClickListener { exitInlineEdit() }
+        setOnClickListener { exitInlineEditAndDismiss() }
     }
 
     private fun formatDate(timestamp: Long): String =
@@ -1497,8 +1514,8 @@ class QuickCaptureService : Service() {
         /** 系统虚化被关掉时的补偿暗罩：无虚化只能靠更深的均匀压暗藏住底下形状。 */
         private const val DIM_VEIL_NO_BLUR = 0xB3000000.toInt()
 
-        /** 把手颜色：浅灰 75% 不透明度，白底上也看得见（旧版纯白在白色界面上隐形）。 */
-        private val HANDLE_COLOR: Int = 0xC0C4C4C4.toInt()
+        /** 把手颜色：深灰 50% 不透明度（用户指定：再深一点+半透明）。 */
+        private val HANDLE_COLOR: Int = 0x80888888.toInt()
 
         @Volatile
         var running: Boolean = false

@@ -5,6 +5,7 @@
 
 | 日期 | 工具 | 改动摘要 | 涉及文件 |
 |------|------|----------|----------|
+| 2026-09-07 | ZCode | **v1.2.17**：[多选]删双横线+米黄，换三条杠+浅灰选中底（对标小米实机）；[侧栏]把手删浅灰75%，换深灰50%；[侧栏]删点空白仅退回列表，换保存草稿并收起整个侧栏 | ui/TodoCard.kt, notify/QuickCaptureService.kt, app/build.gradle.kts |
 | 2026-09-07 | ZCode | **v1.2.16**：[测试修复]Android16实测修8处bug（弹窗闪退/侧栏新建待办无编辑卡/速记开关不持久/输入回滚/多选FAB卡死/拖拽闪回/通知id错/相对时间不刷新） | ui/TodoEditSheet.kt, ui/TodoPane.kt, ui/TodoSwipe.kt, ui/TodoCard.kt, notify/QuickCaptureService.kt, notify/ReminderReceiver.kt, notify/ReminderScheduler.kt, MainActivity.kt, ui/SettingsScreen.kt, app/build.gradle.kts |
 | 2026-09-06 | opencode | **v1.2.15**：[自查返工]修复收面板键盘空转；暗罩加深到50%+无虚化补偿70%；选中米黄加深；手柄加深 | notify/QuickCaptureService.kt, ui/TodoCard.kt, app/build.gradle.kts |
 | 2026-09-06 | opencode | **v1.2.14**：[侧栏]删逐帧毛玻璃虚化换全屏均匀暗罩；把手换浅灰；待办编辑换卡片原地展开+空白退回列表；[待办多选]换图2样式双横线+米黄选中 | notify/QuickCaptureService.kt, ui/TodoCard.kt, ui/TodoPane.kt, app/build.gradle.kts |

@@ -10,8 +10,8 @@ android {
         applicationId = "com.purenote.local"
         minSdk = 24
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.2.16"
+        versionCode = 20
+        versionName = "1.2.17"
     }
 
     buildTypes {
