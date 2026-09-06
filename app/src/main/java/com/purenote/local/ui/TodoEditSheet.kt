@@ -36,6 +36,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -88,16 +89,19 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
     val rowFocus = remember(todoId) { mutableMapOf<String, FocusRequester>() }
     val titleFocus = remember(todoId) { FocusRequester() }
 
+    // 弹窗与输入法同动：首帧就请求聚焦，让输入法动画和弹窗进入动画并发，
+    // imePadding 逐帧跟随键盘高度，弹窗始终贴在键盘顶部；收起时同理落回底部。
+    // 之前 delay(90) 等弹窗落定才弹键盘，是"弹窗→键盘→弹窗再跳"三段式的根因。
     LaunchedEffect(pendingFocusKey) {
         pendingFocusKey?.let { key ->
-            kotlinx.coroutines.delay(90)
+            withFrameNanos { }
             runCatching { rowFocus[key]?.requestFocus() }
             pendingFocusKey = null
         }
     }
     LaunchedEffect(pendingTitleFocus) {
         if (pendingTitleFocus) {
-            kotlinx.coroutines.delay(90)
+            withFrameNanos { }
             runCatching { titleFocus.requestFocus() }
             pendingTitleFocus = false
         }

@@ -6,6 +6,22 @@
 
 ---
 
+## v1.2.13（versionCode 16）
+
+- 日期：2026-09-06
+- 摘要：待办弹窗跟随输入法同步升降
+
+### 改动明细
+- 清单删 `windowSoftInputMode` 写在 application（系统忽略），换写到 MainActivity，窗口随键盘 resize，ime 内边距逐帧送达。
+- 弹窗聚焦删 90ms 延迟，换首帧即请求聚焦，键盘动画与弹窗进入动画并发，`imePadding` 贴住键盘顶部同动；收键盘时落回底部。
+
+### 涉及文件
+- `app/build.gradle.kts`
+- `ui/TodoEditSheet.kt`
+- `app/src/main/AndroidManifest.xml`
+
+---
+
 ## v1.2.12（versionCode 15）
 
 - 日期：2026-09-06
