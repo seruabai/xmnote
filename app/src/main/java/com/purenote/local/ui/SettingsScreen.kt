@@ -158,6 +158,7 @@ fun SettingsScreen(vm: NoteViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column {
+                    ArrowRow("最近删除", "查看已移入废纸篓的笔记") { vm.goTrash() }
                     ArrowRow("隐私政策") {
                         showInfo("隐私政策", "纯记是本地笔记应用。笔记、待办、图片与提醒信息仅保存在本机，不上传服务器，也不用于广告画像。")
                     }

@@ -67,7 +67,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -256,7 +258,7 @@ private fun TodoCardRow(
     val editing = editingId == todo.id
 
     var wasEditing by remember { mutableStateOf(false) }
-    var editTitle by remember { mutableStateOf("") }
+    var editTitleValue by remember { mutableStateOf(TextFieldValue("")) }
     var editDueAt by remember { mutableStateOf<Long?>(null) }
     var editAllDay by remember { mutableStateOf(false) }
     var editRepeat by remember { mutableStateOf(RepeatRule.NONE) }
@@ -265,7 +267,7 @@ private fun TodoCardRow(
     val titleFocus = remember { FocusRequester() }
 
     fun saveEdits() {
-        val newTitle = editTitle.trim().ifBlank { todo.title.ifBlank { "待办清单" } }
+        val newTitle = editTitleValue.text.trim().ifBlank { todo.title.ifBlank { "待办清单" } }
         if (newTitle != todo.title || editDueAt != todo.dueAt ||
             editAllDay != todo.allDay || editRepeat != todo.repeat
         ) {
@@ -278,9 +280,15 @@ private fun TodoCardRow(
         }
     }
 
+    fun addNewSubtask() {
+        val next = SubDraft("", false)
+        drafts.add(next)
+    }
+
     LaunchedEffect(editing) {
         if (editing) {
-            editTitle = todo.title
+            val titleText = todo.title
+            editTitleValue = TextFieldValue(titleText, selection = TextRange(titleText.length))
             editDueAt = todo.dueAt
             editAllDay = todo.allDay
             editRepeat = todo.repeat
@@ -297,7 +305,6 @@ private fun TodoCardRow(
 
     SwipeTodoRow(
         todo = todo,
-        onFinishToggle = { vm.toggleTodo(todo) },
         onDelete = { vm.deleteTodo(todo) },
         modifier = modifier,
     ) {
@@ -312,8 +319,8 @@ private fun TodoCardRow(
                 MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
                 if (editing) {
                     BasicTextField(
-                        value = editTitle,
-                        onValueChange = { editTitle = it },
+                        value = editTitleValue,
+                        onValueChange = { editTitleValue = it },
                         textStyle = TextStyle(
                             fontSize = 16.sp,
                             lineHeight = 21.sp,
@@ -321,11 +328,14 @@ private fun TodoCardRow(
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { onEditRequest(null) }),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        keyboardActions = KeyboardActions(onNext = {
+                            saveEdits()
+                            addNewSubtask()
+                        }),
                         decorationBox = { inner ->
                             Box {
-                                if (editTitle.isEmpty()) {
+                                if (editTitleValue.text.isEmpty()) {
                                     Text(
                                         if (isListTodo) "待办清单" else "待办内容",
                                         fontSize = 16.sp,
@@ -597,26 +607,19 @@ private fun SubListRow(vm: NoteViewModel, sub: Todo, onEdit: () -> Unit) {
     }
 }
 
-/** 左滑红色删除，右滑蓝色完成/灰色撤销——小米待办签名手势 */
+/** 左滑红色删除（右滑禁用，完成/撤销通过复选框操作） */
 @Composable
 private fun SwipeTodoRow(
     todo: Todo,
-    onFinishToggle: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val cardShape = RoundedCornerShape(18.dp)
-    // 滑动状态必须和「事项 id + 完成状态」属于同一生命周期。完成操作返回 false，
-    // 让当前卡片立即回弹；数据状态更新后 key 再创建一份全新的 Settled 状态。
     key(todo.id, todo.done) {
         val state = rememberSwipeToDismissBoxState(
             confirmValueChange = { value ->
                 when (value) {
-                    SwipeToDismissBoxValue.StartToEnd -> {
-                        onFinishToggle()
-                        false
-                    }
                     SwipeToDismissBoxValue.EndToStart -> {
                         onDelete()
                         true
@@ -627,32 +630,23 @@ private fun SwipeTodoRow(
         )
         SwipeToDismissBox(
             state = state,
-            enableDismissFromStartToEnd = true,
+            enableDismissFromStartToEnd = false,
             enableDismissFromEndToStart = true,
             backgroundContent = {
-                val revealingAction = state.currentValue != SwipeToDismissBoxValue.Settled ||
-                    state.targetValue != SwipeToDismissBoxValue.Settled ||
-                    state.dismissDirection != SwipeToDismissBoxValue.Settled
-                val deleting = state.targetValue == SwipeToDismissBoxValue.EndToStart ||
+                val revealingDelete = state.targetValue == SwipeToDismissBoxValue.EndToStart ||
                     state.dismissDirection == SwipeToDismissBoxValue.EndToStart
-                val bg = when {
-                    !revealingAction -> Color.Transparent
-                    deleting -> Color(0xFFFA4039)
-                    todo.done -> Color(0xFFCDCDCD)
-                    else -> Color(0xFF2C94DE)
-                }
-                val label = if (deleting) "删除" else if (todo.done) "未完成" else "完成"
+                val bg = if (revealingDelete) Color(0xFFFA4039) else Color.Transparent
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = if (deleting) Arrangement.End else Arrangement.Start,
+                    horizontalArrangement = Arrangement.End,
                     modifier = Modifier
                         .fillMaxSize()
                         .background(bg, cardShape)
                         .padding(horizontal = 22.dp),
                 ) {
                     Text(
-                        label,
-                        color = if (revealingAction) Color.White else Color.Transparent,
+                        "删除",
+                        color = if (revealingDelete) Color.White else Color.Transparent,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelLarge,
                     )

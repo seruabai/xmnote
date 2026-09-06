@@ -1205,8 +1205,8 @@ class QuickCaptureService : Service() {
     }
 
     /**
-     * 全屏虚化与内容位移共用一个可中断进度。平方根响应使内容移出一半时仍保留
-     * 约 70.7% 的虚化；半径按 2dp 量化，减少跨进程窗口参数逐像素更新产生的闪烁。
+     * 全屏虚化：面板位移过程中 backdrop 保持完全透明（不叠加任何暗化/磨砂纹路），
+     * 仅随 strength 同步更新跨窗口模糊半径。
      */
     private fun bindBackgroundBlurProgress(
         root: EdgeDismissFrame,
@@ -1217,7 +1217,7 @@ class QuickCaptureService : Service() {
         val maxBlurRadius = dip(PANEL_BLUR_RADIUS_DP)
         val blurStep = dip(PANEL_BLUR_STEP_DP).coerceAtLeast(1)
         root.onMotionProgress = { _, strength ->
-            backdrop.alpha = strength.coerceIn(0f, 1f)
+            backdrop.alpha = 0f
             if (Build.VERSION.SDK_INT >= 31) {
                 val rawRadius = (maxBlurRadius * strength).coerceIn(0f, maxBlurRadius.toFloat())
                 val radius = ((rawRadius / blurStep).roundToInt() * blurStep)
@@ -1233,11 +1233,11 @@ class QuickCaptureService : Service() {
         }
     }
 
-    /** 真虚化时不再叠加任何暗化/磨砂色层，只保留纯粹的模糊背景；降级层仍需压暗保证可读。 */
-    private fun blurScrimColor(): Int {
-        val crossWindowBlur = Build.VERSION.SDK_INT >= 31 && wm.isCrossWindowBlurEnabled
-        return if (crossWindowBlur) 0x00000000 else 0x68000000
-    }
+        /** 真虚化时不叠加任何暗化/磨砂/纹路层，只保留纯粹的模糊；降级层仍需压暗保证可读。 */
+        private fun blurScrimColor(): Int {
+            val crossWindowBlur = Build.VERSION.SDK_INT >= 31 && wm.isCrossWindowBlurEnabled
+            return if (crossWindowBlur) 0x00000000 else 0x68000000
+        }
 
     @Suppress("DEPRECATION")
     private fun overlayType(): Int = if (Build.VERSION.SDK_INT >= 26) {
@@ -1558,14 +1558,14 @@ class QuickCaptureService : Service() {
         private const val HANDLE_GESTURE_UNDECIDED = 0
         private const val HANDLE_GESTURE_OPEN = 1
         private const val HANDLE_GESTURE_MOVE = 2
-        private const val PANEL_BLUR_RADIUS_DP = 46
+        private const val PANEL_BLUR_RADIUS_DP = 32
         private const val PANEL_BLUR_STEP_DP = 2
         private const val PANEL_ENTER_DURATION_MS = 230L
         private const val PANEL_EXIT_DURATION_MS = 180L
         private const val PANEL_SETTLE_DURATION_MS = 180L
 
-        /** 把手颜色：白色半透明，降低存在感（旧版为高饱和黄）。 */
-        private val HANDLE_COLOR: Int = 0x80FFFFFF.toInt()
+        /** 把手颜色：白色 75% 不透明度，降低存在感（旧版为高饱和黄）。 */
+        private val HANDLE_COLOR: Int = 0xC0FFFFFF.toInt()
 
         @Volatile
         var running: Boolean = false
