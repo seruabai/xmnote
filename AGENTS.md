@@ -145,7 +145,13 @@ NoteRepository ←  SQLite 读写
 1. **确认代码完整**：改动实现完毕、`./gradlew assembleDebug` 与 `./gradlew test` 通过。
 2. **更新 `app/build.gradle.kts`**：`versionCode` +1、`versionName` patch +1。
 3. **更新 `AGENTS.md` 第 1 节**的「当前版本」为新的 `versionName`。
-4. **更新 `wiki/CHANGELOG.md`**：顶部追加一行，标注新版本号与主要改动。
+4. **更新 `wiki/CHANGELOG.md`**：顶部追加一行，标注新版本号与**改动摘要**。摘要必须用**统一精简格式**：
+
+   ```
+   [组件/位置]删[旧方案]，换[新方案]
+   ```
+   例如：`背景删毛玻璃特效，换纯模糊背景`。若改动是"新增"而非"替换"，用 `[组件]新增[方案]`；若是"修复"，用 `[组件]修复[问题]`。保持精炼，一眼看懂改了什么。
+   > 同时把**当前版本块**插到 `wiki/CHANGE_ARCHIVE.md` 顶部（日期 + 摘要 + 改动明细 + 涉及文件），作为详细版存档。
 5. **`git add` + `git commit`**：把代码改动和版本号放**同一个提交**，提交信息带版本号，如 `feat: 奶油暖黄主题 (v1.2.6)`。
 6. **打 tag**：`git tag v<versionName>`（与 `versionName` 完全一致），指向刚提交的版本。
 7. **推送到 GitHub**：`git push origin main --tags`（代码和 tag 一起推上去）。
