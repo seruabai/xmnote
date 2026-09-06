@@ -9,6 +9,8 @@ data class ChecklistItem(
 
 data class Note(
     val id: Long,
+    /** 跨设备稳定 ID（云同步用），本地自增 id 只在本机有意义 */
+    val uuid: String = "",
     val kind: NoteKind,
     val title: String,
     val body: String,
@@ -51,6 +53,8 @@ enum class RepeatRule { NONE, DAILY, WEEKLY, WEEKDAYS, WORKDAYS, MONTHLY, YEARLY
 
 data class Todo(
     val id: Long,
+    /** 跨设备稳定 ID（云同步用） */
+    val uuid: String = "",
     val parentId: Long?,
     val title: String,
     val done: Boolean,

@@ -6,6 +6,25 @@
 
 ---
 
+## v1.2.18（versionCode 21）
+
+- 日期：2026-09-07
+- 摘要：云同步地基——全局 uuid；新增同步方案设计文档
+
+### 改动明细
+- [数据库]DB v4→v5：notes/todos 加 `uuid TEXT NOT NULL DEFAULT ''` 列，存量数据 `hex(randomblob(16))` 一次性回填，加 uuid 索引；新建行走 `Db.newUuid()` 生成（32 位十六进制）。
+- [模型]Note/Todo 暴露 `uuid` 字段（带默认值，不影响既有构造点）。
+- [文档]新增 `wiki/SYNC_DESIGN.md`：协议调研结论、推荐路线（REST+游标+LWW+可选E2EE）、分阶段计划 P0-P5、Db 升版约定。
+
+### 涉及文件
+- `app/build.gradle.kts`
+- `data/Db.kt`
+- `data/Models.kt`
+- `data/NoteRepository.kt`
+- `wiki/SYNC_DESIGN.md`
+
+---
+
 ## v1.2.17（versionCode 20）
 
 - 日期：2026-09-07

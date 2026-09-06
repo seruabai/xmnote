@@ -309,6 +309,7 @@ class NoteRepository(context: Context) {
         val rawBody = getString(NotesDb.COL_BODY) ?: ""
         return Note(
             id = getLong(NotesDb.COL_ID),
+            uuid = getString(NotesDb.COL_UUID) ?: "",
             kind = kind,
             title = getString(NotesDb.COL_TITLE) ?: "",
             body = if (kind == NoteKind.TEXT) rawBody else "",
@@ -332,6 +333,7 @@ class NoteRepository(context: Context) {
         val legacyRemind = if (isNull(NotesDb.COL_REMIND_AT)) null else getLong(NotesDb.COL_REMIND_AT)
         return Todo(
             id = getLong(NotesDb.COL_ID),
+            uuid = getString(NotesDb.T_UUID) ?: "",
             parentId = if (isNull(NotesDb.T_PARENT)) null else getLong(NotesDb.T_PARENT),
             title = getString(NotesDb.COL_TITLE) ?: "",
             done = getInt(NotesDb.T_DONE) == 1,

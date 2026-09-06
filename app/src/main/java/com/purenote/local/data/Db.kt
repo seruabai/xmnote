@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import java.util.UUID
 
 class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null, DB_VERSION) {
 
@@ -40,6 +41,18 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
             db.execSQL("ALTER TABLE todos ADD COLUMN trashed_at INTEGER NULL")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_todos_trashed ON todos(trashed)")
         }
+        if (oldVersion < 5) {
+            // 云同步地基：每条记录一个跨设备稳定 ID（本地自增 id 只在本机有意义）
+            addUuidColumn(db, "notes")
+            addUuidColumn(db, "todos")
+        }
+    }
+
+    private fun addUuidColumn(db: SQLiteDatabase, table: String) {
+        db.execSQL("ALTER TABLE $table ADD COLUMN uuid TEXT NOT NULL DEFAULT ''")
+        // 存量数据一次性补齐；新建行走 insert 时生成
+        db.execSQL("UPDATE $table SET uuid = hex(randomblob(16)) WHERE uuid = ''")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_${table}_uuid ON $table(uuid)")
     }
 
     // ---- notes ----
@@ -54,6 +67,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         now: Long,
     ): Long {
         val cv = ContentValues().apply {
+            put("uuid", newUuid())
             put("kind", if (kind == NoteKind.CHECKLIST) 1 else 0)
             put("title", title)
             put("body", encodedBody)
@@ -186,6 +200,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         now: Long,
     ): Long {
         val cv = ContentValues().apply {
+            put("uuid", newUuid())
             put("parent_id", parentId)
             put("title", title)
             put("due_at", dueAt)
@@ -323,8 +338,11 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         return ids
     }
 
+    /** 云同步用的跨设备稳定 ID（32 位十六进制，无连字符） */
+    private fun newUuid(): String = UUID.randomUUID().toString().replace("-", "")
+
     companion object {
-        const val DB_VERSION = 4
+        const val DB_VERSION = 5
 
         private val SQL_CREATE_FOLDERS = """
             CREATE TABLE folders(
@@ -337,6 +355,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         private val SQL_CREATE_NOTES = """
             CREATE TABLE notes(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              uuid TEXT NOT NULL DEFAULT '',
               kind INTEGER NOT NULL DEFAULT 0,
               title TEXT NOT NULL DEFAULT '',
               body TEXT NOT NULL DEFAULT '',
@@ -355,6 +374,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         private val SQL_CREATE_TODOS = """
             CREATE TABLE todos(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              uuid TEXT NOT NULL DEFAULT '',
               parent_id INTEGER NULL,
               title TEXT NOT NULL,
               done INTEGER NOT NULL DEFAULT 0,
@@ -373,6 +393,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
 
         // 列名常量
         const val COL_ID = "id"
+        const val COL_UUID = "uuid"
         const val COL_KIND = "kind"
         const val COL_TITLE = "title"
         const val COL_BODY = "body"
@@ -387,6 +408,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         const val COL_UPDATED = "updated_at"
 
         const val T_PARENT = "parent_id"
+        const val T_UUID = "uuid"
         const val T_DONE = "done"
         const val T_DONE_AT = "done_at"
         const val T_DUE_AT = "due_at"
