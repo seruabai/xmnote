@@ -56,9 +56,10 @@ fun RevealDeleteRow(
     LaunchedEffect(revealed) { snapTo(revealed) }
 
     Box(modifier.clip(cardShape)) {
+        // matchParentSize 跟内容等高，避免无限高度约束下背景层错位导致按钮对不齐卡片。
         Box(
             contentAlignment = Alignment.CenterEnd,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.matchParentSize(),
         ) {
             IconButton(
                 onClick = onDelete,

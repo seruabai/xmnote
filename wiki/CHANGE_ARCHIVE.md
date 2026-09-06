@@ -6,6 +6,25 @@
 
 ---
 
+## v1.2.11（versionCode 14）
+
+- 日期：2026-09-06
+- 摘要：删除键对齐修复；废纸篓去清空键与时间格式；前台通知压最低存在感
+
+### 改动明细
+- 滑动删除背景层改 matchParentSize，跟卡片等高，红色删除键垂直居中对齐。
+- 废纸篓删右上角清空键（清空走长按全选加批量删除）；时间改"日期加时间"格式，不用昨天/前天。
+- 速记前台通知去时间戳（渠道已是 MIN 静默；系统强制要求删不掉）。
+
+### 涉及文件
+- `app/build.gradle.kts`
+- `ui/TodoSwipe.kt`
+- `ui/TrashScreen.kt`
+- `ui/Common.kt`
+- `notify/QuickCaptureService.kt`
+
+---
+
 ## v1.2.10（versionCode 13）
 
 - 日期：2026-09-06

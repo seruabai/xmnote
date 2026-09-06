@@ -127,6 +127,8 @@ class QuickCaptureService : Service() {
                 .setContentText("速记侧栏已开启")
                 .setContentIntent(openApp)
                 .setOngoing(true)
+                // 前台服务通知系统强制要求，删不掉；压到最低存在感：渠道已是 MIN 静默，这里再去掉时间戳。
+                .setShowWhen(false)
                 .build()
         } else {
             @Suppress("DEPRECATION")

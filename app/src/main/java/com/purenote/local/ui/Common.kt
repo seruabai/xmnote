@@ -35,6 +35,18 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+/** 废纸篓时间：只显示"日期 + 时间"，不用昨天/前天这类相对文案 */
+fun formatTrashTime(ts: Long): String {
+    val cal = Calendar.getInstance().apply { timeInMillis = ts }
+    val now = Calendar.getInstance()
+    val datePart = if (cal.get(Calendar.YEAR) == now.get(Calendar.YEAR)) {
+        SimpleDateFormat("M月d日", Locale.getDefault()).format(Date(ts))
+    } else {
+        SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(Date(ts))
+    }
+    return "$datePart ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ts))}"
+}
+
 fun formatNoteTime(ts: Long): String {
     val cal = Calendar.getInstance().apply { timeInMillis = ts }
     val now = Calendar.getInstance()

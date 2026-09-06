@@ -29,7 +29,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -67,7 +66,6 @@ import com.purenote.local.data.Todo
 fun TrashScreen(vm: NoteViewModel) {
     val notes by vm.notes.collectAsState()
     val todos by vm.trashedTodos.collectAsState()
-    var confirmEmpty by remember { mutableStateOf(false) }
     var confirmBatch by remember { mutableStateOf(false) }
     var batchAction by remember { mutableStateOf<BatchAction?>(null) }
 
@@ -126,16 +124,6 @@ fun TrashScreen(vm: NoteViewModel) {
                         }
                     },
                     title = { Text("废纸篓", style = MaterialTheme.typography.titleMedium) },
-                    actions = {
-                        IconButton(onClick = { confirmEmpty = true }, enabled = !isEmpty) {
-                            Icon(
-                                Icons.Outlined.DeleteSweep,
-                                "清空",
-                                tint = if (!isEmpty) MaterialTheme.colorScheme.onSurfaceVariant
-                                else MaterialTheme.colorScheme.outlineVariant,
-                            )
-                        }
-                    },
                 )
             }
         },
@@ -253,7 +241,7 @@ fun TrashScreen(vm: NoteViewModel) {
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     Text(
-                                        formatNoteTime(note.updatedAt),
+                                        formatTrashTime(note.updatedAt),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -308,7 +296,7 @@ fun TrashScreen(vm: NoteViewModel) {
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     Text(
-                                        formatNoteTime(todo.trashedAt ?: todo.updatedAt),
+                                        formatTrashTime(todo.trashedAt ?: todo.updatedAt),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -328,25 +316,6 @@ fun TrashScreen(vm: NoteViewModel) {
                 }
             }
         }
-    }
-
-    if (confirmEmpty) {
-        AlertDialog(
-            onDismissRequest = { confirmEmpty = false },
-            title = { Text("清空废纸篓？") },
-            text = { Text("所有被删除的笔记和待办将被永久移除，无法恢复。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmEmpty = false
-                    exitSelection()
-                    vm.emptyTrash()
-                    vm.emptyTodoTrash()
-                }) { Text("清空", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmEmpty = false }) { Text("取消") }
-            },
-        )
     }
 
     if (confirmBatch) {
