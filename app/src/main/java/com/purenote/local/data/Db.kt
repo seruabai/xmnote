@@ -15,6 +15,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         db.execSQL("CREATE INDEX idx_notes_folder ON notes(folder_id)")
         db.execSQL("CREATE INDEX idx_todos_parent ON todos(parent_id)")
         db.execSQL("CREATE INDEX idx_todos_due ON todos(due_at)")
+        db.execSQL("CREATE INDEX idx_todos_trashed ON todos(trashed)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -33,6 +34,11 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
                 "UPDATE todos SET due_at = remind_at " +
                     "WHERE due_at IS NULL AND remind_at IS NOT NULL AND parent_id IS NULL",
             )
+        }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE todos ADD COLUMN trashed INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE todos ADD COLUMN trashed_at INTEGER NULL")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_todos_trashed ON todos(trashed)")
         }
     }
 
@@ -251,11 +257,66 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
     fun deleteSubsOf(parentId: Long): Int =
         writableDatabase.delete("todos", "parent_id = ?", arrayOf(parentId.toString()))
 
-    fun deleteCompletedTodos(now: Long): Int =
-        writableDatabase.delete("todos", "done = 1", null)
+    /** 待办整树移入废纸篓（父项连带子项），返回受影响的 id（含子项，用于取消提醒） */
+    fun trashTodoTree(id: Long, now: Long): List<Long> {
+        val ids = mutableListOf<Long>()
+        readableDatabase.rawQuery(
+            "SELECT id FROM todos WHERE id = ? OR parent_id = ?",
+            arrayOf(id.toString(), id.toString()),
+        ).use { c -> while (c.moveToNext()) ids += c.getLong(0) }
+        if (ids.isEmpty()) return ids
+        val cv = ContentValues().apply {
+            put("trashed", 1)
+            put("trashed_at", now)
+        }
+        writableDatabase.update(
+            "todos", cv, "id = ? OR parent_id = ?",
+            arrayOf(id.toString(), id.toString()),
+        )
+        return ids
+    }
+
+    /** 从废纸篓恢复待办整树 */
+    fun restoreTodoTree(id: Long): Int {
+        val cv = ContentValues().apply {
+            put("trashed", 0)
+            putNull("trashed_at")
+        }
+        return writableDatabase.update(
+            "todos", cv, "id = ? OR parent_id = ?",
+            arrayOf(id.toString(), id.toString()),
+        )
+    }
+
+    fun emptyTodoTrash(): Int =
+        writableDatabase.delete("todos", "trashed = 1", null)
+
+    /** 清理在废纸篓中超过 maxAgeMs 的待办，返回删除数量 */
+    fun purgeExpiredTodoTrash(maxAgeMs: Long, now: Long): Int =
+        writableDatabase.delete(
+            "todos",
+            "trashed = 1 AND trashed_at IS NOT NULL AND trashed_at < ?",
+            arrayOf((now - maxAgeMs).toString()),
+        )
+
+    /** 已完成待办整批移入废纸篓（替代过去的直接永久清除），返回受影响的 id */
+    fun trashCompletedTodos(now: Long): List<Long> {
+        val ids = mutableListOf<Long>()
+        readableDatabase.rawQuery(
+            "SELECT id FROM todos WHERE done = 1 AND trashed = 0",
+            null,
+        ).use { c -> while (c.moveToNext()) ids += c.getLong(0) }
+        if (ids.isEmpty()) return ids
+        val cv = ContentValues().apply {
+            put("trashed", 1)
+            put("trashed_at", now)
+        }
+        writableDatabase.update("todos", cv, "done = 1 AND trashed = 0", null)
+        return ids
+    }
 
     companion object {
-        const val DB_VERSION = 3
+        const val DB_VERSION = 4
 
         private val SQL_CREATE_FOLDERS = """
             CREATE TABLE folders(
@@ -295,6 +356,8 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
               all_day INTEGER NOT NULL DEFAULT 0,
               repeat_type INTEGER NOT NULL DEFAULT 0,
               sort_index INTEGER NOT NULL DEFAULT 0,
+              trashed INTEGER NOT NULL DEFAULT 0,
+              trashed_at INTEGER NULL,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL
             )
@@ -322,5 +385,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         const val T_ALL_DAY = "all_day"
         const val T_REPEAT = "repeat_type"
         const val T_SORT = "sort_index"
+        const val T_TRASHED = "trashed"
+        const val T_TRASHED_AT = "trashed_at"
     }
 }

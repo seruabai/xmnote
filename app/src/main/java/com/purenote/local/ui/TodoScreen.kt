@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,6 +84,7 @@ import com.purenote.local.data.RepeatRule
 import com.purenote.local.data.Todo
 import java.util.Calendar
 import java.util.UUID
+import kotlinx.coroutines.launch
 
 /** 小米待办同款方角勾选框：未勾为描边方块，勾选后墨色填充 + 纸色对勾 */
 @Composable
@@ -265,6 +267,17 @@ private fun TodoCardRow(
     val drafts = remember { mutableStateListOf<SubDraft>() }
     var remindOpen by remember { mutableStateOf(false) }
     val titleFocus = remember { FocusRequester() }
+    var pendingFocusKey by remember { mutableStateOf<String?>(null) }
+    val subFocus = remember { mutableMapOf<String, FocusRequester>() }
+
+    // 新增子行后把焦点交给新行，和待办编辑页同一写法。
+    LaunchedEffect(pendingFocusKey) {
+        pendingFocusKey?.let { key ->
+            kotlinx.coroutines.delay(80)
+            runCatching { subFocus[key]?.requestFocus() }
+            pendingFocusKey = null
+        }
+    }
 
     fun saveEdits() {
         val newTitle = editTitleValue.text.trim().ifBlank { todo.title.ifBlank { "待办清单" } }
@@ -283,6 +296,7 @@ private fun TodoCardRow(
     fun addNewSubtask() {
         val next = SubDraft("", false)
         drafts.add(next)
+        pendingFocusKey = next.key
     }
 
     LaunchedEffect(editing) {
@@ -294,6 +308,8 @@ private fun TodoCardRow(
             editRepeat = todo.repeat
             drafts.clear()
             drafts.addAll(subs.map { SubDraft(it.title, it.done) })
+            subFocus.clear()
+            pendingFocusKey = null
             wasEditing = true
             kotlinx.coroutines.delay(80)
             runCatching { titleFocus.requestFocus() }
@@ -407,7 +423,11 @@ private fun TodoCardRow(
                         draft = draft,
                         onTextChange = { drafts[idx] = draft.copy(text = it) },
                         onToggle = { drafts[idx] = draft.copy(done = !draft.done) },
-                        onRemove = { drafts.removeAt(idx) },
+                        onRemove = {
+                            subFocus.remove(draft.key)
+                            drafts.removeAt(idx)
+                        },
+                        focusRequester = subFocus.getOrPut(draft.key) { FocusRequester() },
                     )
                 }
                 HorizontalDivider(
@@ -523,6 +543,7 @@ private fun InlineSubEditRow(
     onTextChange: (String) -> Unit,
     onToggle: () -> Unit,
     onRemove: () -> Unit,
+    focusRequester: FocusRequester,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -557,7 +578,8 @@ private fun InlineSubEditRow(
             },
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 9.dp, vertical = 9.dp),
+                .padding(horizontal = 9.dp, vertical = 9.dp)
+                .focusRequester(focusRequester),
         )
         IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) {
             Icon(
@@ -596,7 +618,7 @@ private fun SubListRow(vm: NoteViewModel, sub: Todo, onEdit: () -> Unit) {
                 .weight(1f)
                 .padding(horizontal = 9.dp, vertical = 9.dp),
         )
-        IconButton(onClick = { vm.deleteTodo(sub) }, modifier = Modifier.size(26.dp)) {
+        IconButton(onClick = { vm.deleteTodoForever(sub) }, modifier = Modifier.size(26.dp)) {
             Icon(
                 Icons.Outlined.Close,
                 contentDescription = "删除子待办",
@@ -607,7 +629,10 @@ private fun SubListRow(vm: NoteViewModel, sub: Todo, onEdit: () -> Unit) {
     }
 }
 
-/** 左滑红色删除（右滑禁用，完成/撤销通过复选框操作） */
+/**
+ * 左滑把卡片停在"露出红色删除按钮"的位置：点删除进废纸篓，
+ * 点背景其他区域或把卡片滑回去则回弹；右滑禁用，完成/撤销走复选框。
+ */
 @Composable
 private fun SwipeTodoRow(
     todo: Todo,
@@ -616,39 +641,35 @@ private fun SwipeTodoRow(
     content: @Composable () -> Unit,
 ) {
     val cardShape = RoundedCornerShape(18.dp)
+    val scope = rememberCoroutineScope()
     key(todo.id, todo.done) {
         val state = rememberSwipeToDismissBoxState(
-            confirmValueChange = { value ->
-                when (value) {
-                    SwipeToDismissBoxValue.EndToStart -> {
-                        onDelete()
-                        true
-                    }
-                    else -> false
-                }
-            },
+            // 左滑只确认"停留露出按钮"，不直接删除；滑回 Settled 同样放行。
+            confirmValueChange = { true },
         )
         SwipeToDismissBox(
             state = state,
             enableDismissFromStartToEnd = false,
             enableDismissFromEndToStart = true,
             backgroundContent = {
-                val revealingDelete = state.targetValue == SwipeToDismissBoxValue.EndToStart ||
-                    state.dismissDirection == SwipeToDismissBoxValue.EndToStart
-                val bg = if (revealingDelete) Color(0xFFFA4039) else Color.Transparent
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.End,
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(bg, cardShape)
-                        .padding(horizontal = 22.dp),
+                        .background(Color(0xFFFA4039), cardShape)
+                        .clickable { scope.launch { state.reset() } }
+                        .padding(horizontal = 14.dp),
                 ) {
                     Text(
                         "删除",
-                        color = if (revealingDelete) Color.White else Color.Transparent,
+                        color = Color.White,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onDelete() }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
                     )
                 }
             },
@@ -1072,7 +1093,7 @@ fun TodoEditScreen(vm: NoteViewModel, todoId: Long) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("删除这条待办？") },
-            text = { Text("将同时删除它的全部子待办。") },
+            text = { Text("将连同它的全部子待办移入废纸篓，30 天内可在废纸篓恢复。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false

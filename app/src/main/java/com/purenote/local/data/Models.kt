@@ -65,6 +65,8 @@ data class Todo(
     val sortIndex: Int,
     val createdAt: Long,
     val updatedAt: Long,
+    val trashed: Boolean = false,
+    val trashedAt: Long? = null,
 ) {
     val isSubtask: Boolean get() = parentId != null
 

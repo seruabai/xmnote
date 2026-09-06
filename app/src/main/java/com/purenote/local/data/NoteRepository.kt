@@ -170,10 +170,29 @@ class NoteRepository(context: Context) {
 
     suspend fun loadTodos(): List<Todo> = withContext(Dispatchers.IO) {
         val list = mutableListOf<Todo>()
-        db.readableDatabase.rawQuery("SELECT * FROM todos", null).use { c ->
+        db.readableDatabase.rawQuery("SELECT * FROM todos WHERE trashed = 0", null).use { c ->
             while (c.moveToNext()) list += c.toTodo()
         }
         list
+    }
+
+    /** 废纸篓中的待办只列顶层项，子项随父项一起恢复/删除 */
+    suspend fun loadTrashedTodos(): List<Todo> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Todo>()
+        db.readableDatabase.rawQuery(
+            "SELECT * FROM todos WHERE trashed = 1 AND parent_id IS NULL ORDER BY trashed_at DESC",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) list += c.toTodo()
+        }
+        list
+    }
+
+    suspend fun trashedTodoCount(): Int = withContext(Dispatchers.IO) {
+        db.readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM todos WHERE trashed = 1 AND parent_id IS NULL",
+            null,
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
     }
 
     suspend fun getTodo(id: Long): Todo? = withContext(Dispatchers.IO) {
@@ -242,13 +261,27 @@ class NoteRepository(context: Context) {
 
     suspend fun deleteTodoTree(id: Long) = withContext(Dispatchers.IO) { db.deleteTodoTree(id) }
 
-    suspend fun clearDoneTodos() = withContext(Dispatchers.IO) { db.deleteCompletedTodos(System.currentTimeMillis()) }
+    suspend fun trashTodoTree(id: Long): List<Long> = withContext(Dispatchers.IO) {
+        db.trashTodoTree(id, System.currentTimeMillis())
+    }
+
+    suspend fun restoreTodoTree(id: Long) = withContext(Dispatchers.IO) { db.restoreTodoTree(id) }
+
+    suspend fun emptyTodoTrash() = withContext(Dispatchers.IO) { db.emptyTodoTrash() }
+
+    suspend fun purgeExpiredTodoTrash(maxAgeMs: Long) = withContext(Dispatchers.IO) {
+        db.purgeExpiredTodoTrash(maxAgeMs, System.currentTimeMillis())
+    }
+
+    suspend fun trashCompletedTodos(): List<Long> = withContext(Dispatchers.IO) {
+        db.trashCompletedTodos(System.currentTimeMillis())
+    }
 
     suspend fun allFutureTodoReminders(): List<Pair<Long, Long>> = withContext(Dispatchers.IO) {
         val list = mutableListOf<Pair<Long, Long>>()
         val now = System.currentTimeMillis()
         db.readableDatabase.rawQuery(
-            "SELECT id, remind_at FROM todos WHERE done = 0 AND remind_at IS NOT NULL AND remind_at > ?",
+            "SELECT id, remind_at FROM todos WHERE trashed = 0 AND done = 0 AND remind_at IS NOT NULL AND remind_at > ?",
             arrayOf(now.toString()),
         ).use { c ->
             while (c.moveToNext()) list += c.getLong(0) to c.getLong(1)
@@ -303,6 +336,8 @@ class NoteRepository(context: Context) {
             sortIndex = getInt(NotesDb.T_SORT),
             createdAt = getLong(NotesDb.COL_CREATED),
             updatedAt = getLong(NotesDb.COL_UPDATED),
+            trashed = getInt(NotesDb.T_TRASHED) == 1,
+            trashedAt = if (isNull(NotesDb.T_TRASHED_AT)) null else getLong(NotesDb.T_TRASHED_AT),
         )
     }
 

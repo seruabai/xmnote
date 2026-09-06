@@ -62,6 +62,9 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     private val _todos = MutableStateFlow<List<Todo>>(emptyList())
     val todos: StateFlow<List<Todo>> = _todos.asStateFlow()
 
+    private val _trashedTodos = MutableStateFlow<List<Todo>>(emptyList())
+    val trashedTodos: StateFlow<List<Todo>> = _trashedTodos.asStateFlow()
+
     private val _folders = MutableStateFlow<List<Folder>>(emptyList())
     val folders: StateFlow<List<Folder>> = _folders.asStateFlow()
 
@@ -123,9 +126,11 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _notes.value = repo.loadNotes(_filter.value, sortInternal.value)
             _todos.value = repo.loadTodos()
+            _trashedTodos.value = repo.loadTrashedTodos()
             _folders.value = repo.loadFolders()
             _folderCounts.value = repo.folderCounts()
-            _trashCount.value = repo.loadNotes(NoteFilter(trashed = true)).size
+            _trashCount.value = repo.loadNotes(NoteFilter(trashed = true)).size +
+                repo.trashedTodoCount()
         }
     }
 
@@ -158,8 +163,15 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             when (targetKind) {
                 Reminders.KIND_TODO -> {
-                    _tab.value = MainTab.TODO
-                    _screen.value = Screen.TodoEdit(targetId)
+                    val todo = repo.getTodo(targetId)
+                    if (todo == null) {
+                        goHome()
+                    } else if (todo.trashed) {
+                        goTrash()
+                    } else {
+                        _tab.value = MainTab.TODO
+                        _screen.value = Screen.TodoEdit(targetId)
+                    }
                 }
                 else -> repo.getNote(targetId)?.let { openEditor(it) }
             }
@@ -178,10 +190,11 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteTodoById(id: Long) {
         viewModelScope.launch {
-            val existed = repo.getTodo(id) != null
-            if (existed) {
-                repo.deleteTodoTree(id)
-                Reminders.cancel(getApplication(), Reminders.KIND_TODO, id)
+            val todo = repo.getTodo(id)
+            if (todo != null && !todo.trashed) {
+                repo.trashTodoTree(id).forEach { trashedId ->
+                    Reminders.cancel(getApplication(), Reminders.KIND_TODO, trashedId)
+                }
             }
             if (_screen.value is Screen.TodoEdit) _screen.value = Screen.Home
             refresh()
@@ -493,18 +506,50 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 待办删除进废纸篓（整树，含子项）；子项的小×走 deleteTodoForever 直接移除 */
     fun deleteTodo(todo: Todo) {
+        viewModelScope.launch {
+            if (!todo.trashed) {
+                repo.trashTodoTree(todo.id).forEach { trashedId ->
+                    Reminders.cancel(getApplication(), Reminders.KIND_TODO, trashedId)
+                }
+            }
+            if (_screen.value is Screen.TodoEdit) _screen.value = Screen.Home
+            refresh()
+        }
+    }
+
+    /** 彻底删除（废纸篓内操作，或行内子项移除，不可恢复） */
+    fun deleteTodoForever(todo: Todo) {
         viewModelScope.launch {
             repo.deleteTodoTree(todo.id)
             Reminders.cancel(getApplication(), Reminders.KIND_TODO, todo.id)
-            if (_screen.value is Screen.TodoEdit) _screen.value = Screen.Home
+            refresh()
+        }
+    }
+
+    fun restoreTodo(todo: Todo) {
+        viewModelScope.launch {
+            repo.restoreTodoTree(todo.id)
+            repo.getTodo(todo.id)?.let { restored ->
+                if (!restored.done) scheduleTodoAlarm(restored.id, restored.dueAt)
+            }
+            refresh()
+        }
+    }
+
+    fun emptyTodoTrash() {
+        viewModelScope.launch {
+            repo.emptyTodoTrash()
             refresh()
         }
     }
 
     fun clearDone() {
         viewModelScope.launch {
-            repo.clearDoneTodos()
+            repo.trashCompletedTodos().forEach { trashedId ->
+                Reminders.cancel(getApplication(), Reminders.KIND_TODO, trashedId)
+            }
             refresh()
         }
     }

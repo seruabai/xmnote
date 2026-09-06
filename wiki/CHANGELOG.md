@@ -5,7 +5,8 @@
 
 | 日期 | 工具 | 改动摘要 | 涉及文件 |
 |------|------|----------|----------|
-| 2026-09-06 | opencode | **v1.2.8**：侧栏把手改白色75%不透明度；虚化背景去纹路（backdrop固定透明+降噪半径）；待办行内编辑光标定位末尾+回车添加子待办行；左滑删除改为滑出红色删除按钮，禁用右滑完成；废纸篓支持长按多选+全选/恢复/彻底删除批量操作；设置页新增「最近删除」入口 | notify/QuickCaptureService.kt, ui/TodoScreen.kt, ui/TrashScreen.kt, ui/SettingsScreen.kt, app/build.gradle.kts |
+| 2026-09-06 | opencode | **v1.2.9**：待办左滑删直接删除换停留露出删除按钮；待办表新增废纸篓字段待办删除进废纸篓；废纸篓新增待办分区恢复/彻底删除/多选；行内回车新增子行自动聚焦 | ui/TodoScreen.kt, ui/TrashScreen.kt, data/Db.kt, data/NoteRepository.kt, data/Models.kt, NoteViewModel.kt, PureNoteApp.kt, app/build.gradle.kts |
+| 2026-09-06 | opencode | **v1.2.8**：侧栏把手改白色75%不透明度；虚化背景去纹路（backdrop固定透明+降噪半径）；待办行内编辑光标定位末尾+回车添加子待办行；左滑直接删除（未做成划出按钮，见v1.2.9），禁用右滑完成；废纸篓支持长按多选+全选/恢复/彻底删除批量操作；设置页新增「最近删除」入口 | notify/QuickCaptureService.kt, ui/TodoScreen.kt, ui/TrashScreen.kt, ui/SettingsScreen.kt, app/build.gradle.kts |
 | 2026-09-05 | opencode | **v1.2.7**：笔记页新增「新建分类」入口；侧栏把手改白色半透明并缩矮、背景改为纯模糊；把手拖拽跟手拉出面板；待办点击文字行内直接编辑（底栏：提醒时间+完成）；提醒选择器改用 Material3 日期/时间控件并将「到期日/时刻」改「日期/时间」 | app/build.gradle.kts, ui/HomeScreen.kt, ui/TodoScreen.kt, notify/QuickCaptureService.kt |
 | 2026-09-05 | opencode | **v1.2.6**：全新 UI 骨架——奶油暖黄主题 + 屏幕转场动画；versionCode 9 | app/build.gradle.kts, ui/AppRoot.kt, ui/Common.kt, ui/theme/Theme.kt |
 | 2026-09-05 | opencode | 变更版本策略：每次代码改动自动升 patch 版本并打 tag（规范化） | AGENTS.md, .agents/skills/pre-work-check/SKILL.md |

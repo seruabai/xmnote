@@ -21,6 +21,7 @@ class PureNoteApp : Application() {
         // 清理废纸篓超过 30 天的内容；补偿开机广播未触发时的提醒重排
         scope.launch {
             runCatching { repository.purgeExpiredTrash(TRASH_TTL_MS) }
+            runCatching { repository.purgeExpiredTodoTrash(TRASH_TTL_MS) }
             runCatching {
                 repository.allFutureReminders().forEach { (id, at) ->
                     Reminders.schedule(this@PureNoteApp, Reminders.KIND_NOTE, id, at)
