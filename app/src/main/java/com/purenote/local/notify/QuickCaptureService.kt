@@ -356,7 +356,7 @@ class QuickCaptureService : Service() {
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
         )
         val dimVeil = View(this).apply {
-            setBackgroundColor(DIM_VEIL_COLOR)
+            setBackgroundColor(dimVeilColor())
             isClickable = false
             isFocusable = false
         }
@@ -1071,6 +1071,8 @@ class QuickCaptureService : Service() {
 
     private fun hidePanel() {
         scheduleInlineEditorSave(immediate = true)
+        // 先收键盘再摘窗口：在 panel 置空后 windowToken 即失效，顺序不可换。
+        hideKeyboard()
         unregisterPanelBackCallback()
         (panel as? EdgeDismissFrame)?.cancelMotionAnimation()
         panel?.let { runCatching { wm.removeView(it) } }
@@ -1082,7 +1084,6 @@ class QuickCaptureService : Service() {
         editingTodoId = null
         editingDraft = null
         editingFocusSubId = null
-        hideKeyboard()
         collapsedTodoIds.clear()
         panelLoading = false
         interactiveOpen = false
@@ -1128,6 +1129,12 @@ class QuickCaptureService : Service() {
 
     private fun dip(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
     private fun dip(dp: Float): Int = (dp * resources.displayMetrics.density).toInt()
+
+    /** 系统虚化可用就用 50% 罩压噪点；被关掉就加深到 70% 藏形状（此时无虚化可依靠）。 */
+    private fun dimVeilColor(): Int {
+        val blurOn = android.os.Build.VERSION.SDK_INT >= 31 && wm.isCrossWindowBlurEnabled
+        return if (blurOn) DIM_VEIL_COLOR else DIM_VEIL_NO_BLUR
+    }
 
     /**
      * 全屏单张均匀罩面：静态柔和虚化 + 全屏统一暗色，盖住各家 OEM 虚化的噪点纹路。
@@ -1472,8 +1479,10 @@ class QuickCaptureService : Service() {
         /** 新建待办草稿的临时 id。 */
         private const val NEW_DRAFT_ID = -1L
 
-        /** 全屏均匀暗罩：盖住 OEM 虚化噪点，全屏一张，保证任何底色下都平滑无纹路。 */
-        private val DIM_VEIL_COLOR: Int = 0x66000000
+        /** 全屏均匀暗罩基线（虚化可用时）：50% 黑，压住 OEM 噪点颗粒。 */
+        private val DIM_VEIL_COLOR: Int = 0x80000000.toInt()
+        /** 系统虚化被关掉时的补偿暗罩：无虚化只能靠更深的均匀压暗藏住底下形状。 */
+        private const val DIM_VEIL_NO_BLUR = 0xB3000000.toInt()
 
         /** 把手颜色：浅灰 75% 不透明度，白底上也看得见（旧版纯白在白色界面上隐形）。 */
         private val HANDLE_COLOR: Int = 0xC0C4C4C4.toInt()

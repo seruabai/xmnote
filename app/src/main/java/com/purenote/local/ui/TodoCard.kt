@@ -247,18 +247,18 @@ private fun EqualHandle(modifier: Modifier = Modifier) {
     ) {
         Box(
             modifier = Modifier.width(20.dp).height(2.5.dp)
-                .background(Color(0xFFE0D5BE), RoundedCornerShape(2.dp)),
+                .background(Color(0xFFC4B48F), RoundedCornerShape(2.dp)),
         )
         Spacer(Modifier.height(5.dp))
         Box(
             modifier = Modifier.width(20.dp).height(2.5.dp)
-                .background(Color(0xFFE0D5BE), RoundedCornerShape(2.dp)),
+                .background(Color(0xFFC4B48F), RoundedCornerShape(2.dp)),
         )
     }
 }
 
-/** 选中卡的暖米黄底（对标图2选中行）。 */
-private val SelectedCardBeige = Color(0xFFF0E4C8)
+/** 选中卡的暖米黄底（对标图2选中行：比 surfaceContainerHigh 再深两档，选中态一眼可见）。 */
+private val SelectedCardBeige = Color(0xFFEAD7AE)
 
 /** 非编辑态的子待办行：子项属于清单内容，删除直接移除不进废纸篓 */
 @Composable

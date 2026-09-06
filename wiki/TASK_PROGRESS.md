@@ -21,3 +21,4 @@
 - T-006-C | C批：笔记富编辑器（日期YMD/置顶移时间栏/H1-H3/工具栏跟键盘/录音/行内勾选/图片插光标/三点菜单） | opencode | 待开始 | ui/EditorScreen.kt, ui/NoteCard.kt, data/Models.kt, data/Db.kt | 2026-09-06 |
 - T-007 | 待办弹窗跟随输入法同步升降（弹窗与键盘渐入渐出同动）(v1.2.13已发) | opencode | 完成 | ui/TodoEditSheet.kt, app/src/main/AndroidManifest.xml | 2026-09-06 |
 - T-008 | 侧栏均匀暗化去噪点+把手加灰+侧栏卡片原地编辑+长按多选对标图2 (v1.2.14已发) | opencode | 完成 | notify/QuickCaptureService.kt, ui/TodoPane.kt, ui/TodoCard.kt | 2026-09-06 |
+- T-009 | 自查返工：hideKeyboard空转+暗罩太薄+选中米黄太浅+手柄太淡 (v1.2.15已发) | opencode | 完成 | notify/QuickCaptureService.kt, ui/TodoCard.kt | 2026-09-06 |
