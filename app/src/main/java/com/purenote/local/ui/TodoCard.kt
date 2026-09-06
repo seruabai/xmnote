@@ -5,8 +5,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,7 +23,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.DragHandle
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Schedule
@@ -104,9 +105,10 @@ fun TodoCardRow(
 
     if (selectionMode) {
         // 多选模式不走左滑删除，直接整卡可点选，左侧拖动手柄支持上下排序。
+        // 对标图2：未选中白卡，选中暖米黄卡，左侧双横线手柄，右侧圆形单选。
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh
+            color = if (selected) SelectedCardBeige
             else MaterialTheme.colorScheme.surface,
             modifier = modifier
                 .fillMaxWidth()
@@ -116,12 +118,7 @@ fun TodoCardRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 20.dp),
             ) {
-                Icon(
-                    Icons.Outlined.DragHandle,
-                    contentDescription = "拖动排序",
-                    tint = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                    modifier = dragHandle.size(24.dp),
-                )
+                EqualHandle(modifier = dragHandle)
                 Text(
                     todo.title.ifBlank { "待办清单" },
                     style = TextStyle(fontSize = 16.sp, lineHeight = 21.sp),
@@ -239,6 +236,29 @@ fun TodoCardRow(
         }
     }
 }
+
+/** 多选模式左侧的双横线拖动手柄（对标图2，非三条杠汉堡图标）。 */
+@Composable
+private fun EqualHandle(modifier: Modifier = Modifier) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier.width(28.dp).height(24.dp),
+    ) {
+        Box(
+            modifier = Modifier.width(20.dp).height(2.5.dp)
+                .background(Color(0xFFE0D5BE), RoundedCornerShape(2.dp)),
+        )
+        Spacer(Modifier.height(5.dp))
+        Box(
+            modifier = Modifier.width(20.dp).height(2.5.dp)
+                .background(Color(0xFFE0D5BE), RoundedCornerShape(2.dp)),
+        )
+    }
+}
+
+/** 选中卡的暖米黄底（对标图2选中行）。 */
+private val SelectedCardBeige = Color(0xFFF0E4C8)
 
 /** 非编辑态的子待办行：子项属于清单内容，删除直接移除不进废纸篓 */
 @Composable

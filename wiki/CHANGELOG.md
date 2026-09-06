@@ -5,6 +5,7 @@
 
 | 日期 | 工具 | 改动摘要 | 涉及文件 |
 |------|------|----------|----------|
+| 2026-09-06 | opencode | **v1.2.14**：[侧栏]删逐帧毛玻璃虚化换全屏均匀暗罩；把手换浅灰；待办编辑换卡片原地展开+空白退回列表；[待办多选]换图2样式双横线+米黄选中 | notify/QuickCaptureService.kt, ui/TodoCard.kt, ui/TodoPane.kt, app/build.gradle.kts |
 | 2026-09-06 | opencode | **v1.2.13**：[待办弹窗]修复弹窗键盘三段跳动改同动升降 | ui/TodoEditSheet.kt, app/src/main/AndroidManifest.xml, app/build.gradle.kts |
 | 2026-09-06 | opencode | **v1.2.12**：待办弹窗修复点行光标落行末；侧栏编辑修复新页面改行末聚焦+完成退出；待办新增长按多选+拖柄排序；通知压单条静默+提醒id错开42；虚化半径加大去纹路 | ui/TodoEditSheet.kt, ui/TodoCard.kt, ui/TodoPane.kt, ui/HomeScreen.kt, NoteViewModel.kt, data/Db.kt, data/NoteRepository.kt, notify/QuickCaptureService.kt, notify/ReminderReceiver.kt, app/build.gradle.kts |
 | 2026-09-06 | opencode | **v1.2.11**：滑动删除键改等高对齐；废纸篓删清空键时间改日期时间；前台通知去时间戳 | ui/TodoSwipe.kt, ui/TrashScreen.kt, ui/Common.kt, notify/QuickCaptureService.kt, app/build.gradle.kts |

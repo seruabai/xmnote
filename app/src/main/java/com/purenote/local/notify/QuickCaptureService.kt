@@ -86,7 +86,12 @@ class QuickCaptureService : Service() {
     private var dragDistance = 0f
     private var openOnMount = false
     private var discardOnMount = false
-    private var inlineEditorDraft: OverlayTodoDraft? = null
+    // 侧栏原地编辑态：只展开被点的卡片（同图1），面板常驻；空白/完成后退回列表，不收起面板。
+    private var cachedNotes: List<Note> = emptyList()
+    private var cachedTodos: List<Todo> = emptyList()
+    private var editingTodoId: Long? = null
+    private var editingDraft: OverlayTodoDraft? = null
+    private var editingFocusSubId: Long? = null
     private var inlineSaveRevision = 0L
     private val inlineSaveMutex = Mutex()
     private var overlayDraftKeyCounter = 0L
@@ -306,7 +311,11 @@ class QuickCaptureService : Service() {
                 )
                 notes to todos
             }.onSuccess { (notes, todos) ->
-                postToMain { renderPanel(notes, todos, interactive = interactive) }
+                postToMain {
+                    cachedNotes = notes
+                    cachedTodos = todos
+                    renderPanel(notes, todos, interactive = interactive)
+                }
             }.onFailure {
                 postToMain {
                     if (panel == null) panelLoading = false
@@ -339,10 +348,20 @@ class QuickCaptureService : Service() {
             onDismiss = { direction -> dismissPanel(direction) }
             isDismissInProgress = { dismissingPanel }
         }
-        // 背景虚化层固定覆盖全屏；只有内容层位移，拖动过程中不会露出矩形色块边界。
-        val blurBackdrop = View(this).apply { setBackgroundColor(blurScrimColor()) }
+        // 全屏单张均匀罩面：柔和固定虚化 + 全屏统一暗色，盖住 OEM 虚化的噪点纹路（图4问题）。
+        // 罩面固定覆盖全屏；只有内容层位移，拖动过程中不会露出矩形色块边界。
+        val blurBackdrop = View(this).apply { setBackgroundColor(Color.TRANSPARENT) }
         root.addView(
             blurBackdrop,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+        )
+        val dimVeil = View(this).apply {
+            setBackgroundColor(DIM_VEIL_COLOR)
+            isClickable = false
+            isFocusable = false
+        }
+        root.addView(
+            dimVeil,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
         )
         val scroll = ScrollView(this).apply {
@@ -353,6 +372,9 @@ class QuickCaptureService : Service() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dip(18), dip(58), dip(18), dip(28))
+            // 点空白处退出原地编辑、退回列表（面板不收起）；非编辑态时空操作。
+            isClickable = true
+            setOnClickListener { exitInlineEdit() }
         }
         scroll.addView(content, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         root.addView(scroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -375,9 +397,11 @@ class QuickCaptureService : Service() {
                 val children = todos.filter { it.parentId == todo.id }
                     .sortedWith(compareBy<Todo> { it.sortIndex }.thenBy { it.createdAt })
                 content.addView(todoCard(todo, children))
-                content.addView(space(10))
+                content.addView(blankSpace(10))
             }
         }
+        // 列表底部留白：点空白处同样退出编辑退回列表。
+        content.addView(blankSpace(220))
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -395,8 +419,8 @@ class QuickCaptureService : Service() {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
         panelParams = params
-        bindBackgroundBlurProgress(root, blurBackdrop, params)
-        val startOffset = if (mountAsTap || interactive) {
+        // 虚化半径静态一次设好，不随手势逐帧改，避免半径步进造成明暗闪烁与纹理感。
+        val startOffset = if (previousPanel == null && (mountAsTap || interactive)) {
             resources.displayMetrics.widthPixels.toFloat()
         } else {
             0f
@@ -459,7 +483,9 @@ class QuickCaptureService : Service() {
         }
         row.addView(plusButton { startInlineTodoEditor(null) }, LinearLayout.LayoutParams(dip(38), dip(38)))
         row.addView(label("待办", 18f, Color.WHITE, bold = false).apply {
-            setPadding(dip(13), 0, 0, 0)
+            setPadding(dip(13), 0, 0, dip(0))
+            // 点标题空白同样退出原地编辑、退回列表。
+            setOnClickListener { exitInlineEdit() }
         }, LinearLayout.LayoutParams(0, dip(38), 1f))
         return row
     }
@@ -507,6 +533,10 @@ class QuickCaptureService : Service() {
     }
 
     private fun todoCard(todo: Todo, children: List<Todo>): View {
+        // 原地编辑态：被点的卡片直接展开为编辑卡（同图1），其余卡片保持只读。
+        if (todo.id == editingTodoId) {
+            editingDraft?.let { return editableTodoCard(it) }
+        }
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = rounded(Color.WHITE, 17f)
@@ -609,236 +639,156 @@ class QuickCaptureService : Service() {
         }
     }
 
-    /** 在悬浮层内部打开待办编辑器，不再启动 MainActivity。 */
+    /** 点卡片直接在列表中展开编辑（同图1），不出新界面；光标落到被点那行末尾。 */
     private fun startInlineTodoEditor(todoId: Long?, focusSubId: Long? = null) {
-        val repo = (application as PureNoteApp).repository
-        scope.launch {
-            val todo = todoId?.let { repo.getTodo(it) }
-            val children = if (todo == null) emptyList() else {
-                repo.loadTodos()
-                    .filter { it.parentId == todo.id }
-                    .sortedWith(compareBy<Todo> { it.sortIndex }.thenBy { it.createdAt })
-            }
-            val draft = OverlayTodoDraft(
-                id = todo?.id ?: -1L,
-                title = todo?.title.orEmpty(),
-                done = todo?.done ?: false,
-                dueAt = todo?.dueAt,
-                allDay = todo?.allDay ?: false,
-                repeat = todo?.repeat ?: RepeatRule.NONE,
-                subs = children.mapTo(mutableListOf()) {
-                    OverlaySubDraft(
-                        key = nextOverlayDraftKey(),
-                        sourceId = it.id,
-                        text = it.title,
-                        done = it.done,
-                    )
-                },
+        if (panel == null) return
+        if (todoId == null) {
+            editingTodoId = NEW_DRAFT_ID
+            editingDraft = OverlayTodoDraft(
+                id = NEW_DRAFT_ID,
+                title = "",
+                done = false,
+                dueAt = null,
+                allDay = false,
+                repeat = RepeatRule.NONE,
+                subs = mutableListOf(OverlaySubDraft(nextOverlayDraftKey(), null, "", false)),
             )
-            postToMain {
-                inlineEditorDraft = draft
-                renderInlineTodoEditor(draft, focusSubId)
+            editingFocusSubId = null
+            rerenderPanel()
+            focusEditableTag(TITLE_TAG)
+            return
+        }
+        val todo = cachedTodos.firstOrNull { it.id == todoId } ?: return
+        val subs = cachedTodos.filter { it.parentId == todoId }
+            .sortedWith(compareBy<Todo> { it.sortIndex }.thenBy { it.createdAt })
+            .mapTo(mutableListOf()) {
+                OverlaySubDraft(nextOverlayDraftKey(), it.id, it.title, it.done)
+            }
+        if (subs.isEmpty()) subs.add(OverlaySubDraft(nextOverlayDraftKey(), null, "", false))
+        editingTodoId = todoId
+        editingDraft = OverlayTodoDraft(todo.id, todo.title, todo.done, todo.dueAt, todo.allDay, todo.repeat, subs)
+        editingFocusSubId = focusSubId
+        rerenderPanel()
+        val tag = focusSubId?.let { fid -> subs.firstOrNull { it.sourceId == fid }?.key } ?: TITLE_TAG
+        focusEditableTag(tag)
+    }
+
+    /** 原地编辑增删行/完成后重绘列表（面板常驻，不做进出动画）。 */
+    private fun rerenderPanel() {
+        if (panel == null) return
+        panelScrollY = panelScroll?.scrollY ?: panelScrollY
+        renderPanel(cachedNotes, cachedTodos, interactive = false)
+    }
+
+    /** 退出原地编辑退回列表（面板不收起）；只有右滑/返回才真正收起面板。 */
+    private fun exitInlineEdit() {
+        val draft = editingDraft
+        if (editingTodoId == null && draft == null) return
+        editingTodoId = null
+        editingDraft = null
+        editingFocusSubId = null
+        hideKeyboard()
+        if (draft == null) {
+            rerenderPanel()
+            return
+        }
+        scope.launch {
+            inlineSaveMutex.withLock { persistInlineEditor(draft) }
+            loadAndRenderPanel()
+        }
+    }
+
+    private fun focusEditableTag(tag: Long) {
+        (panel as? android.view.ViewGroup)?.let { root ->
+            root.post {
+                val target = root.findViewWithTag<EditText>(tag) ?: return@post
+                target.requestFocus()
+                runCatching { target.setSelection(target.text.length) }
+                showKeyboard(target)
             }
         }
     }
 
-    private fun renderInlineTodoEditor(draft: OverlayTodoDraft, focusSubId: Long? = null) {
-        val previousPanel = panel
-        unregisterPanelBackCallback()
-        panelScroll = null
-        dismissingPanel = false
+    /** 回车在下方插入空行并聚焦（面板常驻）。 */
+    private fun insertSubRowAfter(draft: OverlayTodoDraft, afterKey: Long) {
+        val idx = draft.subs.indexOfFirst { it.key == afterKey }
+        val next = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
+        draft.subs.add(if (idx < 0) draft.subs.size else idx + 1, next)
+        scheduleInlineEditorSave()
+        rerenderPanel()
+        focusEditableTag(next.key)
+    }
 
-        val closeEditor: () -> Unit = {
-            scheduleInlineEditorSave(immediate = true)
-            dismissPanel(1f)
-        }
+    private fun hideKeyboard() {
+        val view = panel ?: return
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+            .hideSoftInputFromWindow(view.windowToken, 0)
+    }
 
-        val root = EdgeDismissFrame(this).apply {
-            isFocusableInTouchMode = true
-            onDismiss = { closeEditor() }
-            isDismissInProgress = { dismissingPanel }
-        }
-        val blurBackdrop = View(this).apply { setBackgroundColor(blurScrimColor()) }
-        root.addView(
-            blurBackdrop,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
-        )
-        val editorLayer = FrameLayout(this)
-        root.addView(
-            editorLayer,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
-        )
-        root.motionTarget = editorLayer
-
-        // 点击编辑卡片以外的灰色区域直接保存并退出，避免悬浮编辑器把用户困住。
-        editorLayer.addView(View(this).apply {
-            isClickable = true
-            contentDescription = "关闭待办编辑器"
-            setOnClickListener { closeEditor() }
-        }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-
-        val sheetScroll = ScrollView(this).apply {
-            overScrollMode = View.OVER_SCROLL_NEVER
-            isFillViewport = true
-            background = rounded(Color.WHITE, 25f)
-            // 只消费编辑卡片内部的点击，不关闭；只有卡片外的灰色区域才关闭退出侧栏。
-            isClickable = true
-            isFocusableInTouchMode = false
-            contentDescription = "待办编辑区域"
-        }
-        val sheet = LinearLayout(this).apply {
+    /** 原地展开的编辑卡（同图1）：标题 + 子行 + 提醒 + 完成，空行保存时丢弃。 */
+    private fun editableTodoCard(draft: OverlayTodoDraft): View {
+        val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dip(20), dip(24), dip(20), dip(18))
+            background = rounded(Color.WHITE, 17f)
+            elevation = dip(1).toFloat()
+            setPadding(dip(21), dip(18), dip(21), dip(12))
+            // 卡片内部点击自己消费，不冒泡到空白退出。
+            isClickable = true
         }
-        sheetScroll.addView(
-            sheet,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT),
-        )
-
-        val titleRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val parentCheck = NativeTodoCheckbox(this, draft.done, 22f).apply {
-            setOnClickListener {
-                draft.done = !draft.done
-                setChecked(draft.done)
-                draft.subs.forEach { it.done = draft.done }
-                scheduleInlineEditorSave()
-            }
-        }
-        titleRow.addView(parentCheck, LinearLayout.LayoutParams(dip(40), dip(55)))
-
-        fun syncParentCheckFromSubs() {
-            val materialSubs = draft.subs.filter { it.text.isNotBlank() }
-            if (materialSubs.isNotEmpty()) {
-                draft.done = materialSubs.all { it.done }
-                parentCheck.setChecked(draft.done)
-            }
-        }
-
-        val titleInput = inlineEditText(
-            text = draft.title,
-            hint = "待办清单",
-            sizeSp = 18f,
-        ).apply {
+        val titleInput = inlineEditText(draft.title, "待办清单", 18f).apply {
+            tag = TITLE_TAG
             imeOptions = EditorInfo.IME_ACTION_NEXT
             doAfterTextChanged {
                 draft.title = it?.toString().orEmpty()
                 scheduleInlineEditorSave()
             }
-        }
-        titleRow.addView(titleInput, LinearLayout.LayoutParams(0, dip(55), 1f))
-        sheet.addView(titleRow)
-        sheet.addView(label("回车后转到第一条子待办", 12.5f, 0xFFBDBDBD.toInt(), false).apply {
-            setPadding(dip(40), 0, 0, dip(5))
-        })
-
-        val subsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        sheet.addView(subsContainer)
-
-        lateinit var rebuildSubRows: (Long?) -> Unit
-        rebuildSubRows = { focusKey ->
-            subsContainer.removeAllViews()
-            var focusInput: EditText? = null
-
-            draft.subs.forEachIndexed { index, sub ->
-                if (index > 0) {
-                    subsContainer.addView(View(this).apply {
-                        setBackgroundColor(0xFFF0F0F0.toInt())
-                    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(1)).apply {
-                        marginStart = dip(40)
-                    })
-                }
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                }
-                val check = NativeTodoCheckbox(this, sub.done, 18f).apply {
-                    setOnClickListener {
-                        sub.done = !sub.done
-                        setChecked(sub.done)
-                        syncParentCheckFromSubs()
-                        scheduleInlineEditorSave()
-                    }
-                }
-                row.addView(check, LinearLayout.LayoutParams(dip(40), dip(54)))
-
-                val input = inlineEditText(sub.text, "待办内容", 15.5f).apply {
-                    imeOptions = EditorInfo.IME_ACTION_NEXT
-                    doAfterTextChanged {
-                        sub.text = it?.toString().orEmpty()
-                        syncParentCheckFromSubs()
-                        scheduleInlineEditorSave()
-                    }
-                    setOnEditorActionListener { _, actionId, event ->
-                        val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
-                            (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
-                        if (!enter) return@setOnEditorActionListener false
-                        val current = draft.subs.indexOfFirst { it.key == sub.key }.coerceAtLeast(0)
-                        val next = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
-                        draft.subs.add(current + 1, next)
-                        syncParentCheckFromSubs()
-                        rebuildSubRows(next.key)
-                        scheduleInlineEditorSave(immediate = true)
-                        true
-                    }
-                }
-                if (sub.key == focusKey) focusInput = input
-                row.addView(input, LinearLayout.LayoutParams(0, dip(54), 1f))
-                row.addView(label("×", 21f, 0xFFCCCCCC.toInt(), false).apply {
-                    gravity = Gravity.CENTER
-                    contentDescription = "删除子待办"
-                    setOnClickListener {
-                        draft.subs.removeAll { it.key == sub.key }
-                        syncParentCheckFromSubs()
-                        rebuildSubRows(null)
-                        scheduleInlineEditorSave(immediate = true)
-                    }
-                }, LinearLayout.LayoutParams(dip(34), dip(54)))
-                subsContainer.addView(row)
+            setOnEditorActionListener { _, actionId, event ->
+                val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
+                    (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+                if (!enter) return@setOnEditorActionListener false
+                draft.subs.firstOrNull()?.let { focusEditableTag(it.key) }
+                true
             }
-
-            subsContainer.addView(label("＋  添加子待办", 15f, 0xFFB98200.toInt(), false).apply {
-                setPadding(dip(4), dip(13), 0, dip(14))
+        }
+        card.addView(titleInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(52)))
+        draft.subs.forEach { sub ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            val input = inlineEditText(sub.text, "待办内容", 15.5f).apply {
+                tag = sub.key
+                imeOptions = EditorInfo.IME_ACTION_NEXT
+                doAfterTextChanged {
+                    sub.text = it?.toString().orEmpty()
+                    scheduleInlineEditorSave()
+                }
+                setOnEditorActionListener { _, actionId, event ->
+                    val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
+                        (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+                    if (!enter) return@setOnEditorActionListener false
+                    insertSubRowAfter(draft, sub.key)
+                    true
+                }
+            }
+            input.setTextColor(if (sub.done) 0xFFC4C4C4.toInt() else 0xFF171717.toInt())
+            val check = NativeTodoCheckbox(this, sub.done, 18f).apply {
                 setOnClickListener {
-                    val next = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
-                    draft.subs.add(next)
-                    syncParentCheckFromSubs()
-                    rebuildSubRows(next.key)
-                }
-            })
-
-            focusInput?.let { target ->
-                target.post {
-                    target.requestFocus()
-                    target.setSelection(target.text.length)
-                    showKeyboard(target)
+                    sub.done = !sub.done
+                    setChecked(sub.done)
+                    input.setTextColor(if (sub.done) 0xFFC4C4C4.toInt() else 0xFF171717.toInt())
+                    scheduleInlineEditorSave()
                 }
             }
+            row.addView(check, LinearLayout.LayoutParams(dip(34), dip(54)))
+            row.addView(input, LinearLayout.LayoutParams(0, dip(54), 1f))
+            card.addView(row)
         }
-
-        titleInput.setOnEditorActionListener { _, actionId, event ->
-            val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
-                (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
-            if (!enter) return@setOnEditorActionListener false
-            val first = draft.subs.firstOrNull()
-                ?: OverlaySubDraft(nextOverlayDraftKey(), null, "", false).also { draft.subs.add(it) }
-            syncParentCheckFromSubs()
-            rebuildSubRows(first.key)
-            scheduleInlineEditorSave(immediate = true)
-            true
-        }
-
-        val initialFocusKey = focusSubId?.let { requested ->
-            draft.subs.firstOrNull { it.sourceId == requested }?.key
-        }
-        rebuildSubRows(initialFocusKey)
 
         val footer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dip(4), 0, 0)
+            setPadding(0, dip(6), 0, 0)
         }
         val reminder = label(
             if (draft.dueAt == null) "◴  设置提醒" else "◴  已设置提醒",
@@ -861,61 +811,20 @@ class QuickCaptureService : Service() {
                     draft.dueAt = null
                     text = "◴  设置提醒"
                 }
-                scheduleInlineEditorSave(immediate = true)
+                scheduleInlineEditorSave()
             }
         }
         footer.addView(reminder, LinearLayout.LayoutParams(dip(126), dip(40)))
         footer.addView(space(1), LinearLayout.LayoutParams(0, 1, 1f))
-        // 对标图一：右下角黄色"完成"，点后保存并直接退出侧栏。
+        // 对标图一：右下角黄色"完成"，点后保存并退回列表（面板不收起）。
         footer.addView(label("完成", 16f, 0xFFFFB800.toInt(), true).apply {
             gravity = Gravity.CENTER
             setPadding(dip(8), dip(10), dip(8), dip(10))
-            setOnClickListener { closeEditor() }
-            contentDescription = "完成编辑并退出侧栏"
+            setOnClickListener { exitInlineEdit() }
+            contentDescription = "完成并退回列表"
         }, LinearLayout.LayoutParams(dip(72), dip(40)))
-        sheet.addView(footer)
-
-        val sheetHeight = (resources.displayMetrics.heightPixels * 0.64f).toInt()
-        editorLayer.addView(
-            sheetScroll,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, sheetHeight, Gravity.BOTTOM),
-        )
-        editorLayer.addView(View(this).apply {
-            background = rounded(HANDLE_COLOR, 12f)
-        }, FrameLayout.LayoutParams(dip(8), dip(64), Gravity.END or Gravity.CENTER_VERTICAL))
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            overlayType(),
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-            applyBackgroundBlur(this)
-        }
-        bindBackgroundBlurProgress(root, blurBackdrop, params)
-        root.setMotionOffset(0f, 0f)
-        panel = root
-        wm.addView(root, params)
-        // 保持旧侧栏作为过渡底层，直到编辑器已经成功挂载，避免切换时背景闪白。
-        previousPanel?.takeIf { it !== root }?.let { old ->
-            runCatching { wm.removeView(old) }
-        }
-        root.requestFocus()
-        when {
-            Build.VERSION.SDK_INT >= 34 -> registerAnimatedPredictiveBack(root)
-            Build.VERSION.SDK_INT >= 33 -> registerPredictiveBack(root)
-        }
-
-        if (initialFocusKey == null) {
-            titleInput.post {
-                titleInput.requestFocus()
-                titleInput.setSelection(titleInput.text.length)
-                showKeyboard(titleInput)
-            }
-        }
+        card.addView(footer)
+        return card
     }
 
     private fun inlineEditText(text: String, hint: String, sizeSp: Float): EditText = EditText(this).apply {
@@ -944,7 +853,7 @@ class QuickCaptureService : Service() {
     }
 
     private fun scheduleInlineEditorSave(immediate: Boolean = false) {
-        val draft = inlineEditorDraft ?: return
+        val draft = editingDraft ?: return
         val revision = ++inlineSaveRevision
         scope.launch {
             if (!immediate) delay(350)
@@ -1170,7 +1079,10 @@ class QuickCaptureService : Service() {
         panelScroll = null
         panelScrollY = 0
         dismissingPanel = false
-        inlineEditorDraft = null
+        editingTodoId = null
+        editingDraft = null
+        editingFocusSubId = null
+        hideKeyboard()
         collapsedTodoIds.clear()
         panelLoading = false
         interactiveOpen = false
@@ -1204,6 +1116,13 @@ class QuickCaptureService : Service() {
         layoutParams = LinearLayout.LayoutParams(1, dip(dp))
     }
 
+    /** 卡片间/底部空白：可点击，点空白处退出原地编辑退回列表（面板不收起）。 */
+    private fun blankSpace(dp: Int) = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(dp))
+        isClickable = true
+        setOnClickListener { exitInlineEdit() }
+    }
+
     private fun formatDate(timestamp: Long): String =
         SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(Date(timestamp))
 
@@ -1211,12 +1130,11 @@ class QuickCaptureService : Service() {
     private fun dip(dp: Float): Int = (dp * resources.displayMetrics.density).toInt()
 
     /**
-     * Android 12 及以上让 WindowManager 对悬浮窗背后的桌面/应用执行真正的跨窗口虚化。
-     * 旧系统无法在不申请录屏权限的情况下读取其他应用画面，因此使用无色偏暗化层降级。
+     * 全屏单张均匀罩面：静态柔和虚化 + 全屏统一暗色，盖住各家 OEM 虚化的噪点纹路。
+     * 虚化半径只设一次，不随手势逐帧改，避免半径步进造成明暗闪烁与纹理感。
      */
     @Suppress("DEPRECATION")
     private fun applyBackgroundBlur(params: WindowManager.LayoutParams) {
-        // 纯虚化不叠暗化：清掉 DIM_BEHIND，dimAmount 归零，避免暗层+模糊叠出纹路/ banding。
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
         params.dimAmount = 0f
         if (Build.VERSION.SDK_INT >= 31) {
@@ -1224,41 +1142,6 @@ class QuickCaptureService : Service() {
             params.setBlurBehindRadius(dip(PANEL_BLUR_RADIUS_DP))
         }
     }
-
-    /**
-     * 全屏虚化：面板位移过程中 backdrop 保持完全透明（不叠加任何暗化/磨砂纹路），
-     * 仅随 strength 同步更新跨窗口模糊半径。
-     */
-    private fun bindBackgroundBlurProgress(
-        root: EdgeDismissFrame,
-        backdrop: View,
-        params: WindowManager.LayoutParams,
-    ) {
-        var lastBlurRadius = -1
-        val maxBlurRadius = dip(PANEL_BLUR_RADIUS_DP)
-        val blurStep = dip(PANEL_BLUR_STEP_DP).coerceAtLeast(1)
-        root.onMotionProgress = { _, strength ->
-            backdrop.alpha = 0f
-            if (Build.VERSION.SDK_INT >= 31) {
-                val rawRadius = (maxBlurRadius * strength).coerceIn(0f, maxBlurRadius.toFloat())
-                val radius = ((rawRadius / blurStep).roundToInt() * blurStep)
-                    .coerceIn(0, maxBlurRadius)
-                if (radius != lastBlurRadius) {
-                    lastBlurRadius = radius
-                    params.setBlurBehindRadius(radius)
-                    if (root.isAttachedToWindow && panel === root) {
-                        runCatching { wm.updateViewLayout(root, params) }
-                    }
-                }
-            }
-        }
-    }
-
-        /** 真虚化时不叠加任何暗化/磨砂/纹路层，只保留纯粹的模糊；降级层仍需压暗保证可读。 */
-        private fun blurScrimColor(): Int {
-            val crossWindowBlur = Build.VERSION.SDK_INT >= 31 && wm.isCrossWindowBlurEnabled
-            return if (crossWindowBlur) 0x00000000 else 0x68000000
-        }
 
     @Suppress("DEPRECATION")
     private fun overlayType(): Int = if (Build.VERSION.SDK_INT >= 26) {
@@ -1579,15 +1462,21 @@ class QuickCaptureService : Service() {
         private const val HANDLE_GESTURE_UNDECIDED = 0
         private const val HANDLE_GESTURE_OPEN = 1
         private const val HANDLE_GESTURE_MOVE = 2
-        /** 背景虚化半径：足够重才能把底下应用的文字图标化开成纯色块，不留可辨形状；步进加大减少逐帧 banding 纹路。 */
+        /** 背景虚化半径：静态一次设好，配全屏均匀暗罩盖住 OEM 噪点，不留可辨形状。 */
         private const val PANEL_BLUR_RADIUS_DP = 80
-        private const val PANEL_BLUR_STEP_DP = 4
         private const val PANEL_ENTER_DURATION_MS = 230L
         private const val PANEL_EXIT_DURATION_MS = 180L
         private const val PANEL_SETTLE_DURATION_MS = 180L
+        /** 原地编辑标题输入框的 tag（子行用各自 draft key）。 */
+        private const val TITLE_TAG = -999L
+        /** 新建待办草稿的临时 id。 */
+        private const val NEW_DRAFT_ID = -1L
 
-        /** 把手颜色：白色 75% 不透明度，降低存在感（旧版为高饱和黄）。 */
-        private val HANDLE_COLOR: Int = 0xC0FFFFFF.toInt()
+        /** 全屏均匀暗罩：盖住 OEM 虚化噪点，全屏一张，保证任何底色下都平滑无纹路。 */
+        private val DIM_VEIL_COLOR: Int = 0x66000000
+
+        /** 把手颜色：浅灰 75% 不透明度，白底上也看得见（旧版纯白在白色界面上隐形）。 */
+        private val HANDLE_COLOR: Int = 0xC0C4C4C4.toInt()
 
         @Volatile
         var running: Boolean = false

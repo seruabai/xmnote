@@ -100,7 +100,12 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             ) {
                 IconButton(onClick = ::exitSelection) {
-                    Icon(Icons.Outlined.Close, "退出多选", modifier = Modifier.size(28.dp))
+                    Icon(
+                        Icons.Outlined.Close,
+                        "退出多选",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(28.dp),
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
@@ -116,7 +121,12 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
                         selectedIds.addAll(displayTodos.map { it.id })
                     }
                 }) {
-                    Icon(Icons.Outlined.DoneAll, "全选", modifier = Modifier.size(26.dp))
+                    Icon(
+                        Icons.Outlined.DoneAll,
+                        "全选",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(26.dp),
+                    )
                 }
             }
         }
