@@ -23,7 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.DoneAll
+import androidx.compose.material.icons.outlined.FactCheck
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -145,7 +145,7 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
                     }
                 }) {
                     Icon(
-                        Icons.Outlined.DoneAll,
+                        Icons.Outlined.FactCheck,
                         "全选",
                         tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(26.dp),

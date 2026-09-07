@@ -1,13 +1,16 @@
 package com.purenote.local.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,14 +23,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -37,12 +37,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -51,6 +54,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.purenote.local.NoteViewModel
 import com.purenote.local.core.TodoDates
 import com.purenote.local.data.RepeatRule
@@ -69,7 +74,6 @@ private data class SheetRow(
  * 清单模式下任何一行回车都在下方插入新行并聚焦。
  * 关闭（完成/下滑/返回/点罩）时按规则保存，全空则直接丢弃。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
     val allTodos by vm.todos.collectAsState()
@@ -94,15 +98,29 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
     // 之前 delay(90) 等弹窗落定才弹键盘，是"弹窗→键盘→弹窗再跳"三段式的根因。
     LaunchedEffect(pendingFocusKey) {
         pendingFocusKey?.let { key ->
-            withFrameNanos { }
-            runCatching { rowFocus[key]?.requestFocus() }
+            // Dialog 窗口 attach 晚于组合，聚焦要重试到成功为止（上限 30 帧防呆）
+            repeat(30) {
+                withFrameNanos { }
+                val requester = rowFocus[key]
+                val ok = requester != null && runCatching { requester.requestFocus() }.getOrDefault(false)
+                if (ok) {
+                    pendingFocusKey = null
+                    return@LaunchedEffect
+                }
+            }
             pendingFocusKey = null
         }
     }
     LaunchedEffect(pendingTitleFocus) {
         if (pendingTitleFocus) {
-            withFrameNanos { }
-            runCatching { titleFocus.requestFocus() }
+            repeat(30) {
+                withFrameNanos { }
+                val ok = runCatching { titleFocus.requestFocus() }.getOrDefault(false)
+                if (ok) {
+                    pendingTitleFocus = false
+                    return@LaunchedEffect
+                }
+            }
             pendingTitleFocus = false
         }
     }
@@ -198,81 +216,117 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
         onClose()
     }
 
-    ModalBottomSheet(
+    // 自绘底部弹层：不做独立滑入动画（那是"弹窗先出、被键盘盖住、再跳"的根因），
+    // 位置永远通过 imePadding 实时等于键盘顶沿——键盘升多高弹层就被顶多高，收起时同步落回。
+    Dialog(
         onDismissRequest = { saveAndClose() },
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        dragHandle = null,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
     ) {
-        if (!loaded) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
-            ) {
-                Text("加载中…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
+        var shown by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            withFrameNanos { }
+            shown = true
+        }
+        val scrimAlpha by animateFloatAsState(
+            targetValue = if (shown) 1f else 0f,
+            animationSpec = tween(150),
+            label = "sheetScrim",
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = scrimAlpha }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { saveAndClose() },
+        ) {
             Column(
-                modifier = Modifier
+                Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .imePadding()
-                    .padding(start = 22.dp, end = 22.dp, top = 20.dp, bottom = 22.dp),
+                    .imePadding(),
             ) {
-                if (listMode) {
-                    SheetTitleField(
-                        value = title,
-                        onValueChange = { title = it },
-                        onNext = { pendingFocusKey = rows.firstOrNull()?.key },
-                        focusRequester = titleFocus,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                }
-                rows.forEachIndexed { idx, row ->
-                    SheetItemRow(
-                        row = row,
-                        singleStyle = !listMode,
-                        focusRequester = rowFocus.getOrPut(row.key) { FocusRequester() },
-                        onTextChange = { text ->
-                            // 按 key 定位最新行再写回，避免 forEachIndexed 捕获的 idx 在插行后错位
-                            val i = rows.indexOfFirst { it.key == row.key }
-                            if (i >= 0) rows[i] = rows[i].copy(text = text)
-                        },
-                        onToggle = {
-                            val i = rows.indexOfFirst { it.key == row.key }
-                            if (i >= 0) rows[i] = rows[i].copy(done = !rows[i].done)
-                        },
-                        onNext = { enterFromRow(idx) },
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                Surface(
+                    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                    color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    SheetReminderPill(
-                        dueAt = dueAt,
-                        allDay = allDay,
-                        repeat = repeat,
-                        onPick = { remindOpen = true },
-                        onClear = {
-                            dueAt = null
-                            allDay = false
-                            repeat = RepeatRule.NONE
-                        },
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        "完成",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clickable { saveAndClose() }
-                            .padding(horizontal = 8.dp, vertical = 10.dp),
-                    )
+                    if (!loaded) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                        ) {
+                            Text("加载中…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(start = 22.dp, end = 22.dp, top = 20.dp, bottom = 22.dp),
+                        ) {
+                            if (listMode) {
+                                SheetTitleField(
+                                    value = title,
+                                    onValueChange = { title = it },
+                                    onNext = { pendingFocusKey = rows.firstOrNull()?.key },
+                                    focusRequester = titleFocus,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                            }
+                            rows.forEachIndexed { idx, row ->
+                                SheetItemRow(
+                                    row = row,
+                                    singleStyle = !listMode,
+                                    focusRequester = rowFocus.getOrPut(row.key) { FocusRequester() },
+                                    onTextChange = { text ->
+                                        // 按 key 定位最新行再写回，避免 forEachIndexed 捕获的 idx 在插行后错位
+                                        val i = rows.indexOfFirst { it.key == row.key }
+                                        if (i >= 0) rows[i] = rows[i].copy(text = text)
+                                    },
+                                    onToggle = {
+                                        val i = rows.indexOfFirst { it.key == row.key }
+                                        if (i >= 0) rows[i] = rows[i].copy(done = !rows[i].done)
+                                    },
+                                    onNext = { enterFromRow(idx) },
+                                )
+                            }
+                            Spacer(Modifier.height(14.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                SheetReminderPill(
+                                    dueAt = dueAt,
+                                    allDay = allDay,
+                                    repeat = repeat,
+                                    onPick = { remindOpen = true },
+                                    onClear = {
+                                        dueAt = null
+                                        allDay = false
+                                        repeat = RepeatRule.NONE
+                                    },
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "完成",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clickable { saveAndClose() }
+                                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                                )
+                            }
+                        }
+                    }
                 }
+                // 键盘收起时垫住导航栏，避免圆角贴到手势条
+                Spacer(Modifier.navigationBarsPadding())
             }
         }
     }
