@@ -6,6 +6,22 @@
 
 ---
 
+## v1.2.19（versionCode 22）
+
+- 日期：2026-09-07
+- 摘要：待办编辑弹层根治「弹窗先出被键盘盖住再跳」
+
+### 改动明细
+- [待办弹窗]删 M3 ModalBottomSheet（自带独立滑入动画与键盘动画抢跑，慢输入法上弹窗先落定、被键盘盖住、insets 到达后再跳），换自绘 Dialog 底部弹层：无滑入动画，位置经 imePadding 实时等于键盘顶沿，升降完全跟随系统键盘插值；聚焦改 30 帧重试等窗口 attach；点罩/返回均走保存规则。
+- [多选]顶栏全选图标 DoneAll 换 FactCheck，对齐小米实机样式。
+
+### 涉及文件
+- `ui/TodoEditSheet.kt`
+- `ui/TodoPane.kt`
+- `app/build.gradle.kts`
+
+---
+
 ## v1.2.18（versionCode 21）
 
 - 日期：2026-09-07

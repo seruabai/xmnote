@@ -10,8 +10,8 @@ android {
         applicationId = "com.purenote.local"
         minSdk = 24
         targetSdk = 36
-        versionCode = 21
-        versionName = "1.2.18"
+        versionCode = 22
+        versionName = "1.2.19"
     }
 
     buildTypes {
@@ -65,9 +65,9 @@ dependencies {
   testImplementation(libs.junit)
 }
 
-// 每次生成 Debug APK 后，按“纯记+版本号”归档到工作区的 APP 目录。
-// 新版本发布前仍需同时递增 defaultConfig 中的 versionCode 与 versionName，
-// 这样旧 APK 会保留，不会被下一版覆盖。
+// 每次生成 Debug APK 后，按“纯�?版本号”归档到工作区的 APP 目录�?
+// 新版本发布前仍需同时递增 defaultConfig 中的 versionCode �?versionName�?
+// 这样�?APK 会保留，不会被下一版覆盖�?
 val archiveDebugApk by tasks.registering(Copy::class) {
     group = "build"
     description = "Copy the debug APK to ../APP using its PureNote version name."

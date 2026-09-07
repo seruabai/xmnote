@@ -1,4 +1,4 @@
-# AGENTS.md — 给 AI 协作者的项目上下文
+﻿# AGENTS.md — 给 AI 协作者的项目上下文
 
 > **⚠️ 强制规则：读取本文件的任何 AI，在本次会话中一旦打算修改本仓库的任何文件，必须先完成下面的「第 0 节 · 开工前强制核对」，不得跳过。这是自动执行的约定，不需要用户提醒。**
 
@@ -49,7 +49,7 @@
 
 - 仓库：`seruabai/xmnote`（GitHub 仓库名，与内部名 PureNote 不同）
 - 包名 / 应用 id：`com.purenote.local`
-- 当前版本：**1.2.18**（versionCode 21）
+- 当前版本：**1.2.19**（versionCode 22）
 - 核心卖点：完全本地、无网络权限、数据不出设备
 
 > ⚠️ 命名注意：GitHub 仓库名是 `xmnote`，但 `settings.gradle.kts` 中 `rootProject.name` 是 `PureNote`，应用 displayName 为“纯记”。文档与代码中这两种写法都存在，**不要用“xmnote”当产品名**。
@@ -161,4 +161,4 @@ NoteRepository ←  SQLite 读写
 - **不要**重复使用已存在的版本号/tag；每个新代码改动都必须用一个新的 `vX.Y.Z`。
 - **不要** 提交编译不过的代码当"发布"。
 
-> 当前版本基线：**1.2.18**（versionCode 21），tag `v1.2.18`。下次代码改动 → `1.2.19`（versionCode 22）。云同步方案见 `wiki/SYNC_DESIGN.md`。
+> 当前版本基线：**1.2.19**（versionCode 22），tag `v1.2.19`。下次代码改动 → `1.2.20`（versionCode 23）。云同步方案见 `wiki/SYNC_DESIGN.md`。
