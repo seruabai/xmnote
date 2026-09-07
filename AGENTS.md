@@ -155,6 +155,7 @@ NoteRepository ←  SQLite 读写
 5. **`git add` + `git commit`**：把代码改动和版本号放**同一个提交**，提交信息带版本号，如 `feat: 奶油暖黄主题 (v1.2.6)`。
 6. **打 tag**：`git tag v<versionName>`（与 `versionName` 完全一致），指向刚提交的版本。
 7. **推送到 GitHub**：`git push origin main --tags`（代码和 tag 一起推上去）。
+8. **APK 打包（自动）**：tag 推上 GitHub 后，`.github/workflows/release.yml` 会自动构建 debug APK 并以 `PureNote-<tag>.apk` 附件创建对应的 GitHub Release（用户 2026-09-07 要求）。本地无需额外操作；本地 `../APP` 目录的「纯记+版本.apk」归档逻辑保持不变。若 CI 失败，检查 Actions 日志后重推 tag（`git push origin :refs/tags/vX.Y.Z` 再重打重推）。
 
 ### 7.3 禁止事项
 - **不要**只提交代码而漏掉升版本号或打 tag——每个代码改动都必须是完整的版本闭环。
