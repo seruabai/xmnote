@@ -36,7 +36,7 @@ fun repeatLabel(rule: RepeatRule): String = when (rule) {
     RepeatRule.YEARLY -> "每年"
 }
 
-/** 提醒时间对话框：整天开关 + 日期/时间 + 重复规则（对应小米 RemindTimePickerDialog） */
+/** 提醒时间对话框：整天开关 + 日期/时间 + 重复规则（对应小米 RemindTimePickerDialog）；compact 模式给笔记提醒用，只留日期/时间 */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun RemindPickerDialog(
@@ -46,6 +46,7 @@ fun RemindPickerDialog(
     onApply: (Long?, Boolean, RepeatRule) -> Unit,
     onClear: () -> Unit,
     onDismiss: () -> Unit,
+    compact: Boolean = false,
 ) {
     val context = LocalContext.current
     val base = initialDue ?: TodoDates.dayRemindFromToday(1)
@@ -86,16 +87,18 @@ fun RemindPickerDialog(
         title = { Text("提醒时间") },
         text = {
             Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("整天", style = MaterialTheme.typography.bodyLarge)
-                    Spacer(Modifier.weight(1f))
-                    androidx.compose.material3.Switch(
-                        checked = allDay,
-                        onCheckedChange = { allDay = it },
-                    )
+                if (!compact) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("整天", style = MaterialTheme.typography.bodyLarge)
+                        Spacer(Modifier.weight(1f))
+                        androidx.compose.material3.Switch(
+                            checked = allDay,
+                            onCheckedChange = { allDay = it },
+                        )
+                    }
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -122,16 +125,18 @@ fun RemindPickerDialog(
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { repeatPickOpen = true }
-                        .padding(vertical = 12.dp),
-                ) {
-                    Text("重复", style = MaterialTheme.typography.bodyLarge)
-                    Spacer(Modifier.weight(1f))
-                    Text(repeatLabel(repeat), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+                if (!compact) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { repeatPickOpen = true }
+                            .padding(vertical = 12.dp),
+                    ) {
+                        Text("重复", style = MaterialTheme.typography.bodyLarge)
+                        Spacer(Modifier.weight(1f))
+                        Text(repeatLabel(repeat), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+                    }
                 }
             }
         },

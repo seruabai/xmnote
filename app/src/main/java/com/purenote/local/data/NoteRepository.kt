@@ -74,6 +74,8 @@ class NoteRepository(context: Context) {
         folderId: Long?,
         pinned: Boolean,
         remindAt: Long?,
+        repeat: RepeatRule = RepeatRule.NONE,
+        allDay: Boolean = false,
     ): Boolean = withContext(Dispatchers.IO) {
         db.updateNote(
             id = id,
@@ -85,6 +87,8 @@ class NoteRepository(context: Context) {
             folderId = folderId,
             pinned = pinned,
             remindAt = remindAt,
+            repeatType = repeat.ordinal,
+            allDay = allDay,
             now = System.currentTimeMillis(),
         ) > 0
     }
@@ -97,9 +101,10 @@ class NoteRepository(context: Context) {
         db.setPinned(id, pinned, System.currentTimeMillis())
     }
 
-    suspend fun setReminder(id: Long, remindAt: Long?) = withContext(Dispatchers.IO) {
-        db.setReminder(id, remindAt)
-    }
+    suspend fun setReminder(id: Long, remindAt: Long?, repeat: RepeatRule = RepeatRule.NONE, allDay: Boolean = false) =
+        withContext(Dispatchers.IO) {
+            db.setReminder(id, remindAt, repeat.ordinal, allDay)
+        }
 
     suspend fun moveToFolder(id: Long, folderId: Long?) = withContext(Dispatchers.IO) {
         db.moveToFolder(id, folderId, System.currentTimeMillis())
@@ -323,6 +328,8 @@ class NoteRepository(context: Context) {
             trashed = getInt(NotesDb.COL_TRASHED) == 1,
             trashedAt = if (isNull(NotesDb.COL_TRASHED_AT)) null else getLong(NotesDb.COL_TRASHED_AT),
             remindAt = if (isNull(NotesDb.COL_REMIND_AT)) null else getLong(NotesDb.COL_REMIND_AT),
+            repeat = RepeatRule.fromOrdinal(getInt(NotesDb.COL_NOTE_REPEAT)),
+            allDay = getInt(NotesDb.COL_NOTE_ALL_DAY) == 1,
             createdAt = getLong(NotesDb.COL_CREATED),
             updatedAt = getLong(NotesDb.COL_UPDATED),
         )

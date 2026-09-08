@@ -22,6 +22,8 @@ data class Note(
     val trashed: Boolean,
     val trashedAt: Long?,
     val remindAt: Long?,
+    val repeat: RepeatRule = RepeatRule.NONE,
+    val allDay: Boolean = false,
     val createdAt: Long,
     val updatedAt: Long,
 )

@@ -65,6 +65,10 @@ fun formatNoteTime(ts: Long): String {
     }
 }
 
+/** 笔记卡片时间栏：固定年月日，不带时间（用户 2026-09-07 要求） */
+fun formatNoteDate(ts: Long): String =
+    SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(Date(ts))
+
 /** 便签纸色盘：浅色/深色两套，index 0 为默认白纸。暖奶油纸感，无冷蓝/绿/紫。 */
 private val PaperLight = intArrayOf(
     0xFFFFFDF7.toInt(),   // 奶油白纸

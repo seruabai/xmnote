@@ -168,9 +168,9 @@ object NoteMarkup {
     fun imageNames(text: String): List<String> =
         text.split('\n').mapNotNull(::imageNameOf)
 
-    /** 正文里按文档顺序出现的音频文件名（aud: 前缀） */
+    /** 正文里按文档顺序出现的音频文件名（文件名以 aud_ 开头存在 images 目录） */
     fun audioNames(text: String): List<String> =
-        imageNames(text).filter { it.startsWith("aud:") }.map { it.removePrefix("aud:") }
+        imageNames(text).filter { it.startsWith("aud_") }
 
     /** 剥离标题标记（卡片/分享用） */
     fun stripHeadingMarkers(text: String): String =
@@ -181,7 +181,7 @@ object NoteMarkup {
         stripHeadingMarkers(text).split('\n')
             .joinToString("\n") {
                 when {
-                    isImageLine(it) && imageNameOf(it)?.startsWith("aud:") == true -> "［录音］"
+                    isImageLine(it) && imageNameOf(it)?.startsWith("aud_") == true -> "［录音］"
                     isImageLine(it) -> "［图片］"
                     else -> it
                 }

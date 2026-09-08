@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.purenote.local.NoteTextSize
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.core.NoteMarkup
 import com.purenote.local.core.PreviewBuilder
 import com.purenote.local.data.Note
 import com.purenote.local.data.NoteKind
@@ -60,9 +61,10 @@ fun NoteCard(
     ) {
         Box {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
-                if (note.images.isNotEmpty()) {
+                val visibleImages = note.images.filterNot { it.startsWith("aud:") }
+                if (visibleImages.isNotEmpty()) {
                     AsyncThumb(
-                        fileName = note.images.first(),
+                        fileName = visibleImages.first(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(140.dp)
@@ -78,7 +80,7 @@ fun NoteCard(
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        formatNoteTime(note.updatedAt),
+                        formatNoteDate(note.updatedAt),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -92,6 +94,8 @@ fun NoteCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    // 置顶角标从标题栏右边移到时间栏右边（用户 2026-09-07 要求）
+                    PinBadge(note.pinned)
                 }
             }
             if (selected) {
@@ -112,31 +116,26 @@ fun NoteCard(
 @Composable
 private fun TextCardBody(note: Note, textSize: NoteTextSize) {
     val typeScale = textSize.typeScale()
-    val (firstLine, rest) = PreviewBuilder.splitTitle(note.body)
+    val plain = NoteMarkup.stripHeadingMarkers(note.body)
+    val (firstLine, rest) = PreviewBuilder.splitTitle(plain)
     val head = note.title.ifBlank { firstLine }
-    val preview = if (note.title.isBlank()) rest else note.body
+    val preview = if (note.title.isBlank()) rest else plain
     if (head.isNotBlank()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                head,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = typeScale.cardTitleSp.sp,
-                    lineHeight = typeScale.cardTitleLineHeightSp.sp,
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            PinBadge(note.pinned)
-        }
+        Text(
+            head,
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontSize = typeScale.cardTitleSp.sp,
+                lineHeight = typeScale.cardTitleLineHeightSp.sp,
+            ),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
         Spacer(Modifier.height(5.dp))
-    } else {
-        PinBadge(note.pinned)
     }
     if (preview.isNotBlank()) {
         Text(
-            PreviewBuilder.textPreview(preview),
+            PreviewBuilder.textPreview(NoteMarkup.previewText(preview)),
             style = MaterialTheme.typography.bodyMedium.copy(
                 fontSize = typeScale.cardBodySp.sp,
                 lineHeight = typeScale.cardBodyLineHeightSp.sp,

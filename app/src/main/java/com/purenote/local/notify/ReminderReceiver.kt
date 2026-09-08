@@ -33,6 +33,16 @@ class ReminderReceiver : BroadcastReceiver() {
                     val note = repo.getNote(targetId)
                     if (note != null && !note.trashed) {
                         post(appContext, kind, note.id, note.title, "到点的提醒，点开查看")
+                        // 重复提醒：发完通知推进到下一次并重排闹钟（一次性提醒不动）
+                        if (note.repeat != RepeatRule.NONE) {
+                            val next = note.remindAt?.let { TodoDates.nextOccurrence(it, note.repeat) }
+                            if (next != null) {
+                                repo.setReminder(note.id, next, note.repeat, note.allDay)
+                                Reminders.schedule(appContext, Reminders.KIND_NOTE, note.id, next)
+                            } else {
+                                repo.setReminder(note.id, null)
+                            }
+                        }
                     }
                 }
             } finally {

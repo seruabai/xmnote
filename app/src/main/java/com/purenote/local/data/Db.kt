@@ -1,4 +1,4 @@
-package com.purenote.local.data
+﻿package com.purenote.local.data
 
 import android.content.ContentValues
 import android.content.Context
@@ -46,6 +46,11 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
             addUuidColumn(db, "notes")
             addUuidColumn(db, "todos")
         }
+        if (oldVersion < 6) {
+            // 笔记提醒支持重复/整天（与 todos 同名列，独立存储）
+            db.execSQL("ALTER TABLE notes ADD COLUMN repeat_type INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE notes ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     private fun addUuidColumn(db: SQLiteDatabase, table: String) {
@@ -90,6 +95,8 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         folderId: Long?,
         pinned: Boolean,
         remindAt: Long?,
+        repeatType: Int = 0,
+        allDay: Boolean = false,
         now: Long,
     ): Int {
         val cv = ContentValues().apply {
@@ -101,6 +108,8 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
             put("folder_id", folderId)
             put("pinned", if (pinned) 1 else 0)
             put("remind_at", remindAt)
+            put("repeat_type", repeatType)
+            put("all_day", if (allDay) 1 else 0)
             put("updated_at", now)
         }
         return writableDatabase.update("notes", cv, "id = ?", arrayOf(id.toString()))
@@ -119,8 +128,12 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         return writableDatabase.update("notes", cv, "id = ?", arrayOf(id.toString()))
     }
 
-    fun setReminder(id: Long, remindAt: Long?): Int {
-        val cv = ContentValues().apply { put("remind_at", remindAt) }
+    fun setReminder(id: Long, remindAt: Long?, repeatType: Int = 0, allDay: Boolean = false): Int {
+        val cv = ContentValues().apply {
+            put("remind_at", remindAt)
+            put("repeat_type", repeatType)
+            put("all_day", if (allDay) 1 else 0)
+        }
         return writableDatabase.update("notes", cv, "id = ?", arrayOf(id.toString()))
     }
 
@@ -342,7 +355,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
     private fun newUuid(): String = UUID.randomUUID().toString().replace("-", "")
 
     companion object {
-        const val DB_VERSION = 5
+        const val DB_VERSION = 6
 
         private val SQL_CREATE_FOLDERS = """
             CREATE TABLE folders(
@@ -366,6 +379,8 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
               trashed INTEGER NOT NULL DEFAULT 0,
               trashed_at INTEGER NULL,
               remind_at INTEGER NULL,
+              repeat_type INTEGER NOT NULL DEFAULT 0,
+              all_day INTEGER NOT NULL DEFAULT 0,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL
             )
@@ -394,6 +409,8 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         // 列名常量
         const val COL_ID = "id"
         const val COL_UUID = "uuid"
+        const val COL_NOTE_REPEAT = "repeat_type"
+        const val COL_NOTE_ALL_DAY = "all_day"
         const val COL_KIND = "kind"
         const val COL_TITLE = "title"
         const val COL_BODY = "body"

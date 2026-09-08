@@ -306,12 +306,14 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         colorIndex: Int,
         folderId: Long?,
         remindAt: Long?,
+        repeat: RepeatRule = RepeatRule.NONE,
+        allDay: Boolean = false,
         onDone: (Long) -> Unit,
     ) {
         viewModelScope.launch {
             val id = repo.createNote(kind, title, body, items, images, colorIndex, folderId)
             if (remindAt != null) {
-                repo.setReminder(id, remindAt)
+                repo.setReminder(id, remindAt, repeat, allDay)
                 Reminders.schedule(getApplication(), Reminders.KIND_NOTE, id, remindAt)
             }
             refresh()
@@ -330,10 +332,13 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         folderId: Long?,
         pinned: Boolean,
         remindAt: Long?,
+        repeat: RepeatRule = RepeatRule.NONE,
+        allDay: Boolean = false,
     ) {
         viewModelScope.launch {
             repo.saveExisting(
                 noteId, kind, title, body, items, images, colorIndex, folderId, pinned, remindAt,
+                repeat, allDay,
             )
             if (remindAt == null) Reminders.cancel(getApplication(), Reminders.KIND_NOTE, noteId)
             else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, noteId, remindAt)
@@ -421,7 +426,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setReminder(reminderTarget: Note, at: Long?) {
         viewModelScope.launch {
-            repo.setReminder(reminderTarget.id, at)
+            repo.setReminder(reminderTarget.id, at, reminderTarget.repeat, reminderTarget.allDay)
             if (at == null) Reminders.cancel(getApplication(), Reminders.KIND_NOTE, reminderTarget.id)
             else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, reminderTarget.id, at)
             refresh()
