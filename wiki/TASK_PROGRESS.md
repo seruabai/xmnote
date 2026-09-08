@@ -15,7 +15,7 @@
 
 ## 当前进行中的任务（占用检查）
 
-- T-012 | 精简开工/发版规则，修复 Linux APK 构建并补发 v1.2.19 附件 | Codex | 进行中 | AGENTS.md, .agents/skills/pre-work-check/SKILL.md, .github/workflows/release.yml, wiki/TASK_PROGRESS.md, wiki/DECISIONS.md, wiki/CHANGELOG.md | 2026-09-08 |
+- T-012 | 精简开工/发版规则及 CI 修复已完成；actionlint 与 diff 检查通过，已推送 main。用户优先节省 token，APK 补发由 Actions 34243422160 运行，暂不持续轮询；代码文件占用已释放。 | Codex | 完成 | AGENTS.md, .agents/skills/pre-work-check/SKILL.md, .github/workflows/release.yml, wiki/TASK_PROGRESS.md, wiki/DECISIONS.md, wiki/CHANGELOG.md | 2026-09-08 |
 
 > 开始新任务前先看这里：若有其他 AI 正在处理与你重叠的文件，先停下询问用户。
 
