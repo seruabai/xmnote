@@ -5,6 +5,7 @@
 
 | 日期 | 工具 | 改动摘要 | 涉及文件 |
 |------|------|----------|----------|
+| 2026-09-08 | Codex | [协作]改按需读取和显式发版；[CI]修复 gradlew 执行权限错误，增加原标签补附件及产物验证（应用版本不变） | AGENTS.md, .agents/skills/pre-work-check/SKILL.md, .github/workflows/release.yml, wiki/* |
 | 2026-09-07 | ZCode | **v1.2.19**：[待办弹窗]删M3 ModalBottomSheet独立滑入（弹窗先出被键盘盖住再跳），换自绘Dialog弹层imePadding实时贴键盘顶沿；[多选]全选图标换FactCheck对齐实机 | ui/TodoEditSheet.kt, ui/TodoPane.kt, app/build.gradle.kts |
 | 2026-09-07 | ZCode | **v1.2.18**：[同步地基]新增uuid全局ID：DB v5（notes/todos加列+存量回填+索引），Model暴露uuid；新增wiki/SYNC_DESIGN.md同步方案设计 | data/Db.kt, data/Models.kt, data/NoteRepository.kt, wiki/SYNC_DESIGN.md, app/build.gradle.kts |
 | 2026-09-07 | ZCode | **v1.2.17**：[多选]删双横线+米黄，换三条杠+浅灰选中底（对标小米实机）；[侧栏]把手删浅灰75%，换深灰50%；[侧栏]删点空白仅退回列表，换保存草稿并收起整个侧栏 | ui/TodoCard.kt, notify/QuickCaptureService.kt, app/build.gradle.kts |
@@ -22,3 +23,4 @@
 | 2026-09-05 | opencode | 变更版本策略：每次代码改动自动升 patch 版本并打 tag（规范化） | AGENTS.md, .agents/skills/pre-work-check/SKILL.md |
 | 2026-09-05 | opencode | 提交全新 UI 骨架：奶油暖黄主题 + 屏幕转场动画（4b2f06a） | app/src/main/java/com/purenote/local/ui/AppRoot.kt, Common.kt, theme/Theme.kt |
 | 2026-09-05 | opencode | 初始化多AI协作规范 | AGENTS.md, .agents/skills/pre-work-check/SKILL.md, wiki/* |
+

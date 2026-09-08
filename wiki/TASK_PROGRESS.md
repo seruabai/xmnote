@@ -15,6 +15,8 @@
 
 ## 当前进行中的任务（占用检查）
 
+- T-012 | 精简开工/发版规则，修复 Linux APK 构建并补发 v1.2.19 附件 | Codex | 进行中 | AGENTS.md, .agents/skills/pre-work-check/SKILL.md, .github/workflows/release.yml, wiki/TASK_PROGRESS.md, wiki/DECISIONS.md, wiki/CHANGELOG.md | 2026-09-08 |
+
 > 开始新任务前先看这里：若有其他 AI 正在处理与你重叠的文件，先停下询问用户。
 
 - T-006-A | A批：待办行末光标+侧栏原地编辑+长按多选排序；B批：单条静默通知+虚化去纹路 (v1.2.12已发) | opencode | 完成 | ui/TodoEditSheet.kt, ui/TodoCard.kt, ui/TodoPane.kt, ui/HomeScreen.kt, NoteViewModel.kt, data/Db.kt, data/NoteRepository.kt, notify/QuickCaptureService.kt, notify/ReminderReceiver.kt | 2026-09-06 |
