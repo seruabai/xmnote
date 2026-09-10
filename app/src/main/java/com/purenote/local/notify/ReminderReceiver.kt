@@ -7,7 +7,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
 import com.purenote.local.R
+import com.purenote.local.core.TodoDates
 import com.purenote.local.data.NoteRepository
+import com.purenote.local.data.RepeatRule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

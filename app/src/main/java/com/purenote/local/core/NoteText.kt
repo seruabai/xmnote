@@ -131,6 +131,12 @@ object NoteMarkup {
         return start until maxOf(end, start)
     }
 
+    /** 光标位置所在行的完整内容 */
+    fun lineAt(text: String, cursor: Int): String {
+        val range = lineRangeAt(text, cursor)
+        return text.substring(range.first, range.last + 1)
+    }
+
     private fun bare(line: String): String = line.dropWhile { it in HEADING_MARKERS }
 
     fun hasCheckbox(line: String): Boolean {
@@ -144,7 +150,7 @@ object NoteMarkup {
         val head = line.take(line.length - b.length)
         return when {
             b.startsWith(BOX_UNCHECKED_PREFIX) || b.startsWith(BOX_CHECKED_PREFIX) -> head + b.substring(BOX_UNCHECKED_PREFIX.length)
-            else -> "$head$BOX_UNCHECKED_PREFIX"
+            else -> "$head$BOX_UNCHECKED_PREFIX$b"
         }
     }
 
@@ -186,4 +192,28 @@ object NoteMarkup {
                     else -> it
                 }
             }
+
+    // ---- 编辑器操作（基于光标位置改行） ----
+
+    /** 用替换后的行重建正文 */
+    fun replaceLine(text: String, range: IntRange, newLine: String): String =
+        text.substring(0, range.first) + newLine + text.substring(range.last + 1)
+
+    /** 在光标所在行插入图片/音频标记行（空行就地变图片行；否则在行尾另起一行） */
+    fun insertImageLineAtCursor(text: String, cursor: Int, fileName: String): String {
+        val range = lineRangeAt(text, cursor)
+        val line = text.substring(range.first, range.last + 1)
+        val tag = IMG_PREFIX + fileName + IMG_SUFFIX
+        return if (line.isBlank()) {
+            replaceLine(text, range, tag)
+        } else {
+            text.substring(0, range.last + 1) + "\n" + tag
+        }
+    }
+
+    /** 当前光标选中的图片行文件名（用于替换手写图等场景）；无则 null */
+    fun selectedImageNameAt(text: String, cursor: Int): String? {
+        val range = lineRangeAt(text, cursor)
+        return imageNameOf(text.substring(range.first, range.last + 1))
+    }
 }
