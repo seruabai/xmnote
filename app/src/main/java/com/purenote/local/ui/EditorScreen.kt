@@ -25,6 +25,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -131,6 +136,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     var confirmDelete by remember { mutableStateOf(false) }
     // 正文光标位置（selection end），工具栏操作以此为锚定行
     var bodyCursor by remember { mutableStateOf(0) }
+    // 工具栏行编辑（前缀增删）后请求把 IME 光标平移到的新位置，由 TextNoteBody 一次性消费
+    var bodyCursorRequest by remember { mutableStateOf<Int?>(null) }
 
     if (screen.noteId > 0 && !loaded) {
         vm.getNoteOnce(screen.noteId) { note ->
@@ -375,6 +382,10 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                             val range = NoteMarkup.lineRangeAt(body, bodyCursor)
                             val line = body.substring(range.first, range.last + 1)
                             body = NoteMarkup.replaceLine(body, range, NoteMarkup.toggleCheckboxLine(line))
+                            // 前缀增删发生在光标之前：光标必须随文本一起平移到内容起点，否则文字会把方块顶走
+                            val headLen = line.length - NoteMarkup.withoutHeading(line).length
+                            val adding = !NoteMarkup.hasCheckbox(line)
+                            bodyCursorRequest = range.first + headLen + if (adding) NoteMarkup.BOX_UNCHECKED_PREFIX.length else 0
                             markDirty()
                         }
                         // 第5键：标题级别 H1/H2/H3 轮换（正文→H1→H2→H3→正文）
@@ -387,7 +398,10 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                                 2 -> 3
                                 else -> 0
                             }
-                            body = NoteMarkup.replaceLine(body, range, NoteMarkup.withHeading(line, next))
+                            val newLine = NoteMarkup.withHeading(line, next)
+                            body = NoteMarkup.replaceLine(body, range, newLine)
+                            // 标题标记在光标之前增删：光标随文本平移到内容起点
+                            bodyCursorRequest = range.first + (newLine.length - NoteMarkup.withoutHeading(newLine).length)
                             markDirty()
                         }
                     }
@@ -456,6 +470,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     textSize = preferredTextSize,
                     onCursor = { bodyCursor = it },
                     onChange = { body = it; markDirty() },
+                    cursorRequest = bodyCursorRequest,
+                    onCursorConsumed = { bodyCursorRequest = null },
                     modifier = Modifier.weight(1f),
                 )
                 NoteKind.CHECKLIST -> ChecklistEditor(
@@ -565,6 +581,8 @@ private fun TextNoteBody(
     textSize: NoteTextSize,
     onCursor: (Int) -> Unit,
     onChange: (String) -> Unit,
+    cursorRequest: Int? = null,
+    onCursorConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val typeScale = textSize.typeScale()
@@ -581,9 +599,64 @@ private fun TextNoteBody(
     val scroll = rememberScrollState()
     var tfv by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(value)) }
     if (tfv.text != value) tfv = tfv.copy(text = value)
+    // 布局结果：因 VisualTransformation 用 Identity 映射，勾选框字符的视觉坐标直接对应原文 offset
+    var layout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    // 点击某勾选框行首，切换 ☐↔☑
+    fun toggleCheckboxAt(offset: Int) {
+        if (offset !in 0..tfv.text.length) return
+        val line = NoteMarkup.lineRangeAt(tfv.text, offset)
+        val lineText = tfv.text.substring(line.first, line.last + 1)
+        if (!NoteMarkup.hasCheckbox(lineText)) return
+        val toggled = NoteMarkup.replaceLine(tfv.text, line, NoteMarkup.cycleCheckboxLine(lineText))
+        tfv = tfv.copy(text = toggled)
+        if (toggled != value) onChange(toggled)
+    }
+    // 光标夹紧：禁止光标(或选区)落到任意勾选框前缀字符上 —— 勾选框是控件，光标只在文字区内移动
+    fun clampSelection(t: androidx.compose.ui.text.input.TextFieldValue): androidx.compose.ui.text.input.TextFieldValue {
+        val text = t.text
+        fun clampOne(p: Int): Int {
+            if (p < 0 || p > text.length) return p.coerceIn(0, text.length)
+            var search = 0
+            while (search < text.length) {
+                val lineStart = search
+                val nl = text.indexOf('\n', search)
+                val lineEnd = if (nl == -1) text.length else nl
+                val lineText = text.substring(lineStart, lineEnd)
+                val stripped = NoteMarkup.withoutHeading(lineText)
+                val prefix = when {
+                    stripped.startsWith(NoteMarkup.BOX_UNCHECKED_PREFIX) ||
+                        stripped.startsWith(NoteMarkup.BOX_CHECKED_PREFIX) -> 2
+                    else -> 0
+                }
+                if (prefix > 0) {
+                    val headLen = lineText.length - stripped.length
+                    val lo = lineStart + headLen          // 前缀起点(标题标记之后)
+                    val hi = lo + prefix                   // 前缀终点 = 内容起点
+                    if (p in lo until hi) return hi
+                }
+                if (nl == -1) break
+                search = nl + 1
+            }
+            return p
+        }
+        val ns = clampOne(t.selection.start)
+        val ne = clampOne(t.selection.end)
+        return if (ns == t.selection.start && ne == t.selection.end) t
+        else t.copy(selection = androidx.compose.ui.text.TextRange(ns, ne))
+    }
+    // 工具栏行编辑（前缀增删）后：光标随文本一起平移到请求位置——根治"文字被顶开而光标不动"
+    LaunchedEffect(cursorRequest) {
+        cursorRequest?.let { target ->
+            val t = clampSelection(tfv.copy(selection = androidx.compose.ui.text.TextRange(target, target)))
+            tfv = t
+            onCursor(t.selection.end)
+            onCursorConsumed()
+        }
+    }
     BasicTextField(
         value = tfv,
-        onValueChange = { new ->
+        onValueChange = { raw ->
+            val new = clampSelection(raw)
             onCursor(new.selection.end)
             // 回车继承：新行的上一行带勾选框时，新行自动补 ☐（用户 2026-09-07 要求）
             if (new.text.length == tfv.text.length + 1) {
@@ -607,6 +680,11 @@ private fun TextNoteBody(
             if (new.text != value) onChange(new.text)
         },
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        // 只在文本变化时记录布局结果：TextLayoutResult 无相等性，无守卫会每帧写状态→无限重组，IME 输入被持续打断
+        onTextLayout = { l ->
+            val cur = layout
+            if (cur == null || cur.layoutInput.text != l.layoutInput.text) layout = l
+        },
         decorationBox = { inner ->
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -634,11 +712,112 @@ private fun TextNoteBody(
                     }
                 }
                 inner()
+                // 勾选框控件层：与 inner() 同 Box 同原点，getBoundingBox 的文本坐标即为覆盖层坐标
+                val l = layout
+                if (l != null && value.isNotEmpty()) {
+                    CheckboxOverlay(
+                        layout = l,
+                        body = value,
+                        onToggle = ::toggleCheckboxAt,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         },
         visualTransformation = NoteMarkupVisualTransformation(typeScale),
         modifier = modifier.fillMaxWidth().verticalScroll(scroll),
     )
+}
+
+/**
+ * 勾选框控件层：遍历视觉行，在每行行首 ☐/☑ 字符处画一个可点的方块。
+ * 方块是可独立点击的目标，点击即切换该行勾选状态；方块区域拦截点击，但放行拖动以不破坏滚动。
+ */
+@Composable
+private fun CheckboxOverlay(
+    layout: androidx.compose.ui.text.TextLayoutResult,
+    body: String,
+    onToggle: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // 收集所有勾选框方块：visual line 首字符若属于勾选框逻辑行，则其 bounding box 作为方块区
+    data class BoxZone(val rect: androidx.compose.ui.geometry.Rect, val checked: Boolean, val start: Int)
+    val zones = androidx.compose.runtime.remember(body, layout) {
+        buildList {
+            // body 与 layout 短暂不同步时（如空布局还没收到新文本），以 layout 实际文本长度为准防越界
+            val layoutLen = layout.layoutInput.text.length
+            for (line in 0 until layout.lineCount) {
+                val start = layout.getLineStart(line)
+                if (start >= layoutLen || start > body.length) continue
+                val lineText = NoteMarkup.lineAt(body, start)
+                val stripped = NoteMarkup.withoutHeading(lineText)
+                val checked = stripped.startsWith(NoteMarkup.BOX_CHECKED_PREFIX)
+                if (!NoteMarkup.hasCheckbox(lineText)) continue
+                // 前缀渲染成两个全宽空格，其 bounding box 就是方块 + 缩进区
+                val box = runCatching { layout.getBoundingBox(start) }.getOrNull() ?: continue
+                val zone = androidx.compose.ui.geometry.Rect(
+                    left = box.left,
+                    top = box.top,
+                    right = box.right + box.width,
+                    bottom = box.bottom,
+                )
+                add(BoxZone(zone, checked, start))
+            }
+        }
+    }
+
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    val check = MaterialTheme.colorScheme.onSurface
+    Canvas(modifier) {
+        for (z in zones) {
+            val strokeW = 2.dp.toPx()
+            // 画成垂直居中的方角小方块（如 MiCheckbox）
+            val boxSize = (z.rect.height * 0.62f)
+            val cx = z.rect.left + boxSize * 0.62f
+            val cy = z.rect.center.y
+            val half = boxSize / 2f
+            val r = androidx.compose.ui.geometry.Rect(
+                cx - half,
+                cy - half,
+                cx + half,
+                cy + half,
+            )
+            // 方块背景（未勾透明+描边，已勾深色填充）
+            drawRect(
+                color = if (z.checked) check else androidx.compose.ui.graphics.Color.Transparent,
+                topLeft = androidx.compose.ui.geometry.Offset(r.left, r.top),
+                size = androidx.compose.ui.geometry.Size(r.width, r.height),
+            )
+            drawRect(
+                color = if (z.checked) check else color,
+                topLeft = androidx.compose.ui.geometry.Offset(r.left, r.top),
+                size = androidx.compose.ui.geometry.Size(r.width, r.height),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeW),
+            )
+            if (z.checked) {
+                // 简单对勾：两条折线
+                val cx2 = r.left + r.width * 0.5f
+                val cy2 = r.top + r.height * 0.5f
+                val s = r.width * 0.25f
+                val line = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(cx2 - s, cy2)
+                    lineTo(cx2 - s * 0.35f, cy2 + s * 0.7f)
+                    lineTo(cx2 + s * 1.2f, cy2 - s * 0.8f)
+                }
+                drawPath(line, androidx.compose.ui.graphics.Color(0xFFFAFAFA), style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeW * 1.1f))
+            }
+        }
+    }
+    // 每个方块一个独立小可点块：点文字区完全不影响光标，只有点到方块才切换勾选
+    val density = LocalDensity.current
+    zones.forEach { z ->
+        Box(
+            Modifier
+                .offset { IntOffset(z.rect.left.roundToInt(), z.rect.top.roundToInt()) }
+                .size(with(density) { z.rect.width.toDp() }, with(density) { z.rect.height.toDp() })
+                .clickable { onToggle(z.start) },
+        )
+    }
 }
 
 /**
@@ -656,29 +835,59 @@ internal class NoteMarkupVisualTransformation(private val typeScale: NoteTypeSca
         for (line in raw.split('\n')) {
             val level = NoteMarkup.headingLevel(line)
             val imgName = NoteMarkup.imageNameOf(line)
-            builder.pushStyle(
-                when {
-                    imgName != null -> androidx.compose.ui.text.SpanStyle(
-                        color = androidx.compose.ui.graphics.Color(0xFFB8860B),
-                        fontSize = 14.sp,
-                    )
-                    level > 0 -> androidx.compose.ui.text.SpanStyle(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = when (level) {
-                            1 -> 24.sp
-                            2 -> 20.sp
-                            else -> 17.sp
-                        },
-                    )
-                    line.startsWith(NoteMarkup.BOX_CHECKED_PREFIX) -> androidx.compose.ui.text.SpanStyle(
-                        color = androidx.compose.ui.graphics.Color(0xFF9E9E9E),
-                        textDecoration = TextDecoration.LineThrough,
-                    )
-                    else -> androidx.compose.ui.text.SpanStyle()
-                },
+            // 勾选行：行首 ☐/☑ 前缀(剥标题后开头 2 字符)渲染为两个全宽空格——
+            // 长度不变(Identity 安全)，但给覆盖层方块留出缩进空间，文字与勾选框保持距离
+            val stripped = NoteMarkup.withoutHeading(line)
+            val boxChecked = stripped.startsWith(NoteMarkup.BOX_CHECKED_PREFIX)
+            val checkPrefix = when {
+                boxChecked || stripped.startsWith(NoteMarkup.BOX_UNCHECKED_PREFIX) -> 2
+                else -> 0
+            }
+            val checkedStyle = androidx.compose.ui.text.SpanStyle(
+                color = androidx.compose.ui.graphics.Color(0xFF9E9E9E),
+                textDecoration = TextDecoration.LineThrough,
             )
-            builder.append(line)
-            builder.pop()
+            if (checkPrefix > 0) {
+                val headLen = line.length - stripped.length
+                if (headLen > 0) {
+                    if (boxChecked) {
+                        builder.pushStyle(checkedStyle)
+                        builder.append(line.substring(0, headLen))
+                        builder.pop()
+                    } else {
+                        builder.append(line.substring(0, headLen))
+                    }
+                }
+                // 前缀 2 字符 → 全宽空格占位（方块控件画在这里）
+                builder.append("\u3000\u3000")
+                if (boxChecked) {
+                    builder.pushStyle(checkedStyle)
+                    builder.append(line.substring(headLen + 2))
+                    builder.pop()
+                } else {
+                    builder.append(line.substring(headLen + 2))
+                }
+            } else {
+                builder.pushStyle(
+                    when {
+                        imgName != null -> androidx.compose.ui.text.SpanStyle(
+                            color = androidx.compose.ui.graphics.Color(0xFFB8860B),
+                            fontSize = 14.sp,
+                        )
+                        level > 0 -> androidx.compose.ui.text.SpanStyle(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = when (level) {
+                                1 -> 24.sp
+                                2 -> 20.sp
+                                else -> 17.sp
+                            },
+                        )
+                        else -> androidx.compose.ui.text.SpanStyle()
+                    },
+                )
+                builder.append(line)
+                builder.pop()
+            }
             consumed += line.length
             // Identity 映射要求变换前后长度一致：空文本不能补 \n，否则光标越界崩溃
             if (consumed < raw.length) {
