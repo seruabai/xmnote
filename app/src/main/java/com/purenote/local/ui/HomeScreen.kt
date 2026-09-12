@@ -105,11 +105,11 @@ fun HomeScreen(vm: NoteViewModel) {
                     },
                     shape = CircleShape,
                     containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = Color.White,
-                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 5.dp),
-                    modifier = Modifier.size(58.dp),
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 3.dp),
+                    modifier = Modifier.size(56.dp),
                 ) {
-                    Icon(Icons.Outlined.Add, "添加", modifier = Modifier.size(35.dp))
+                    Icon(Icons.Outlined.Add, "添加", modifier = Modifier.size(28.dp))
                 }
             }
         },
@@ -246,7 +246,7 @@ private fun NotesHeader(
                     modifier = Modifier.size(28.dp).clickable(onClick = onCloseSelection),
                 )
                 Spacer(Modifier.width(20.dp))
-                Text("已选 $selectionCount 项", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                Text("已选 $selectionCount 项", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             }
             return@Column
         }
@@ -269,10 +269,10 @@ private fun NotesHeader(
         Text(
             "笔记",
             color = MaterialTheme.colorScheme.onBackground,
-            fontSize = 39.sp,
-            lineHeight = 46.sp,
-            fontWeight = FontWeight.Normal,
-            modifier = Modifier.padding(start = 27.dp, top = 25.dp, bottom = 22.dp),
+            fontSize = 34.sp,
+            lineHeight = 41.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 16.dp),
         )
 
         SearchPill(query = query, onQuery = onQuery)
@@ -378,10 +378,10 @@ private fun TodoHeader(onSettings: () -> Unit) {
         }
         Text(
             "待办",
-            fontSize = 39.sp,
-            lineHeight = 46.sp,
-            fontWeight = FontWeight.Normal,
-            modifier = Modifier.padding(start = 27.dp, top = 25.dp, bottom = 19.dp),
+            fontSize = 34.sp,
+            lineHeight = 41.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 16.dp),
         )
     }
 }
@@ -454,7 +454,8 @@ private fun CategoryChip(label: String, selected: Boolean, onClick: () -> Unit) 
 }
 
 @Composable
-fun MiSettingsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun MiSettingsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val gearTint = MaterialTheme.colorScheme.onSurface
     Canvas(modifier.size(32.dp).clickable(onClick = onClick)) {
         val stroke = 2.1.dp.toPx()
         val cx = size.width / 2f
@@ -470,9 +471,9 @@ fun MiSettingsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
             if (index == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)
         }
         path.close()
-        drawPath(path, Color(0xFF222222), style = Stroke(width = stroke, cap = StrokeCap.Round))
+        drawPath(path, gearTint, style = Stroke(width = stroke, cap = StrokeCap.Round))
         drawCircle(
-            color = Color(0xFF222222),
+            color = gearTint,
             radius = size.minDimension * 0.115f,
             center = Offset(cx, cy),
             style = Stroke(width = stroke),
@@ -606,30 +607,23 @@ private fun BottomItem(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    // iOS 标签栏风格：选中用系统蓝 tint，未选中用次级灰，无胶囊背景
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = modifier.fillMaxSize().clickable(onClick = onClick),
     ) {
-        Surface(
-            shape = RoundedCornerShape(5.dp),
-            color = if (selected) Color.Black else Color.Transparent,
-            modifier = Modifier.size(29.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    icon,
-                    contentDescription = label,
-                    tint = if (selected) Color.White else Color(0xFF9B9B9B),
-                    modifier = Modifier.size(23.dp),
-                )
-            }
-        }
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp),
+        )
         Spacer(Modifier.height(3.dp))
         Text(
             label,
-            fontSize = 13.sp,
-            color = if (selected) Color.Black else Color(0xFF9B9B9B),
+            fontSize = 11.sp,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
         )
     }

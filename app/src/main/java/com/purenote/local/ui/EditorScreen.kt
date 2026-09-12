@@ -871,7 +871,7 @@ internal class NoteMarkupVisualTransformation(private val typeScale: NoteTypeSca
                 builder.pushStyle(
                     when {
                         imgName != null -> androidx.compose.ui.text.SpanStyle(
-                            color = androidx.compose.ui.graphics.Color(0xFFB8860B),
+                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93),
                             fontSize = 14.sp,
                         )
                         level > 0 -> androidx.compose.ui.text.SpanStyle(

@@ -53,23 +53,23 @@ fun formatNoteTime(ts: Long): String {
 /** 笔记卡片时间栏：固定年月日，不带时间（用户 2026-09-07 要求） */
 fun formatNoteDate(ts: Long): String = DateFormats.yearMonthDay(ts)
 
-/** 便签纸色盘：浅色/深色两套，index 0 为默认白纸。暖奶油纸感，无冷蓝/绿/紫。 */
+/** 笔记纸色盘：浅色/深色两套，index 0 为默认白纸。iOS 系统调：极淡的中性灰与雾色。 */
 private val PaperLight = intArrayOf(
-    0xFFFFFDF7.toInt(),   // 奶油白纸
-    0xFFFFF1C9.toInt(),   // 乳黄
-    0xFFFCEBCB.toInt(),   // 杏黄
-    0xFFFAE9CF.toInt(),   // 蜜枣
-    0xFFF7E4D2.toInt(),   // 奶茶粉
-    0xFFF2DDD0.toInt(),   // 暖陶土
+    0xFFFFFFFF.toInt(),   // 白纸（默认）
+    0xFFF2F2F7.toInt(),   // systemGray6 浅灰
+    0xFFF7F2E7.toInt(),   // 米杏（很淡）
+    0xFFEBF2F9.toInt(),   // 雾蓝（很淡）
+    0xFFEBF4EF.toInt(),   // 薄荷（很淡）
+    0xFFF8EEF1.toInt(),   // 雾粉（很淡）
 )
 
 private val PaperDark = intArrayOf(
-    0xFF2B251C.toInt(),   // 暖奶咖
-    0xFF42341A.toInt(),   // 深乳黄
-    0xFF483918.toInt(),   // 深杏
-    0xFF4A3B1E.toInt(),   // 深蜜枣
-    0xFF4A3626.toInt(),   // 深奶茶
-    0xFF402A23.toInt(),   // 深陶土
+    0xFF1C1C1E.toInt(),   // systemGray6（深色）
+    0xFF262628.toInt(),   // 深灰
+    0xFF2B2721.toInt(),   // 深米杏
+    0xFF212B35.toInt(),   // 深雾蓝
+    0xFF1F2E27.toInt(),   // 深薄荷
+    0xFF312429.toInt(),   // 深雾粉
 )
 
 /** 卡片纸色：跟随主题自动取浅/暗纸盘 */

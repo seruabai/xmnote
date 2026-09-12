@@ -15,107 +15,106 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.purenote.local.ThemeMode
 
-// 奶油暖黄 + 奶油纸主题：柔和暖黄强调色、温暖奶油纸背景，营造像笔记本的安心感。
-// 不用莫兰迪（偏灰）、不用强冷蓝、不用高饱和刺眼黄。
-private val PaperBg = Color(0xFFFAF6EE)          // 暖奶油纸背景
-private val PaperSurface = Color(0xFFFFFDF7)     // 暖白纸卡面
-private val PaperVariant = Color(0xFFF2EDE0)     // 暖纸浅变体
-private val Ink = Color(0xFF3A2E20)              // 暖墨棕文字（柔和）
-private val InkSoft = Color(0xFF8C7E68)          // 暖灰文字
-private val CreamYellow = Color(0xFFE3A33E)      // 奶油暖黄（主）
-private val CreamYellowSoft = Color(0xFFEDB458)  // 奶油暖黄（亮/深色用）
-private val WarmBrown = Color(0xFF8A6D3B)        // 暖棕（次要）
-private val WarmTerra = Color(0xFFB6785A)        // 暖陶土（第三）
+// iOS 系统风主题：中性灰白分层、系统蓝点缀、层级靠字重与留白表达。
+// 色值对齐 Apple HIG：浅色 grouped 背景 #F2F2F7 + 白卡，深色纯黑 + #1C1C1E 卡。
+private val IosBlue = Color(0xFF007AFF)           // systemBlue（浅色主色）
+private val IosBlueDark = Color(0xFF0A84FF)       // systemBlue（深色主色）
+private val IosGreen = Color(0xFF34C759)          // systemGreen（第三色，克制使用）
+private val IosRed = Color(0xFFFF3B30)            // systemRed
+private val Label = Color(0xFF000000)             // label
+private val SecondaryLabel = Color(0xFF8E8E93)    // secondaryLabel ≈ systemGray
+private val Separator = Color(0xFFC7C7CC)         // separator
+private val OpaqueSeparator = Color(0xFFE5E5EA)   // opaqueSeparator
 
-private val NightBg = Color(0xFF211B14)          // 暖深棕咖背景
-private val NightSurface = Color(0xFF2B251C)     // 暖奶咖卡面
-private val NightVariant = Color(0xFF37301F)     // 暖深浅变体
-private val NightText = Color(0xFFF2E9D8)        // 暖米白文字
-private val NightInkSoft = Color(0xFFABA08C)     // 暖灰文字
+private val NightLabel = Color(0xFFFFFFFF)
+private val NightSecondaryLabel = Color(0xFF98989F)
+private val NightSeparator = Color(0xFF3A3A3C)
 
 private val LightColors = lightColorScheme(
-    primary = CreamYellow,
-    onPrimary = Color(0xFF33260B),
-    primaryContainer = Color(0xFFFCEBC9),
-    onPrimaryContainer = Color(0xFF3A2C0E),
-    secondary = WarmBrown,
-    onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFF3E4C6),
-    onSecondaryContainer = Color(0xFF2E2410),
-    tertiary = WarmTerra,
+    primary = IosBlue,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFE1EFFF),
+    onPrimaryContainer = Color(0xFF0A4A82),
+    secondary = SecondaryLabel,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE5E5EA),
+    onSecondaryContainer = Color(0xFF1C1C1E),
+    tertiary = IosGreen,
     onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFF7E1D4),
-    onTertiaryContainer = Color(0xFF3A2113),
-    background = PaperBg,
-    onBackground = Ink,
-    surface = PaperSurface,
-    onSurface = Ink,
-    surfaceVariant = PaperVariant,
-    onSurfaceVariant = InkSoft,
-    surfaceContainerLowest = Color(0xFFFFFDFA),
-    surfaceContainerLow = Color(0xFFFFFCF2),
-    surfaceContainer = Color(0xFFFAF3E4),
-    surfaceContainerHigh = Color(0xFFF2ECDB),
-    surfaceContainerHighest = Color(0xFFE9E2CF),
-    outline = Color(0xFFB5A98D),
-    outlineVariant = Color(0xFFDCD2BC),
-    error = Color(0xFFBA3B30),
+    tertiaryContainer = Color(0xFFD9F4E1),
+    onTertiaryContainer = Color(0xFF0A4F28),
+    background = Color(0xFFF2F2F7),          // systemGroupedBackground
+    onBackground = Label,
+    surface = Color.White,                   // secondarySystemGroupedBackground（卡面/栏面）
+    onSurface = Label,
+    surfaceVariant = Color(0xFFF2F2F7),
+    onSurfaceVariant = SecondaryLabel,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFF7F7FA),
+    surfaceContainer = Color(0xFFF2F2F7),
+    surfaceContainerHigh = Color(0xFFE9E9EE),
+    surfaceContainerHighest = Color(0xFFE0E0E5),
+    outline = Separator,
+    outlineVariant = OpaqueSeparator,
+    error = IosRed,
     onError = Color.White,
-    errorContainer = Color(0xFFFFDAD4),
-    onErrorContainer = Color(0xFF410001),
+    errorContainer = Color(0xFFFFE2E0),
+    onErrorContainer = Color(0xFF5C0F0B),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = CreamYellowSoft,
-    onPrimary = Color(0xFF3A2C0E),
-    primaryContainer = Color(0xFF57401A),
-    onPrimaryContainer = Color(0xFFFFE7B8),
-    secondary = Color(0xFFDCBD8A),
-    onSecondary = Color(0xFF2C1F08),
-    secondaryContainer = Color(0xFF463512),
-    onSecondaryContainer = Color(0xFFF3E0C8),
-    tertiary = Color(0xFFDFB89C),
-    onTertiary = Color(0xFF3A1B0C),
-    tertiaryContainer = Color(0xFF5E3720),
-    onTertiaryContainer = Color(0xFFF7E1D4),
-    background = NightBg,
-    onBackground = NightText,
-    surface = NightSurface,
-    onSurface = NightText,
-    surfaceVariant = NightVariant,
-    onSurfaceVariant = NightInkSoft,
-    surfaceContainerLowest = Color(0xFF1B1610),
-    surfaceContainerLow = Color(0xFF232019),
-    surfaceContainer = Color(0xFF2B2520),
-    surfaceContainerHigh = Color(0xFF37302A),
-    surfaceContainerHighest = Color(0xFF454030),
-    outline = Color(0xFF8A7E6A),
-    outlineVariant = Color(0xFF4A422F),
-    error = Color(0xFFFFB4AB),
-    onError = Color(0xFF690005),
-    errorContainer = Color(0xFF5C1A14),
-    onErrorContainer = Color(0xFFFFDAD4),
+    primary = IosBlueDark,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFF103F6E),
+    onPrimaryContainer = Color(0xFF9ECDFF),
+    secondary = NightSecondaryLabel,
+    onSecondary = Color(0xFF1C1C1E),
+    secondaryContainer = Color(0xFF2C2C2E),
+    onSecondaryContainer = Color(0xFFE5E5EA),
+    tertiary = Color(0xFF30D158),
+    onTertiary = Color(0xFF003914),
+    tertiaryContainer = Color(0xFF0E4A22),
+    onTertiaryContainer = Color(0xFFB7F0C6),
+    background = Color.Black,                // systemGroupedBackground（深色）
+    onBackground = NightLabel,
+    surface = Color(0xFF1C1C1E),             // secondarySystemGroupedBackground（深色）
+    onSurface = NightLabel,
+    surfaceVariant = Color(0xFF2C2C2E),
+    onSurfaceVariant = NightSecondaryLabel,
+    surfaceContainerLowest = Color(0xFF0F0F10),
+    surfaceContainerLow = Color(0xFF161618),
+    surfaceContainer = Color(0xFF1C1C1E),
+    surfaceContainerHigh = Color(0xFF2C2C2E),
+    surfaceContainerHighest = Color(0xFF3A3A3C),
+    outline = NightSeparator,
+    outlineVariant = Color(0xFF2C2C2E),
+    error = Color(0xFFFF453A),
+    onError = Color(0xFF4A0002),
+    errorContainer = Color(0xFF3A0E0C),
+    onErrorContainer = Color(0xFFFFD9D7),
 )
 
-private val MiTypography = Typography(
-    headlineSmall = TextStyle(fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.Normal),
-    titleLarge = TextStyle(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold),
-    titleMedium = TextStyle(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
-    titleSmall = TextStyle(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold),
-    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 23.sp),
-    bodyMedium = TextStyle(fontSize = 13.sp, lineHeight = 18.sp),
-    bodySmall = TextStyle(fontSize = 12.sp, lineHeight = 16.sp),
+// SF 风字阶：Large Title 34 Bold / Title2 22 Bold / Headline 17 Semibold / Body 17 /
+// Subheadline 15 / Footnote 13 / Caption 12-11，层级靠字重而非颜色。
+private val IosTypography = Typography(
+    headlineSmall = TextStyle(fontSize = 20.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold),
+    titleLarge = TextStyle(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold),
+    titleMedium = TextStyle(fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
+    titleSmall = TextStyle(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
+    bodyLarge = TextStyle(fontSize = 17.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontSize = 15.sp, lineHeight = 20.sp),
+    bodySmall = TextStyle(fontSize = 13.sp, lineHeight = 18.sp),
     labelLarge = TextStyle(fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium),
     labelMedium = TextStyle(fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.Medium),
     labelSmall = TextStyle(fontSize = 11.sp, lineHeight = 13.sp),
 )
 
-private val MiShapes = Shapes(
+private val IosShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(28.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(14.dp),
+    large = RoundedCornerShape(18.dp),
+    extraLarge = RoundedCornerShape(24.dp),
 )
 
 @Composable
@@ -127,8 +126,8 @@ fun PureNoteTheme(mode: ThemeMode, content: @Composable () -> Unit) {
     }
     MaterialTheme(
         colorScheme = if (dark) DarkColors else LightColors,
-        typography = MiTypography,
-        shapes = MiShapes,
+        typography = IosTypography,
+        shapes = IosShapes,
         content = content,
     )
 }

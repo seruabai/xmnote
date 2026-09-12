@@ -370,7 +370,7 @@ fun SettingsScreen(vm: NoteViewModel) {
 private fun SettingsSectionTitle(text: String) {
     Text(
         text,
-        color = Color(0xFF8993B0),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 15.sp,
         modifier = Modifier.padding(start = 17.dp, bottom = 10.dp),
     )

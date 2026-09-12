@@ -370,7 +370,7 @@ fun TrashScreen(vm: NoteViewModel) {
 private fun TrashSectionTitle(text: String) {
     Text(
         text,
-        color = Color(0xFF8993B0),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 15.sp,
         modifier = Modifier.padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
     )
