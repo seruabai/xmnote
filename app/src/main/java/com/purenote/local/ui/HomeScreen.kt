@@ -236,25 +236,26 @@ private fun NotesHeader(
 
     Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
         if (selecting) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 16.dp),
-            ) {
-                Icon(
-                    Icons.Outlined.Close,
-                    "退出多选",
-                    modifier = Modifier.size(28.dp).clickable(onClick = onCloseSelection),
-                )
-                Spacer(Modifier.width(20.dp))
-                Text("已选 $selectionCount 项", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-            }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.Close,
+                        "退出多选",
+                        modifier = Modifier.size(28.dp).clickable(onClick = onCloseSelection),
+                    )
+                    Spacer(Modifier.width(20.dp))
+                    Text("已选 $selectionCount 项", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                }
             return@Column
         }
 
         Row(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            // 48dp 最小触控容器以图标视觉为中心对称扩展,视觉右缘 = 屏宽 - padding,与 16dp 内容栅格对齐
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         ) {
             Icon(
                 Icons.Outlined.FolderOpen,
@@ -272,13 +273,13 @@ private fun NotesHeader(
             fontSize = 34.sp,
             lineHeight = 41.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 16.dp),
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
         )
 
         SearchPill(query = query, onQuery = onQuery)
 
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 14.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
         ) {
@@ -372,7 +373,7 @@ private fun TodoHeader(onSettings: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
         Row(
             horizontalArrangement = Arrangement.End,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         ) {
             MiSettingsButton(onClick = onSettings)
         }
@@ -381,7 +382,7 @@ private fun TodoHeader(onSettings: () -> Unit) {
             fontSize = 34.sp,
             lineHeight = 41.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 16.dp),
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
         )
     }
 }
@@ -391,7 +392,7 @@ private fun SearchPill(query: String, onQuery: (String) -> Unit) {
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(52.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(52.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 17.dp)) {
             Icon(
@@ -512,10 +513,11 @@ private fun NotesMasonry(
     }
     val folderNames = remember(folders) { folders.associate { it.id to it.name } }
 
-    Row(Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
+    // 外缘 16dp(11+5)、列间隙 10dp(5+5),与单列列表模式一致
+    Row(Modifier.fillMaxSize().padding(horizontal = 11.dp)) {
         listOf(left, right).forEach { columnNotes ->
             LazyColumn(
-                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                modifier = Modifier.weight(1f).padding(horizontal = 5.dp),
                 contentPadding = PaddingValues(bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -549,7 +551,7 @@ private fun NotesList(
     val folderNames = remember(folders) { folders.associate { it.id to it.name } }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 96.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(notes, key = { it.id }) { note ->
