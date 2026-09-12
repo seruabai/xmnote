@@ -1,4 +1,4 @@
-﻿package com.purenote.local.ui
+package com.purenote.local.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,44 +30,28 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import java.text.SimpleDateFormat
+import com.purenote.local.core.DateFormats
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 /** 废纸篓时间：只显示"日期 + 时间"，不用昨天/前天这类相对文案 */
-fun formatTrashTime(ts: Long): String {
-    val cal = Calendar.getInstance().apply { timeInMillis = ts }
-    val now = Calendar.getInstance()
-    val datePart = if (cal.get(Calendar.YEAR) == now.get(Calendar.YEAR)) {
-        SimpleDateFormat("M月d日", Locale.getDefault()).format(Date(ts))
-    } else {
-        SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(Date(ts))
-    }
-    return "$datePart ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ts))}"
-}
+fun formatTrashTime(ts: Long): String =
+    "${DateFormats.smartDate(ts)} ${DateFormats.hourMinute(ts)}"
 
 fun formatNoteTime(ts: Long): String {
     val cal = Calendar.getInstance().apply { timeInMillis = ts }
     val now = Calendar.getInstance()
-    val hm = SimpleDateFormat("HH:mm", Locale.getDefault())
     val sameDay = cal.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
         cal.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)
-    if (sameDay) return hm.format(Date(ts))
+    if (sameDay) return DateFormats.hourMinute(ts)
     val yesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
     val isYesterday = cal.get(Calendar.YEAR) == yesterday.get(Calendar.YEAR) &&
         cal.get(Calendar.DAY_OF_YEAR) == yesterday.get(Calendar.DAY_OF_YEAR)
     if (isYesterday) return "昨天"
-    return if (cal.get(Calendar.YEAR) == now.get(Calendar.YEAR)) {
-        SimpleDateFormat("M月d日", Locale.getDefault()).format(Date(ts))
-    } else {
-        SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(Date(ts))
-    }
+    return DateFormats.smartDate(ts)
 }
 
 /** 笔记卡片时间栏：固定年月日，不带时间（用户 2026-09-07 要求） */
-fun formatNoteDate(ts: Long): String =
-    SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(Date(ts))
+fun formatNoteDate(ts: Long): String = DateFormats.yearMonthDay(ts)
 
 /** 便签纸色盘：浅色/深色两套，index 0 为默认白纸。暖奶油纸感，无冷蓝/绿/紫。 */
 private val PaperLight = intArrayOf(

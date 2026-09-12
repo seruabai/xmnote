@@ -91,6 +91,7 @@ import com.purenote.local.NoteTextSize
 import com.purenote.local.NoteViewModel
 import com.purenote.local.Screen
 import com.purenote.local.core.AudioRecorder
+import com.purenote.local.core.DateFormats
 import com.purenote.local.core.ImageStore
 import com.purenote.local.core.NoteMarkup
 import com.purenote.local.data.ChecklistItem
@@ -99,9 +100,6 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /** 小米笔记式编辑器：独立大标题、时间/字数、留白正文和底部五项工具栏。 */
 @OptIn(FlowPreview::class, ExperimentalLayoutApi::class)
@@ -279,7 +277,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     val imeVisible = WindowInsets.isImeVisible
 
     val createdLabel = remember(screen.noteId) {
-        SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.getDefault()).format(Date())
+        DateFormats.yearMonthDayHourMinute(System.currentTimeMillis())
     }
     val words = title.length + body.length + items.sumOf { it.text.length }
     val typeScale = preferredTextSize.typeScale()

@@ -45,6 +45,7 @@ import androidx.core.widget.doAfterTextChanged
 import com.purenote.local.MainActivity
 import com.purenote.local.PureNoteApp
 import com.purenote.local.R
+import com.purenote.local.core.DateFormats
 import com.purenote.local.data.DataChanges
 import com.purenote.local.data.Note
 import com.purenote.local.data.NoteFilter
@@ -58,9 +59,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -1152,8 +1150,7 @@ class QuickCaptureService : Service() {
         setOnClickListener { exitInlineEditAndDismiss() }
     }
 
-    private fun formatDate(timestamp: Long): String =
-        SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(Date(timestamp))
+    private fun formatDate(timestamp: Long): String = DateFormats.yearMonthDay(timestamp)
 
     private fun dip(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
     private fun dip(dp: Float): Int = (dp * resources.displayMetrics.density).toInt()

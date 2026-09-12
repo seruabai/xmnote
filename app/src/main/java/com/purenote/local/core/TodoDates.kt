@@ -1,10 +1,7 @@
 package com.purenote.local.core
 
 import com.purenote.local.data.RepeatRule
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 /** 小米待办的时间展示与重复推进规则（纯函数便于测试） */
 object TodoDates {
@@ -33,20 +30,12 @@ object TodoDates {
         return cal.timeInMillis
     }
 
-    private val hm = SimpleDateFormat("HH:mm", Locale.getDefault())
-    private val md = SimpleDateFormat("M月d日", Locale.getDefault())
-    private val ymd = SimpleDateFormat("yyyy年M月d日", Locale.getDefault())
-
     /** 日部分：今天/明天/昨天 + M月d日 / yyyy年M月d日 */
     fun dayLabel(ts: Long, now: Long = System.currentTimeMillis()): String = when (ts) {
         in startOfDay(now)..endOf(now) -> "今天"
         in startOfDay(now, 1)..endOf(now, 1) -> "明天"
         in startOfDay(now, -1)..endOf(now, -1) -> "昨天"
-        else -> {
-            val sameYear = Calendar.getInstance().apply { timeInMillis = ts }
-                .get(Calendar.YEAR) == Calendar.getInstance().apply { timeInMillis = now }.get(Calendar.YEAR)
-            if (sameYear) md.format(Date(ts)) else ymd.format(Date(ts))
-        }
+        else -> DateFormats.smartDate(ts, now)
     }
 
     private fun endOf(now: Long, offsetDays: Int = 0): Long = startOfDay(now, offsetDays + 1) - 1
@@ -58,7 +47,7 @@ object TodoDates {
     fun formatDue(dueAt: Long, allDay: Boolean, repeat: RepeatRule, now: Long = System.currentTimeMillis()): String {
         val day = dayLabel(dueAt, now)
         val sb = StringBuilder(day)
-        if (!allDay) sb.append(' ').append(hm.format(Date(dueAt)))
+        if (!allDay) sb.append(' ').append(DateFormats.hourMinute(dueAt))
         when (repeat) {
             RepeatRule.NONE -> Unit
             RepeatRule.DAILY -> sb.append("，每天")
@@ -97,8 +86,8 @@ object TodoDates {
     /** 分组标题：已过期/今天 M月d日/明天 M月d日/更远/未计划/已完成 */
     fun groupTitle(group: TodoGroup, now: Long = System.currentTimeMillis()): String = when (group) {
         TodoGroup.EXPIRED -> "已过期"
-        TodoGroup.TODAY -> "今天 " + md.format(Date(startOfDay(now)))
-        TodoGroup.TOMORROW -> "明天 " + md.format(Date(startOfDay(now, 1)))
+        TodoGroup.TODAY -> "今天 " + DateFormats.monthDay(startOfDay(now))
+        TodoGroup.TOMORROW -> "明天 " + DateFormats.monthDay(startOfDay(now, 1))
         TodoGroup.FUTURE -> "更远"
         TodoGroup.UNSCHEDULED -> "未计划"
         TodoGroup.DONE -> "已完成"
