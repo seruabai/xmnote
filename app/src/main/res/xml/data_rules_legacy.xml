@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 及以下的整机备份规则：云备份与换机迁移共用这一份，且受
+     25MB/应用 的云备份上限约束。图片录音放进来会导致超限、整个备份静默失败
+     （连文字一起丢），故仍只放文字；老设备的附件请用应用内导出/导入。 -->
 <full-backup-content>
     <include domain="database" path="." />
     <include domain="sharedpref" path="." />

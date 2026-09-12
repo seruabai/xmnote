@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
+    <!-- 云备份（Google Drive 等）：仅文字数据。总量有 25MB/应用 上限，
+         图片录音放进来会超限导致整个备份失败，故刻意不放。 -->
     <cloud-backup>
         <include domain="database" path="." />
         <include domain="sharedpref" path="." />
     </cloud-backup>
+    <!-- 换机迁移（同一路径也用于厂商互传/一键换机）：无大小限制，
+         这里带上 images/（图片与录音同目录），否则换机后附件全丢。 -->
     <device-transfer>
         <include domain="database" path="." />
         <include domain="sharedpref" path="." />
+        <include domain="file" path="images/" />
     </device-transfer>
 </data-extraction-rules>
