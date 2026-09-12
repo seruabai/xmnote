@@ -2,14 +2,19 @@ package com.purenote.local.data
 
 import android.content.Context
 import android.database.Cursor
+import com.purenote.local.backup.BackupFile
+import com.purenote.local.backup.BackupIo
 import com.purenote.local.core.ChecklistCodec
 import com.purenote.local.core.TodoCompletion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.InputStream
 
 class NoteRepository(context: Context) {
 
-    private val db = NotesDb(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val db = NotesDb(appContext)
 
     // ---- notes ----
 
@@ -300,6 +305,24 @@ class NoteRepository(context: Context) {
         }
         list
     }
+
+    // ---- 备份 / 恢复 ----
+    //
+    // UI 与后续同步层一律通过这些入口，不直接接触 NotesDb（沿用 AGENTS.md 分层）。
+
+    private val backupIo: BackupIo by lazy { BackupIo(appContext) }
+
+    /** 导出整库（数据库 + 图片/录音附件）到 [target]。 */
+    suspend fun exportBackup(target: File, appVersion: String): BackupIo.ExportResult =
+        backupIo.export(target, db, appVersion)
+
+    /** 合并导入；按 uuid 判重、updatedAt 新者胜，重复导入幂等。 */
+    suspend fun importBackup(source: InputStream): BackupIo.ImportResult =
+        backupIo.import(source, db)
+
+    /** 只解析备份内容（用于导入前预览），不改数据库。 */
+    suspend fun readBackup(source: InputStream): BackupFile =
+        backupIo.readBackup(source)
 
     // ---- helpers ----
 

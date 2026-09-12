@@ -19,6 +19,8 @@
 
 > 开始新任务前先看这里：若有其他 AI 正在处理与你重叠的文件，先停下询问用户。
 
+- T-013 | 备份核心（导出/导入含附件）+ 云同步设计 v2 + GLM 任务书。**代码占用已释放**：`backup/` 6 个文件完成且验证（单测 27 + 真机端到端 2）。**下一步交 GLM 做 UI 接线 + WebDAV**，见 `wiki/GLM_TASK_BACKUP_SYNC.md`。 | ZCode | 核心完成/待 GLM 接线 | backup/*, data/NoteRepository.kt, data/Db.kt, wiki/SYNC_DESIGN.md, wiki/GLM_TASK_BACKUP_SYNC.md | 2026-09-13 |
+- T-014 | 结构整理与性能：日期格式化收敛、列表瀑布流缓存、搜索防抖、DB v7 复合索引、refresh 竞态修复、换机迁移含附件 | ZCode | 完成 | core/DateFormats.kt, ui/HomeScreen.kt, ui/Common.kt, NoteViewModel.kt, data/Db.kt, res/xml/data_rules.xml | 2026-09-13 |
 - T-006-A | A批：待办行末光标+侧栏原地编辑+长按多选排序；B批：单条静默通知+虚化去纹路 (v1.2.12已发) | opencode | 完成 | ui/TodoEditSheet.kt, ui/TodoCard.kt, ui/TodoPane.kt, ui/HomeScreen.kt, NoteViewModel.kt, data/Db.kt, data/NoteRepository.kt, notify/QuickCaptureService.kt, notify/ReminderReceiver.kt | 2026-09-06 |
 - T-006-C | C批：笔记富编辑器（日期YMD/置顶移时间栏/H1-H3/工具栏跟键盘/录音/行内勾选/图片插光标/三点菜单） | opencode | 待开始 | ui/EditorScreen.kt, ui/NoteCard.kt, data/Models.kt, data/Db.kt | 2026-09-06 |
 - T-007 | 待办弹窗跟随输入法同步升降（弹窗与键盘渐入渐出同动）(v1.2.13已发) | opencode | 完成 | ui/TodoEditSheet.kt, app/src/main/AndroidManifest.xml | 2026-09-06 |
