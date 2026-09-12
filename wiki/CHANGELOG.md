@@ -5,6 +5,7 @@
 
 | 日期 | 工具 | 改动摘要 | 涉及文件 |
 |------|------|----------|----------|
+| 2026-09-13 | ZCode | [侧栏]待办新增先只显示内容行、回车后才出现标题行（OverlayTodoDraft.titleRevealed）；[侧栏]编辑中点空白改保存退回列表（面板保持拉出，不再整个收起到桌面；非编辑态点空白仍收起）；[编辑器]正文 BasicTextField 补 textStyle=bodyTextStyle，输入文字与"开始书写或"占位字号/位置对齐 | notify/QuickCaptureService.kt, ui/EditorScreen.kt |
 | 2026-09-13 | ZCode | [备份]任务A UI 接线：设置页新增"备份与恢复"栏，SAF 导出（CreateDocument，cacheDir 中转）/导入（OpenDocument，预览确认后写库），NoteViewModel 新增 BackupState（Idle/Running/Done/Failed）与 export/preview/import，坏包给可读错误不崩溃；模拟器换机往返/重复导入幂等/integrity_check 全过 | NoteViewModel.kt, ui/SettingsScreen.kt, core/DateFormats.kt |
 | 2026-09-13 | ZCode | [备份]新增整库导出/导入（zip：backup.json + 附件），跨设备 uuid 重映射、LWW 合并、单事务应用、Zip Slip 防护；新增 repository 三入口；新增 kotlinx-serialization 依赖；写 GLM 任务书 | backup/*, data/NoteRepository.kt, data/Db.kt, wiki/GLM_TASK_BACKUP_SYNC.md, wiki/SYNC_DESIGN.md, gradle/libs.versions.toml |
 | 2026-09-13 | ZCode | [结构整理]日期格式化收敛到 core/DateFormats（三处重复→一处，SimpleDateFormat 改按线程各持一份修正线程安全隐患）；修 build.gradle.kts 被编码损坏的注释 | core/DateFormats.kt, core/TodoDates.kt, ui/Common.kt, ui/EditorScreen.kt, notify/QuickCaptureService.kt, app/build.gradle.kts, test/.../DateFormatsTest.kt |

@@ -653,6 +653,8 @@ private fun TextNoteBody(
     }
     BasicTextField(
         value = tfv,
+        // 不传 textStyle 会回落到默认样式：输入文字比"开始书写或"占位小且首行位置错位
+        textStyle = bodyTextStyle,
         onValueChange = { raw ->
             val new = clampSelection(raw)
             onCursor(new.selection.end)

@@ -651,7 +651,7 @@ class QuickCaptureService : Service() {
         if (panel == null) return
         if (todoId == null) {
             editingTodoId = NEW_DRAFT_ID
-            editingDraft = OverlayTodoDraft(
+            val draft = OverlayTodoDraft(
                 id = NEW_DRAFT_ID,
                 title = "",
                 done = false,
@@ -660,9 +660,11 @@ class QuickCaptureService : Service() {
                 repeat = RepeatRule.NONE,
                 subs = mutableListOf(OverlaySubDraft(nextOverlayDraftKey(), null, "", false)),
             )
+            editingDraft = draft
             editingFocusSubId = null
             rerenderPanel()
-            focusEditableTag(TITLE_TAG)
+            // 用户 2026-09-13：新增先只显示内容行并聚焦它，回车后才出现标题行
+            focusEditableTag(draft.subs.first().key)
             return
         }
         val todo = cachedTodos.firstOrNull { it.id == todoId } ?: return
@@ -673,7 +675,10 @@ class QuickCaptureService : Service() {
             }
         if (subs.isEmpty()) subs.add(OverlaySubDraft(nextOverlayDraftKey(), null, "", false))
         editingTodoId = todoId
-        editingDraft = OverlayTodoDraft(todo.id, todo.title, todo.done, todo.dueAt, todo.allDay, todo.repeat, subs)
+        editingDraft = OverlayTodoDraft(
+            todo.id, todo.title, todo.done, todo.dueAt, todo.allDay, todo.repeat, subs,
+            titleRevealed = true,
+        )
         editingFocusSubId = focusSubId
         rerenderPanel()
         val tag = focusSubId?.let { fid -> subs.firstOrNull { it.sourceId == fid }?.key } ?: TITLE_TAG
@@ -705,21 +710,14 @@ class QuickCaptureService : Service() {
         }
     }
 
-    /** 点空白处：保存草稿后直接收起整个侧栏（用户指定：编辑完成点空白退出侧边栏）。 */
+    /** 点空白处：编辑中保存草稿退回列表（面板保持拉出，用户 2026-09-13 指定）；未在编辑才收起整个侧栏。 */
     private fun exitInlineEditAndDismiss() {
         val draft = editingDraft
-        editingTodoId = null
-        editingDraft = null
-        editingFocusSubId = null
         if (draft == null) {
             dismissPanel(1f)
             return
         }
-        scheduleInlineEditorSave(immediate = true)
-        scope.launch {
-            inlineSaveMutex.withLock { persistInlineEditor(draft) }
-            postToMain { if (panel != null) dismissPanel(1f) }
-        }
+        exitInlineEdit()
     }
 
     private fun focusEditableTag(tag: Long) {
@@ -759,22 +757,25 @@ class QuickCaptureService : Service() {
             // 卡片内部点击自己消费，不冒泡到空白退出。
             isClickable = true
         }
-        val titleInput = inlineEditText(draft.title, "待办清单", 18f).apply {
-            tag = TITLE_TAG
-            imeOptions = EditorInfo.IME_ACTION_NEXT
-            doAfterTextChanged {
-                draft.title = it?.toString().orEmpty()
-                scheduleInlineEditorSave()
+        // 新增流程：标题行在内容行回车后才出现（titleRevealed），编辑已有待办始终显示
+        if (draft.titleRevealed) {
+            val titleInput = inlineEditText(draft.title, "待办清单", 18f).apply {
+                tag = TITLE_TAG
+                imeOptions = EditorInfo.IME_ACTION_NEXT
+                doAfterTextChanged {
+                    draft.title = it?.toString().orEmpty()
+                    scheduleInlineEditorSave()
+                }
+                setOnEditorActionListener { _, actionId, event ->
+                    val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
+                        (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+                    if (!enter) return@setOnEditorActionListener false
+                    draft.subs.firstOrNull()?.let { focusEditableTag(it.key) }
+                    true
+                }
             }
-            setOnEditorActionListener { _, actionId, event ->
-                val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
-                    (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
-                if (!enter) return@setOnEditorActionListener false
-                draft.subs.firstOrNull()?.let { focusEditableTag(it.key) }
-                true
-            }
+            card.addView(titleInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(52)))
         }
-        card.addView(titleInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(52)))
         draft.subs.forEach { sub ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -791,6 +792,8 @@ class QuickCaptureService : Service() {
                     val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
                         (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
                     if (!enter) return@setOnEditorActionListener false
+                    // 首次回车同时揭示标题行（用户 2026-09-13：新增先只有内容行）
+                    draft.titleRevealed = true
                     insertSubRowAfter(draft, sub.key)
                     true
                 }
@@ -1194,6 +1197,8 @@ class QuickCaptureService : Service() {
         var allDay: Boolean,
         var repeat: RepeatRule,
         val subs: MutableList<OverlaySubDraft>,
+        // 新增草稿先只显示内容行，回车后才出现标题行；编辑已有待办始终显示
+        var titleRevealed: Boolean = false,
     )
 
     private data class OverlaySubDraft(
