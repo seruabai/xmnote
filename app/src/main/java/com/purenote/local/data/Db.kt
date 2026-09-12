@@ -6,7 +6,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import java.util.UUID
 
-class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null, DB_VERSION) {
+/** [name] 仅测试需要（用独立库文件，避免污染真实数据）；应用内一律用默认库名。 */
+class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(context, name, null, DB_VERSION) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(SQL_CREATE_FOLDERS)
@@ -365,6 +366,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
 
     companion object {
         const val DB_VERSION = 7
+        const val DB_NAME = "purenote.db"
 
         private val SQL_CREATE_FOLDERS = """
             CREATE TABLE folders(
