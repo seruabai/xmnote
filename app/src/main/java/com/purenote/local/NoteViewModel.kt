@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 sealed interface Screen {
@@ -132,15 +133,30 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 刷新期间若有新的刷新请求，取消旧的那次，只让最后一次的结果落地。
+     * 原来每次调用各起一个协程并发写 6 个 StateFlow，两次快速操作（如连续改颜色/置顶）
+     * 可能后发先至，用旧数据覆盖新结果，表现为「偶尔显示不对，重进又好了」。
+     */
+    private var refreshJob: Job? = null
+
     fun refresh() {
-        viewModelScope.launch {
-            _notes.value = repo.loadNotes(_filter.value, sortInternal.value)
-            _todos.value = repo.loadTodos()
-            _trashedTodos.value = repo.loadTrashedTodos()
-            _folders.value = repo.loadFolders()
-            _folderCounts.value = repo.folderCounts()
-            _trashCount.value = repo.loadNotes(NoteFilter(trashed = true)).size +
-                repo.trashedTodoCount()
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            val notes = repo.loadNotes(_filter.value, sortInternal.value)
+            val todos = repo.loadTodos()
+            val trashedTodos = repo.loadTrashedTodos()
+            val folders = repo.loadFolders()
+            val folderCounts = repo.folderCounts()
+            val trashCount = repo.loadNotes(NoteFilter(trashed = true)).size + repo.trashedTodoCount()
+            // 全部读完后一起提交，取消发生在读取阶段时不会留下半套数据
+            if (!isActive) return@launch
+            _notes.value = notes
+            _todos.value = todos
+            _trashedTodos.value = trashedTodos
+            _folders.value = folders
+            _folderCounts.value = folderCounts
+            _trashCount.value = trashCount
         }
     }
 
