@@ -17,6 +17,8 @@ import com.purenote.local.data.SortOrder
 import com.purenote.local.data.Todo
 import com.purenote.local.core.TodoDates
 import com.purenote.local.notify.Reminders
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -242,9 +244,19 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /**
+     * 搜索防抖：连续输入时只查最后一次。
+     * 搜索走 LIKE 全表扫描，笔记多时逐字查会明显拖慢输入。
+     */
+    private var searchJob: Job? = null
+
     fun setQuery(query: String) {
         _filter.value = _filter.value.copy(query = query)
-        viewModelScope.launch { _notes.value = repo.loadNotes(_filter.value, sortInternal.value) }
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            delay(SEARCH_DEBOUNCE_MS)
+            _notes.value = repo.loadNotes(_filter.value, sortInternal.value)
+        }
     }
 
     fun setSearchActive(active: Boolean) {
@@ -630,5 +642,6 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         const val KEY_SORT = "sort_order"
         const val KEY_TEXT_SIZE = "note_text_size"
         const val KEY_STRONG_REMINDER = "strong_reminder"
+        const val SEARCH_DEBOUNCE_MS = 250L
     }
 }

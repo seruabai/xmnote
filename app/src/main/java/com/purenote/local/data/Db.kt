@@ -14,9 +14,12 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
         db.execSQL(SQL_CREATE_TODOS)
         db.execSQL("CREATE INDEX idx_notes_updated ON notes(updated_at)")
         db.execSQL("CREATE INDEX idx_notes_folder ON notes(folder_id)")
+        db.execSQL("CREATE INDEX idx_notes_trashed_updated ON notes(trashed, updated_at)")
+        db.execSQL("CREATE INDEX idx_notes_trashed_folder ON notes(trashed, folder_id)")
         db.execSQL("CREATE INDEX idx_todos_parent ON todos(parent_id)")
         db.execSQL("CREATE INDEX idx_todos_due ON todos(due_at)")
         db.execSQL("CREATE INDEX idx_todos_trashed ON todos(trashed)")
+        db.execSQL("CREATE INDEX idx_todos_trashed_parent ON todos(trashed, parent_id)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -50,6 +53,12 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
             // 笔记提醒支持重复/整天（与 todos 同名列，独立存储）
             db.execSQL("ALTER TABLE notes ADD COLUMN repeat_type INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE notes ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 7) {
+            // 热点列表查询走 (trashed, 排序/过滤列) 复合索引，笔记量大时避免全表扫描
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_notes_trashed_updated ON notes(trashed, updated_at)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_notes_trashed_folder ON notes(trashed, folder_id)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_todos_trashed_parent ON todos(trashed, parent_id)")
         }
     }
 
@@ -355,7 +364,7 @@ class NotesDb(context: Context) : SQLiteOpenHelper(context, "purenote.db", null,
     private fun newUuid(): String = UUID.randomUUID().toString().replace("-", "")
 
     companion object {
-        const val DB_VERSION = 6
+        const val DB_VERSION = 7
 
         private val SQL_CREATE_FOLDERS = """
             CREATE TABLE folders(

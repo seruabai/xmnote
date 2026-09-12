@@ -491,20 +491,25 @@ private fun NotesMasonry(
     onLongPress: (Note) -> Unit,
     onToggleSelected: (Note) -> Unit,
 ) {
-    val left = mutableListOf<Note>()
-    val right = mutableListOf<Note>()
-    var leftHeight = 0
-    var rightHeight = 0
-    notes.forEach { note ->
-        val estimate = 95 + (note.body.length / 16).coerceAtMost(5) * 18 + if (note.images.isNotEmpty()) 135 else 0
-        if (leftHeight <= rightHeight) {
-            left += note
-            leftHeight += estimate
-        } else {
-            right += note
-            rightHeight += estimate
+    // 分列结果只在笔记列表变化时重算；否则多选点选、滚动等每次重组都要重新遍历全部笔记
+    val (left, right) = remember(notes) {
+        val left = mutableListOf<Note>()
+        val right = mutableListOf<Note>()
+        var leftHeight = 0
+        var rightHeight = 0
+        notes.forEach { note ->
+            val estimate = 95 + (note.body.length / 16).coerceAtMost(5) * 18 + if (note.images.isNotEmpty()) 135 else 0
+            if (leftHeight <= rightHeight) {
+                left += note
+                leftHeight += estimate
+            } else {
+                right += note
+                rightHeight += estimate
+            }
         }
+        left to right
     }
+    val folderNames = remember(folders) { folders.associate { it.id to it.name } }
 
     Row(Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
         listOf(left, right).forEach { columnNotes ->
@@ -516,7 +521,7 @@ private fun NotesMasonry(
                 items(columnNotes, key = { it.id }) { note ->
                     NoteCard(
                         note = note,
-                        folderName = folders.firstOrNull { it.id == note.folderId }?.name,
+                        folderName = note.folderId?.let(folderNames::get),
                         textSize = noteTextSize,
                         selected = note.id in selectedIds,
                         onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
@@ -540,6 +545,7 @@ private fun NotesList(
     onLongPress: (Note) -> Unit,
     onToggleSelected: (Note) -> Unit,
 ) {
+    val folderNames = remember(folders) { folders.associate { it.id to it.name } }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 96.dp),
@@ -548,7 +554,7 @@ private fun NotesList(
         items(notes, key = { it.id }) { note ->
             NoteCard(
                 note = note,
-                folderName = folders.firstOrNull { it.id == note.folderId }?.name,
+                folderName = note.folderId?.let(folderNames::get),
                 textSize = noteTextSize,
                 selected = note.id in selectedIds,
                 onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
