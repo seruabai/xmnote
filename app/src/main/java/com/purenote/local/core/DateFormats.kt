@@ -25,6 +25,9 @@ object DateFormats {
     /** yyyy年M月d日 HH:mm */
     fun yearMonthDayHourMinute(ts: Long): String = formatter("yyyy年M月d日 HH:mm").format(Date(ts))
 
+    /** yyyyMMdd-HHmm，用于导出备份等机器可读文件名 */
+    fun fileStamp(ts: Long): String = formatter("yyyyMMdd-HHmm").format(Date(ts))
+
     /** 同年只显示 M月d日，跨年才带年份 */
     fun smartDate(ts: Long, now: Long = System.currentTimeMillis()): String =
         if (sameYear(ts, now)) monthDay(ts) else yearMonthDay(ts)

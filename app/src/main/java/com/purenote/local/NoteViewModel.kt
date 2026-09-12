@@ -2,8 +2,14 @@ package com.purenote.local
 
 import android.app.Application
 import android.content.Context
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.purenote.local.backup.BackupFile
+import com.purenote.local.backup.BackupFormatException
+import com.purenote.local.backup.BackupIo
 import com.purenote.local.data.ChecklistItem
 import com.purenote.local.data.DataChanges
 import com.purenote.local.data.Folder
@@ -17,6 +23,8 @@ import com.purenote.local.data.SortOrder
 import com.purenote.local.data.Todo
 import com.purenote.local.core.TodoDates
 import com.purenote.local.notify.Reminders
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +32,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileNotFoundException
+import java.util.zip.ZipException
 
 sealed interface Screen {
     data object Home : Screen
@@ -44,6 +56,14 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 enum class NoteTextSize { SMALL, DEFAULT, LARGE }
 
 enum class MainTab { NOTES, TODO }
+
+/** 设置页备份任务的状态，UI 据此禁用按钮并弹结果。 */
+sealed interface BackupState {
+    data object Idle : BackupState
+    data object Running : BackupState
+    data class Done(val title: String, val summary: String, val warnings: List<String> = emptyList()) : BackupState
+    data class Failed(val message: String) : BackupState
+}
 
 class NoteViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -650,6 +670,114 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
             }
             refresh()
         }
+    }
+
+    // ---- 备份 / 恢复 ----
+    //
+    // SAF 的 Uri 不能当 File 用，导出先落 cacheDir 临时文件再经 contentResolver 拷过去。
+    // InputStream 只能消费一次，预览与导入各自重新 openInputStream。
+
+    private val _backupState = MutableStateFlow<BackupState>(BackupState.Idle)
+    val backupState: StateFlow<BackupState> = _backupState.asStateFlow()
+
+    fun dismissBackupResult() {
+        if (_backupState.value !is BackupState.Running) _backupState.value = BackupState.Idle
+    }
+
+    fun exportBackup(uri: Uri) {
+        if (!backupStartable()) return
+        viewModelScope.launch {
+            _backupState.value = BackupState.Running
+            val ctx = getApplication<Application>()
+            val tmp = File(ctx.cacheDir, "purenote-backup-export-${System.currentTimeMillis()}.${BackupIo.EXTENSION}")
+            try {
+                _backupState.value = withContext(Dispatchers.IO) {
+                    val result = repo.exportBackup(tmp, packageVersion())
+                    ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                        tmp.inputStream().use { it.copyTo(out) }
+                    } ?: throw IllegalStateException("无法写入所选位置")
+                    BackupState.Done(
+                        title = "导出完成",
+                        summary = result.summary + if (result.missingAttachments > 0) {
+                            "。有 ${result.missingAttachments} 个附件文件缺失，未能打包"
+                        } else "",
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _backupState.value = BackupState.Failed("导出失败：${backupFailureReason(e)}")
+            } finally {
+                tmp.delete()
+            }
+        }
+    }
+
+    /** 只解析备份内容供 UI 弹确认框，不写库。 */
+    fun previewBackup(uri: Uri, onReady: (BackupFile) -> Unit) {
+        if (!backupStartable()) return
+        viewModelScope.launch {
+            _backupState.value = BackupState.Running
+            val ctx = getApplication<Application>()
+            try {
+                val backup = withContext(Dispatchers.IO) {
+                    ctx.contentResolver.openInputStream(uri)?.use { repo.readBackup(it) }
+                        ?: throw IllegalStateException("无法读取所选文件")
+                }
+                _backupState.value = BackupState.Idle
+                onReady(backup)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _backupState.value = BackupState.Failed("读取备份失败：${backupFailureReason(e)}")
+            }
+        }
+    }
+
+    fun importBackup(uri: Uri) {
+        if (!backupStartable()) return
+        viewModelScope.launch {
+            _backupState.value = BackupState.Running
+            val ctx = getApplication<Application>()
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    ctx.contentResolver.openInputStream(uri)?.use { repo.importBackup(it) }
+                        ?: throw IllegalStateException("无法读取所选文件")
+                }
+                _backupState.value = BackupState.Done(
+                    title = "导入完成",
+                    summary = result.summary,
+                    warnings = result.warnings,
+                )
+                refresh()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _backupState.value = BackupState.Failed("导入失败：${backupFailureReason(e)}")
+            }
+        }
+    }
+
+    private fun backupStartable(): Boolean = _backupState.value !is BackupState.Running
+
+    /** 项目已关 buildConfig，版本号从 PackageManager 取 */
+    private fun packageVersion(): String {
+        val app = getApplication<Application>()
+        val pm = app.packageManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageInfo(app.packageName, PackageManager.PackageInfoFlags.of(0)).versionName ?: ""
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(app.packageName, 0).versionName ?: ""
+        }
+    }
+
+    /** 把底层异常翻成用户能读懂的原因，前缀（导出失败/导入失败）由调用方拼。 */
+    private fun backupFailureReason(e: Exception): String = when (e) {
+        is BackupFormatException -> e.message ?: "备份包格式不正确"
+        is ZipException -> "所选文件不是有效的备份包（.${BackupIo.EXTENSION}）"
+        is FileNotFoundException -> "无法读取所选文件"
+        else -> e.message?.takeIf { it.isNotBlank() } ?: "未知错误"
     }
 
     private companion object {

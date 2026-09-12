@@ -4,7 +4,9 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,7 +15,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -22,6 +26,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,8 +49,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.purenote.local.BackupState
 import com.purenote.local.NoteTextSize
 import com.purenote.local.NoteViewModel
+import com.purenote.local.backup.BackupFile
+import com.purenote.local.backup.BackupIo
+import com.purenote.local.core.DateFormats
 import com.purenote.local.data.SortOrder
 import com.purenote.local.notify.QuickCaptureService
 
@@ -66,6 +75,21 @@ fun SettingsScreen(vm: NoteViewModel) {
     var quickDialog by remember { mutableStateOf(false) }
     var quickEnabled by remember {
         mutableStateOf(QuickCaptureService.running && Settings.canDrawOverlays(context))
+    }
+    val backupState by vm.backupState.collectAsState()
+    // 预览结果持有 Uri 与解析出的条数，用户确认后才真正导入
+    var pendingImport by remember { mutableStateOf<Pair<Uri, BackupFile>?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri -> uri?.let(vm::exportBackup) }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        uri?.let { selected ->
+            vm.previewBackup(selected) { backup -> pendingImport = selected to backup }
+        }
     }
 
     fun showInfo(title: String, text: String) {
@@ -133,6 +157,26 @@ fun SettingsScreen(vm: NoteViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 ArrowRow("速记") { quickDialog = true }
+            }
+
+            Spacer(Modifier.height(21.dp))
+            SettingsSectionTitle("备份与恢复")
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                val backupRunning = backupState is BackupState.Running
+                Column {
+                    ArrowRow("导出备份", enabled = !backupRunning, progress = backupRunning) {
+                        exportLauncher.launch(
+                            "purenote-backup-${DateFormats.fileStamp(System.currentTimeMillis())}.${BackupIo.EXTENSION}",
+                        )
+                    }
+                    ArrowRow("从备份恢复", enabled = !backupRunning, progress = backupRunning) {
+                        importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                    }
+                }
             }
 
             Spacer(Modifier.height(21.dp))
@@ -260,6 +304,58 @@ fun SettingsScreen(vm: NoteViewModel) {
         )
     }
 
+    pendingImport?.let { (uri, backup) ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text("从备份恢复") },
+            text = {
+                Text(
+                    "将导入笔记 ${backup.notes.size} 条、待办 ${backup.todos.size} 条、分类 ${backup.folders.size} 个" +
+                        "（已有内容按更新时间自动保留最新，重复导入不会产生重复）",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingImport = null
+                    vm.importBackup(uri)
+                }) { Text("导入") }
+            },
+            dismissButton = { TextButton(onClick = { pendingImport = null }) { Text("取消") } },
+        )
+    }
+
+    when (val state = backupState) {
+        is BackupState.Done -> AlertDialog(
+            onDismissRequest = vm::dismissBackupResult,
+            title = { Text(state.title) },
+            text = {
+                Column {
+                    Text(state.summary)
+                    if (state.warnings.isNotEmpty()) {
+                        val suffix = if (state.warnings.size > 10) "\n等 ${state.warnings.size} 条" else ""
+                        Text(
+                            state.warnings.take(10).joinToString("\n") { "· $it" } + suffix,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .padding(top = 10.dp)
+                                .heightIn(max = 240.dp)
+                                .verticalScroll(rememberScrollState()),
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = vm::dismissBackupResult) { Text("知道了") } },
+        )
+        is BackupState.Failed -> AlertDialog(
+            onDismissRequest = vm::dismissBackupResult,
+            title = { Text("操作失败") },
+            text = { Text(state.message) },
+            confirmButton = { TextButton(onClick = vm::dismissBackupResult) { Text("知道了") } },
+        )
+        else -> {}
+    }
+
     infoTitle?.let { title ->
         AlertDialog(
             onDismissRequest = { infoTitle = null },
@@ -298,11 +394,17 @@ private fun ChoiceRow(title: String, value: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ArrowRow(title: String, subtitle: String? = null, onClick: () -> Unit) {
+private fun ArrowRow(
+    title: String,
+    subtitle: String? = null,
+    enabled: Boolean = true,
+    progress: Boolean = false,
+    onClick: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(if (subtitle == null) 64.dp else 72.dp)
-            .clickable(onClick = onClick).padding(horizontal = 17.dp),
+            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 17.dp),
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
             Text(title, fontSize = 17.sp)
@@ -310,7 +412,11 @@ private fun ArrowRow(title: String, subtitle: String? = null, onClick: () -> Uni
                 Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
         }
-        Icon(Icons.Outlined.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.outline)
+        if (progress) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(Icons.Outlined.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.outline)
+        }
     }
 }
 
