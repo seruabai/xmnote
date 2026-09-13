@@ -77,6 +77,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -317,6 +318,15 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         while (recording) {
             recordMs = audioRecorder.elapsedMs
             kotlinx.coroutines.delay(200)
+        }
+    }
+    // 离开编辑器时若仍在录音:放弃并清理(此时录音尚未入库,保存没有意义)
+    DisposableEffect(Unit) {
+        onDispose {
+            if (recording) {
+                recording = false
+                audioRecorder.cancel()
+            }
         }
     }
     // RECORD_AUDIO 是运行时权限：未授权时 MediaRecorder.start() 会抛 SecurityException，
