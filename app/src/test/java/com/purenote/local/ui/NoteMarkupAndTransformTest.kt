@@ -245,4 +245,31 @@ class NoteMarkupAndTransformTest {
         assertEquals(null, backspaceIntercept("- [ ] 内容", 6))  // 行内容首字符,默认行为
         assertEquals(null, backspaceIntercept("ab\n普通行", 6))  // 非图片行删换行
     }
+
+    // ---------- 回车继承拦截 ----------
+
+    @Test
+    fun `回车继承_光标在行中时保留光标后的文本`() {
+        // 任务行内容起点按回车:新行 = 剩余全部文本,修复前会被整行替换清空
+        val newText = "- [ ] \nABCDEF"
+        assertEquals("- [ ] \n- [ ] ABCDEF" to 13, enterInheritIntercept(newText, 7))
+    }
+
+    @Test
+    fun `回车继承_行后还有内容时尾部必须保留`() {
+        // 设备上真实场景:继承行后面还有整个文档尾部(此前实现把尾部丢了)
+        val newText = "- [ ] ABC\nDEF\nGHI"   // 光标在 DEF 行首(刚插入的换行之后)
+        assertEquals("- [ ] ABC\n- [ ] DEF\nGHI" to 16, enterInheritIntercept(newText, 10))
+    }
+
+    @Test
+    fun `回车继承_光标在行尾正常续前缀`() {
+        assertEquals("- [ ] ABC\n- [ ] " to 16, enterInheritIntercept("- [ ] ABC\n", 10))
+        assertEquals("2. x\n3. " to 8, enterInheritIntercept("2. x\n", 5))
+    }
+
+    @Test
+    fun `回车继承_无标签不拦截`() {
+        assertEquals(null, enterInheritIntercept("ab\ncd", 3))
+    }
 }

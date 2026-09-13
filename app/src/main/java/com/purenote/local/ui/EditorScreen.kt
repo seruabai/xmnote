@@ -836,24 +836,15 @@ private fun TextNoteBody(
                     return@BasicTextField
                 }
             }
-            // ---- 回车继承：上一行的标签（勾选/列表/引用/缩进）在新行自动续上 ----
+            // ---- 回车继承：上一行的标签（勾选/列表/引用/缩进）在新行自动续上（插入语义，保留光标后文本） ----
             if (new.text.length == oldText.length + 1) {
-                val insAt = new.selection.end - 1
-                if (insAt >= 0 && new.text.getOrNull(insAt) == '\n') {
-                    val prev = NoteMarkup.lineAt(new.text, (insAt - 1).coerceAtLeast(0))
-                    val inherit = NoteMarkup.inheritTagPrefix(prev)
-                    if (inherit != null) {
-                        val r = NoteMarkup.lineRangeAt(new.text, new.selection.end)
-                        val patched = NoteMarkup.replaceLine(new.text, r, inherit)
-                        tfv = new.copy(
-                            text = patched,
-                            selection = androidx.compose.ui.text.TextRange(r.first + inherit.length),
-                        )
-                        onChange(patched)
-                        return@BasicTextField
-                    }
+                enterInheritIntercept(new.text, new.selection.end)?.let { (patched, cursor) ->
+                    tfv = new.copy(text = patched, selection = androidx.compose.ui.text.TextRange(cursor))
+                    onChange(patched)
+                    return@BasicTextField
                 }
                 // 图片行被追加字符（"[img:x.jpg]c"）→ 把追加内容拆到下一行，保持图片行原子
+                val insAt = new.selection.end - 1
                 val insLineRange = NoteMarkup.lineRangeAt(new.text, insAt.coerceIn(0, new.text.length))
                 val insLine = new.text.substring(insLineRange.first, insLineRange.last + 1)
                 if (insLine.startsWith(NoteMarkup.IMG_PREFIX) && !NoteMarkup.isImageLine(insLine)) {
@@ -1124,6 +1115,26 @@ internal class NoteTextTransformResult(
 private const val IMAGE_BLOCK_EXTRA_LINES = 3
 
 /**
+ * 回车继承拦截（纯函数便于测试）：
+ * 上一行带标签（勾选/列表/引用/缩进）时，新行自动续上前缀。
+ * 修复过的关键语义：前缀是**插入**到新行行首，绝不替换新行已有内容——
+ * 光标在行中按回车时，光标后的文本必须原样保留（旧实现用 replaceLine 整行替换，会清空光标后的全部文本）。
+ * @param cursorAfter 插入换行后的光标位置
+ * @return (新文本, 新光标)；不需要继承时返回 null
+ */
+internal fun enterInheritIntercept(newText: String, cursorAfter: Int): Pair<String, Int>? {
+    val insAt = cursorAfter - 1
+    if (insAt < 0 || newText.getOrNull(insAt) != '\n') return null
+    val prev = NoteMarkup.lineAt(newText, (insAt - 1).coerceAtLeast(0))
+    val inherit = NoteMarkup.inheritTagPrefix(prev) ?: return null
+    val r = NoteMarkup.lineRangeAt(newText, cursorAfter)
+    val rest = newText.substring(r.first, r.last + 1)          // 新行内容(光标后的本行剩余)
+    val tail = newText.substring(r.last + 1)                   // 本行之后的所有内容(同样必须保留!)
+    val patched = newText.substring(0, r.first) + inherit + rest + tail
+    return patched to (r.first + inherit.length)
+}
+
+/**
  * 退格结构化拦截（纯函数便于测试）：
  * - 光标在标签行内容起点删标签末字符 → 整个标签一次移除，光标落到标题标记后
  * - 删到图片行任一字符/其相邻换行 → 整行图片删除，光标落到行起点
@@ -1233,7 +1244,14 @@ internal fun transformNoteText(raw: String, typeScale: NoteTypeScale): NoteTextT
                         builder.pushStyle(if (boxChecked) checkedStyle else androidx.compose.ui.text.SpanStyle())
                         builder.append(placeholder)
                         builder.pop()
-                        builder.pushStyle(if (boxChecked) checkedStyle else androidx.compose.ui.text.SpanStyle())
+                        // 标题行叠加任务时,内容必须保留标题字号/字重(否则加勾选后整行掉回正文字号)
+                        builder.pushStyle(
+                            when {
+                                boxChecked -> checkedStyle
+                                level > 0 -> lineStyle
+                                else -> androidx.compose.ui.text.SpanStyle()
+                            },
+                        )
                         builder.append(stripped.substring(info.tagLen))
                         builder.pop()
                     }
