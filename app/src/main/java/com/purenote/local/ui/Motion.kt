@@ -1,6 +1,11 @@
 package com.purenote.local.ui
 
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -9,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,6 +67,34 @@ object Motion {
 
     /** 兜底 tween（需要确定时长语义的场景） */
     fun <T> screenTween(duration: Int = SCREEN_IN) = tween<T>(duration, easing = Emphasized)
+}
+
+// ---- 共享元素转场(卡片 → 编辑器 hero) ----
+
+/** 由 AppRoot 提供;预览/测试环境为 null 时自动退化为普通转场 */
+val LocalSharedTransitionScope = compositionLocalOf<SharedTransitionScope?> { null }
+
+/** 由 AppRoot 的 AnimatedContent 内容层提供 */
+val LocalNavAnimatedScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
+
+/**
+ * 笔记卡片 → 编辑器的共享边界(key = "note-{id}")。
+ * 双方作用域齐备且 key 非空才生效,否则原样返回(steady state 下也是 no-op)。
+ * 内容用淡入淡出交叉过渡,边界随转场缩放——"卡片原地长大成编辑器"。
+ */
+@Composable
+fun Modifier.noteSharedBounds(key: String?): Modifier {
+    if (key == null) return this
+    val sts = LocalSharedTransitionScope.current ?: return this
+    val avs = LocalNavAnimatedScope.current ?: return this
+    return with(sts) {
+        this@noteSharedBounds.sharedBounds(
+            rememberSharedContentState(key = key),
+            animatedVisibilityScope = avs,
+            enter = fadeIn(tween(Motion.FADE)),
+            exit = fadeOut(tween(Motion.FADE)),
+        )
+    }
 }
 
 /**

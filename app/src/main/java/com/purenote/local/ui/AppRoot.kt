@@ -1,6 +1,7 @@
 package com.purenote.local.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -9,6 +10,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -29,6 +31,7 @@ private fun Screen.depth(): Int = when (this) {
  * 页面转场（Motion 令牌，慢速高级）：
  * - 推入：新页从右整幅滑入（screenSpring 轻微过冲），旧页向左视差移动 1/3 并淡出——层级感
  * - 返回：反向进行，旧页在最上层滑出（iOS 导航栈语义）
+ * - SharedTransitionLayout 承载笔记卡片→编辑器的共享元素(卡片原地长大成编辑器)
  * 淡入淡出用固定短 tween 保证不拖泥带水，位移全部走 spring 物理曲线。
  */
 @Composable
@@ -42,32 +45,40 @@ fun AppRoot(vm: NoteViewModel) {
         }
     }
 
-    AnimatedContent(
-        targetState = screen,
-        transitionSpec = {
-            val forward = targetState.depth() >= initialState.depth()
-            if (forward) {
-                (slideInHorizontally(Motion.screenSpring()) { it } +
-                    fadeIn(tween(Motion.FADE))) togetherWith
-                    (slideOutHorizontally(Motion.screenSpring()) { -it / 3 } +
-                        fadeOut(tween(Motion.SCREEN_OUT, easing = Motion.EaseIn)))
-            } else {
-                (slideInHorizontally(Motion.screenSpring()) { -it / 3 } +
-                    fadeIn(tween(Motion.FADE))) togetherWith
-                    (slideOutHorizontally(Motion.screenSpring()) { it } +
-                        fadeOut(tween(Motion.SCREEN_OUT, easing = Motion.EaseIn)))
-            }
-        },
-        label = "screenTransition",
-    ) { s ->
-        // 层级深的页面盖在浅的上面：推入时新页在最上滑入；返回时旧页在最上滑出
-        Box(Modifier.zIndex(if (s.depth() >= screen.depth()) 1f else 0f)) {
-            when (s) {
-                is Screen.Editor -> EditorScreen(vm, s)
-                Screen.Trash -> TrashScreen(vm)
-                Screen.Folders -> FoldersScreen(vm)
-                Screen.Settings -> SettingsScreen(vm)
-                Screen.Home -> HomeScreen(vm)
+    SharedTransitionLayout {
+        CompositionLocalProvider(LocalSharedTransitionScope provides this) {
+            AnimatedContent(
+                targetState = screen,
+                transitionSpec = {
+                    val forward = targetState.depth() >= initialState.depth()
+                    if (forward) {
+                        (slideInHorizontally(Motion.screenSpring()) { it } +
+                            fadeIn(tween(Motion.FADE))) togetherWith
+                            (slideOutHorizontally(Motion.screenSpring()) { -it / 3 } +
+                                fadeOut(tween(Motion.SCREEN_OUT, easing = Motion.EaseIn)))
+                    } else {
+                        (slideInHorizontally(Motion.screenSpring()) { -it / 3 } +
+                            fadeIn(tween(Motion.FADE))) togetherWith
+                            (slideOutHorizontally(Motion.screenSpring()) { it } +
+                                fadeOut(tween(Motion.SCREEN_OUT, easing = Motion.EaseIn)))
+                    }
+                },
+                label = "screenTransition",
+            ) { s ->
+                // AnimatedContent 的作用域即 AnimatedVisibilityScope,供共享元素定位用
+                val navScope = this
+                // 层级深的页面盖在浅的上面：推入时新页在最上滑入；返回时旧页在最上滑出
+                Box(Modifier.zIndex(if (s.depth() >= screen.depth()) 1f else 0f)) {
+                    CompositionLocalProvider(LocalNavAnimatedScope provides navScope) {
+                        when (s) {
+                            is Screen.Editor -> EditorScreen(vm, s)
+                            Screen.Trash -> TrashScreen(vm)
+                            Screen.Folders -> FoldersScreen(vm)
+                            Screen.Settings -> SettingsScreen(vm)
+                            Screen.Home -> HomeScreen(vm)
+                        }
+                    }
+                }
             }
         }
     }

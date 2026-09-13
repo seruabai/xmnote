@@ -395,6 +395,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     val typeScale = preferredTextSize.typeScale()
 
     Scaffold(
+        // 共享元素另一端:已有笔记(noteId>0)从卡片原地放大而来;新建笔记 key 为空走普通转场
+        modifier = Modifier.noteSharedBounds(key = if (screen.noteId > 0) "note-${screen.noteId}" else null),
         containerColor = noteContainerColor(colorIndex),
         topBar = {
             Row(

@@ -69,6 +69,7 @@ fun NoteCard(
         shape = RoundedCornerShape(16.dp),
         modifier = modifier
             .fillMaxWidth()
+            .noteSharedBounds(key = "note-${note.id}")   // 卡片 → 编辑器共享元素(hero)
             .graphicsLayer {
                 scaleX = cardScale
                 scaleY = cardScale

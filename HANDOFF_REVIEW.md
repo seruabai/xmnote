@@ -112,6 +112,7 @@ python tools/verify/todo_order_verify.py                 # 待办原位 4 项断
 
 - `ui/Motion.kt`(新):动效令牌。转场 420ms `screenSpring`(阻尼 0.86/刚度 380,轻过冲)、弹层 `sheetSpring`(0.95/340)、微交互 `pressSpring`(MediumBouncy/StiffnessMedium)、时长 SCREEN_IN 420 / SCREEN_OUT 320 / SHEET 380 / EXPAND 300 / FAST 160 / FADE 240、缓动 EaseOut/Emphasized/EaseIn。
 - `AppRoot.kt`:iOS 式视差转场——推入:新页整幅从右滑入(spring)+淡入,旧页左移 1/3+淡出;返回反向且**旧页在上层**(`zIndex` 按 `Screen.depth()`);替换旧 tween(300)。
+- **共享元素转场(卡片→编辑器 hero)**:`SharedTransitionLayout` 包裹导航;作用域经 `LocalSharedTransitionScope`/`LocalNavAnimatedScope` 下发(预览/测试环境为 null 时 `noteSharedBounds` 自动退化为普通转场);`NoteCard` 与编辑器 Scaffold 按 `"note-{id}"` 配对,内容淡入淡出交叉、边界随转场缩放("卡片原地长大成编辑器");新建笔记 key 为空走普通视差转场。
 - 按压缩放:FAB(0.9,`interactionSource`+`graphicsLayer`)、笔记卡片(0.97,`indication=null` 去水波)。
 - 底栏图标选中 1.15 弹性弹出;勾选方块:填充弹性淡入 + 对勾从中心 `withTransform(scale)` 弹出(每 zone 一个 `Animatable`,`key(z.start)`);工具栏随键盘 `AnimatedVisibility` 滑入滑出;样式面板 `AnimatedContent` 淡切;手写板/大图预览走 `MotionDialogEnter`(0.92→1 缩放+淡入);待办编辑面板(TodoEditSheet)原已有自己的入场动画,未动。
 - `MotionTokensTest` 6 项把"慢速高级"固化为断言(时长区间/阻尼区间/缓动端点)。
@@ -135,7 +136,7 @@ python tools/verify/todo_order_verify.py                 # 待办原位 4 项断
 2. **QuickCaptureService 速记侧栏**(1555 行,独立窗口):未套新主题、未接 Markdown 渲染(它创建的正文是纯文本,兼容)。
 3. **启动图标/品牌资产**:仍是旧奶油便签风。
 4. **行内样式 B/I/U/S 与段落对齐**:未实现——需要把存储格式升级为带 span 的格式,当前 Markdown 行级语法不支持,已向用户说明暂缓。
-5. **共享元素转场**(卡片→编辑器 hero 动画):未实现,Compose 1.7+ `SharedTransitionLayout` 可做,已列为候选。
+5. **共享元素转场**:已实现(批次六,见上)。审查要点:`noteSharedBounds` 的作用域判空降级、multi-select 下卡片仍挂共享 key(仅转场期间生效)、以及与 LazyColumn `animateItem` 的叠加。
 6. **独立 .md 文件导出入口**:分享出去的文本已是 Markdown;专门的"导出 .md+图片文件夹"未做。
 7. TodoEditSheet 内部布局、TrashScreen/FoldersScreen 深度对齐、桌面小组件:未审计。
 8. 云同步功能(用户需求池里):未开始。
