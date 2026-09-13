@@ -61,6 +61,23 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(conte
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_notes_trashed_folder ON notes(trashed, folder_id)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_todos_trashed_parent ON todos(trashed, parent_id)")
         }
+        if (oldVersion < 8) {
+            // 正文存储格式 Markdown 化：私有标记(PUA 标题/☐ 前缀/[img:]) → 标准 Markdown
+            // 迁移逻辑在 NoteMarkup.migrateBodyV1toV2（纯函数，有单测），此处只做逐行搬运
+            val cv = android.content.ContentValues()
+            db.rawQuery("SELECT id, body FROM notes WHERE kind = 0", null).use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val body = c.getString(1) ?: ""
+                    val migrated = com.purenote.local.core.NoteMarkup.migrateBodyV1toV2(body)
+                    if (migrated != body) {
+                        cv.clear()
+                        cv.put("body", migrated)
+                        db.update("notes", cv, "id = ?", arrayOf(id.toString()))
+                    }
+                }
+            }
+        }
     }
 
     private fun addUuidColumn(db: SQLiteDatabase, table: String) {
@@ -364,7 +381,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(conte
     private fun newUuid(): String = UUID.randomUUID().toString().replace("-", "")
 
     companion object {
-        const val DB_VERSION = 7
+        const val DB_VERSION = 8
         const val DB_NAME = "purenote.db"
 
         private val SQL_CREATE_FOLDERS = """

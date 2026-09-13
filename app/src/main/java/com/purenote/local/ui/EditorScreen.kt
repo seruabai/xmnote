@@ -930,7 +930,7 @@ private fun MarkupOverlay(
                         add(
                             BoxZone(
                                 zone,
-                                lineText.drop(info.headLen).startsWith(NoteMarkup.BOX_CHECKED_PREFIX),
+                                lineText.startsWith(NoteMarkup.TASK_DONE, info.headLen),
                                 search,
                             ),
                         )
@@ -1138,8 +1138,9 @@ internal fun transformNoteText(raw: String, typeScale: NoteTypeScale): NoteTextT
             }
             else -> {
                 val stripped = NoteMarkup.withoutHeading(line)
-                val boxChecked = stripped.startsWith(NoteMarkup.BOX_CHECKED_PREFIX)
-                val hasBox = boxChecked || stripped.startsWith(NoteMarkup.BOX_UNCHECKED_PREFIX)
+                val boxChecked = info.tag == NoteMarkup.HeadTag.CHECKBOX &&
+                    stripped.startsWith(NoteMarkup.TASK_DONE)
+                val hasBox = info.tag == NoteMarkup.HeadTag.CHECKBOX
                 val checkedStyle = androidx.compose.ui.text.SpanStyle(
                     color = androidx.compose.ui.graphics.Color(0xFF9E9E9E),
                     textDecoration = TextDecoration.LineThrough,
@@ -1156,8 +1157,8 @@ internal fun transformNoteText(raw: String, typeScale: NoteTypeScale): NoteTextT
                 } else {
                     androidx.compose.ui.text.SpanStyle()
                 }
-                val headLen = line.length - stripped.length
-                // 标题标记字符零宽化
+                val headLen = info.headLen
+                // Markdown 标题标记字符零宽化（"# " 等不参与视觉显示）
                 if (headLen > 0) {
                     builder.pushStyle(if (boxChecked) checkedStyle else lineStyle)
                     builder.append("\u2060".repeat(headLen))
@@ -1165,12 +1166,13 @@ internal fun transformNoteText(raw: String, typeScale: NoteTypeScale): NoteTextT
                 }
                 when {
                     hasBox -> {
-                        // 前缀 2 字符 → 全宽空格占位（方块控件画在这里）
+                        // 任务前缀 "- [ ] "(6字符) → 等长占位:2 全角 + 4 半角空格（方块控件画在前 2 字符处）
+                        val placeholder = "\u3000\u3000" + "\u2002".repeat(info.tagLen - 2)
                         builder.pushStyle(if (boxChecked) checkedStyle else androidx.compose.ui.text.SpanStyle())
-                        builder.append("\u3000\u3000")
+                        builder.append(placeholder)
                         builder.pop()
                         builder.pushStyle(if (boxChecked) checkedStyle else androidx.compose.ui.text.SpanStyle())
-                        builder.append(stripped.substring(NoteMarkup.BOX_UNCHECKED_PREFIX.length))
+                        builder.append(stripped.substring(info.tagLen))
                         builder.pop()
                     }
                     info.tagLen > 0 -> {

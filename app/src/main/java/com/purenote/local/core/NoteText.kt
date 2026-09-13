@@ -8,7 +8,7 @@ import com.purenote.local.data.ChecklistItem
  */
 object ChecklistCodec {
 
-    const val SEP = ''
+    const val SEP = ''   // ASCII 0x1F 单元分隔符(不可见)
 
     fun encode(items: List<ChecklistItem>): String =
         items.joinToString("\n") { item ->
@@ -76,57 +76,60 @@ object PreviewBuilder {
 }
 
 /**
- * 笔记富文本标记（v1.2.20）：
- * - 标题级别：私有区字符作为行首标记 H1=\uE201 H2=\uE202 H3=\uE203（显示时剥离并放大）
- * - 图片块：整行 "[img:文件名]"（编辑器显示为占位，插入在光标所在行）
- * - 行内勾选：行首可见字符 ☐（未完成）/ ☑（已完成），勾选后文字置灰
- * 标记只存在于正文文本中，预览/卡片/分享时剥离为可读文本。
+ * 笔记正文存储格式（Markdown，v1.2.21 起）：
+ * - 标题：行首 "# "/"## "/"### "
+ * - 行内任务（勾选框）：行首 "- [ ] "（未完成）/ "- [x] "（已完成），勾选后文字置灰
+ * - 图片/录音块：整行 "![](文件名)"（文件在本应用 images 目录；导出时随附件一起走，标准 Markdown 语法）
+ * - 无序列表 "- "；有序列表 "1. "；引用 "> "；首行缩进 "　　"（全角空格，纯文本）
+ * 正文即标准 Markdown：导出/备份/跨应用兼容性最好（用户 2026-09-13 要求）。
  */
 object NoteMarkup {
 
-    const val IMG_PREFIX = "[img:"
-    const val IMG_SUFFIX = "]"
+    // ---- Markdown 语法常量 ----
+    const val MD_H1 = "# "
+    const val MD_H2 = "## "
+    const val MD_H3 = "### "
 
-    const val H1 = '\uE201'
-    const val H2 = '\uE202'
-    const val H3 = '\uE203'
-    val HEADING_MARKERS = setOf(H1, H2, H3)
+    const val TASK_TODO = "- [ ] "
+    const val TASK_DONE = "- [x] "
 
-    const val BOX_UNCHECKED = '☐'
-    const val BOX_CHECKED = '☑'
-    const val BOX_UNCHECKED_PREFIX = "$BOX_UNCHECKED "
-    const val BOX_CHECKED_PREFIX = "$BOX_CHECKED "
+    const val IMG_PREFIX = "![]("
+    const val IMG_SUFFIX = ")"
 
-    // 行首标签（与标题标记可叠加，互斥只能一个）：清单/无序/有序/引用/首行缩进。
-    // 全部是纯文本前缀，存储保持可读；显示层由编辑器转换渲染。
     const val BULLET_PREFIX = "- "
     const val QUOTE_PREFIX = "> "
     const val INDENT_CHAR = '\u3000'
     const val INDENT_PREFIX = "$INDENT_CHAR$INDENT_CHAR"   // 首行缩进 = 2 个全角空格
     const val INDENT_SUFFIX = "$INDENT_CHAR$INDENT_CHAR"   // 尾行缩进 = 行尾 2 个全角空格
 
+    // ---- 行内标签模型 ----
+
     /** 行首标签种类（NONE = 纯正文） */
     enum class HeadTag { NONE, CHECKBOX, BULLET, NUMBER, QUOTE, INDENT }
 
-    /** 行标签解析结果：headLen=标题标记长度，tagLen=行首标签长度，number=有序列表序号 */
-    data class TagInfo(val headLen: Int, val tag: HeadTag, val tagLen: Int, val number: Int)
+    /** 行标签解析结果：headLen=标题标记长度，level=标题级别(1-3)，tagLen=行首标签长度，number=有序列表序号 */
+    data class TagInfo(val headLen: Int, val level: Int, val tag: HeadTag, val tagLen: Int, val number: Int)
 
     private val NUMBER_PREFIX_REGEX = Regex("""^(\d+)\. """)
+    private val HEADING_PREFIX_REGEX = Regex("^(#{1,3}) ")
 
-    /** 解析一行的标题标记 + 行首标签 */
+    /** 解析一行的 Markdown 标题标记 + 行首标签 */
     fun tagInfo(line: String): TagInfo {
-        val head = line.dropWhile { it in HEADING_MARKERS }
-        val headLen = line.length - head.length
-        val m = NUMBER_PREFIX_REGEX.find(head)
-        return when {
-            head.startsWith(BOX_UNCHECKED_PREFIX) || head.startsWith(BOX_CHECKED_PREFIX) ->
-                TagInfo(headLen, HeadTag.CHECKBOX, BOX_UNCHECKED_PREFIX.length, 0)
-            m != null -> TagInfo(headLen, HeadTag.NUMBER, m.value.length, m.groupValues[1].toInt())
-            head.startsWith(BULLET_PREFIX) -> TagInfo(headLen, HeadTag.BULLET, BULLET_PREFIX.length, 0)
-            head.startsWith(QUOTE_PREFIX) -> TagInfo(headLen, HeadTag.QUOTE, QUOTE_PREFIX.length, 0)
-            head.startsWith(INDENT_PREFIX) -> TagInfo(headLen, HeadTag.INDENT, INDENT_PREFIX.length, 0)
-            else -> TagInfo(headLen, HeadTag.NONE, 0, 0)
+        val hm = HEADING_PREFIX_REGEX.find(line)
+        val headLen = hm?.value?.length ?: 0
+        val level = hm?.groupValues?.get(1)?.length ?: 0
+        val rest = line.substring(headLen)
+        val m = NUMBER_PREFIX_REGEX.find(rest)
+        val (tag, tagLen, number) = when {
+            rest.startsWith(TASK_TODO) -> Triple(HeadTag.CHECKBOX, TASK_TODO.length, 0)
+            rest.startsWith(TASK_DONE) -> Triple(HeadTag.CHECKBOX, TASK_DONE.length, 0)
+            m != null -> Triple(HeadTag.NUMBER, m.value.length, m.groupValues[1].toInt())
+            rest.startsWith(BULLET_PREFIX) -> Triple(HeadTag.BULLET, BULLET_PREFIX.length, 0)
+            rest.startsWith(QUOTE_PREFIX) -> Triple(HeadTag.QUOTE, QUOTE_PREFIX.length, 0)
+            rest.startsWith(INDENT_PREFIX) -> Triple(HeadTag.INDENT, INDENT_PREFIX.length, 0)
+            else -> Triple(HeadTag.NONE, 0, 0)
         }
+        return TagInfo(headLen, level, tag, tagLen, number)
     }
 
     /** 行内容起点（跳过标题标记与行首标签）在行内的偏移 */
@@ -135,67 +138,27 @@ object NoteMarkup {
         return info.headLen + info.tagLen
     }
 
-    /**
-     * 切换行首标签：同种→移除，不同种→替换，无→添加。
-     * 返回 (新行, 新内容起点在行内偏移)——光标必须随前缀增删平移到内容起点。
-     * numberForNew：新增有序列表时使用的起始序号。
-     */
-    fun toggleHeadTag(line: String, tag: HeadTag, numberForNew: Int = 1): Pair<String, Int> {
-        val head = line.dropWhile { it in HEADING_MARKERS }
-        val headLen = line.length - head.length
-        val info = tagInfo(line)
-        val content = head.substring(info.tagLen)
-        val turningOff = info.tag == tag
-        val newBare = when {
-            turningOff -> content
-            tag == HeadTag.CHECKBOX -> "$BOX_UNCHECKED_PREFIX$content"
-            tag == HeadTag.BULLET -> "$BULLET_PREFIX$content"
-            tag == HeadTag.NUMBER -> "$numberForNew. $content"
-            tag == HeadTag.QUOTE -> "$QUOTE_PREFIX$content"
-            tag == HeadTag.INDENT -> "$INDENT_PREFIX$content"
-            else -> content
-        }
-        val newTagLen = if (turningOff) 0 else tagInfo(newBare).tagLen
-        return (line.substring(0, headLen) + newBare) to (headLen + newTagLen)
-    }
+    /** 兼容旧名：标题级别（1-3，0=正文） */
+    fun headingLevel(line: String): Int = tagInfo(line).level
 
-    /** 回车继承：上一行的标签转成新行的起始前缀（有序列表自动 +1），无标签返回 null */
-    fun inheritTagPrefix(prevLine: String): String? {
-        val info = tagInfo(prevLine)
-        return when (info.tag) {
-            HeadTag.CHECKBOX -> BOX_UNCHECKED_PREFIX
-            HeadTag.BULLET -> BULLET_PREFIX
-            HeadTag.NUMBER -> "${info.number + 1}. "
-            HeadTag.QUOTE -> QUOTE_PREFIX
-            HeadTag.INDENT -> INDENT_PREFIX
-            HeadTag.NONE -> null
-        }
-    }
-
-    /** 尾行缩进：有则去掉（2 个全角空格），无则追加 */
-    fun toggleTailIndent(line: String): String =
-        if (line.endsWith(INDENT_SUFFIX)) line.dropLast(INDENT_SUFFIX.length) else line + INDENT_SUFFIX
-
-    fun headingLevel(line: String): Int = when (line.firstOrNull()) {
-        H1 -> 1
-        H2 -> 2
-        H3 -> 3
-        else -> 0
-    }
-
-    /** 给行设置标题级别；level 0 = 移除标记（正文） */
+    /** 给行设置标题级别；level 0 = 移除标题标记（正文）。原有的任务/列表等标签保留 */
     fun withHeading(line: String, level: Int): String {
-        val bare = line.dropWhile { it in HEADING_MARKERS }
-        return when (level) {
-            1 -> "$H1$bare"
-            2 -> "$H2$bare"
-            3 -> "$H3$bare"
-            else -> bare
+        val info = tagInfo(line)
+        val bare = line.substring(info.headLen)
+        val md = when (level) {
+            1 -> MD_H1
+            2 -> MD_H2
+            3 -> MD_H3
+            else -> ""
         }
+        return md + bare
     }
 
     /** 行去掉标题标记后的内容 */
-    fun withoutHeading(line: String): String = line.dropWhile { it in HEADING_MARKERS }
+    fun withoutHeading(line: String): String {
+        val info = tagInfo(line)
+        return line.substring(info.headLen)
+    }
 
     /** 光标所在行的下标（0 起） */
     fun lineIndexAt(text: String, cursor: Int): Int =
@@ -216,32 +179,78 @@ object NoteMarkup {
         return text.substring(range.first, range.last + 1)
     }
 
-    private fun bare(line: String): String = line.dropWhile { it in HEADING_MARKERS }
-
     fun hasCheckbox(line: String): Boolean {
-        val b = bare(line)
-        return b.startsWith(BOX_UNCHECKED_PREFIX) || b.startsWith(BOX_CHECKED_PREFIX)
+        val info = tagInfo(line)
+        return info.tag == HeadTag.CHECKBOX
     }
 
-    /** 第4键：当前行切换勾选框（无→☐；☐/☑→移除） */
+    /** 勾选框切换为任务语法；非任务行原样返回 */
     fun toggleCheckboxLine(line: String): String {
-        val b = bare(line)
-        val head = line.take(line.length - b.length)
-        return when {
-            b.startsWith(BOX_UNCHECKED_PREFIX) || b.startsWith(BOX_CHECKED_PREFIX) -> head + b.substring(BOX_UNCHECKED_PREFIX.length)
-            else -> "$head$BOX_UNCHECKED_PREFIX$b"
+        val info = tagInfo(line)
+        val head = line.substring(0, info.headLen)
+        val bare = line.substring(info.headLen)
+        val content = bare.substring(info.tagLen)
+        return when (info.tag) {
+            HeadTag.CHECKBOX -> head + content
+            else -> head + TASK_TODO + bare
         }
     }
 
-    /** 点勾选框：☐↔☑ */
-    fun cycleCheckboxLine(line: String): String = when {
-        line.startsWith(BOX_CHECKED_PREFIX) -> BOX_UNCHECKED_PREFIX + line.substring(BOX_CHECKED_PREFIX.length)
-        line.startsWith(BOX_UNCHECKED_PREFIX) -> BOX_CHECKED_PREFIX + line.substring(BOX_UNCHECKED_PREFIX.length)
-        else -> line
+    /** 点勾选框：- [ ] ↔ - [x] */
+    fun cycleCheckboxLine(line: String): String {
+        val info = tagInfo(line)
+        if (info.tag != HeadTag.CHECKBOX) return line
+        val head = line.substring(0, info.headLen)
+        val bare = line.substring(info.headLen)
+        val flipped = if (bare.startsWith(TASK_DONE)) TASK_TODO + bare.substring(TASK_DONE.length)
+        else TASK_DONE + bare.substring(TASK_TODO.length)
+        return head + flipped
     }
 
-    /** 回车继承：当前行带勾选框时，新行自动带 ☐ */
+    /** 兼容旧调用 */
     fun inheritsCheckbox(line: String): Boolean = hasCheckbox(line)
+
+    /**
+     * 切换行首标签：同种→移除，不同种→替换，无→添加。
+     * 返回 (新行, 新内容起点在行内偏移)——光标必须随前缀增删平移到内容起点。
+     * numberForNew：新增有序列表时使用的起始序号。
+     */
+    fun toggleHeadTag(line: String, tag: HeadTag, numberForNew: Int = 1): Pair<String, Int> {
+        val info = tagInfo(line)
+        val head = line.substring(info.headLen)
+        val content = head.substring(info.tagLen)
+        val turningOff = info.tag == tag
+        val newBare = when {
+            turningOff -> content
+            tag == HeadTag.CHECKBOX -> TASK_TODO + content
+            tag == HeadTag.BULLET -> BULLET_PREFIX + content
+            tag == HeadTag.NUMBER -> "$numberForNew. $content"
+            tag == HeadTag.QUOTE -> QUOTE_PREFIX + content
+            tag == HeadTag.INDENT -> INDENT_PREFIX + content
+            else -> content
+        }
+        val newTagLen = if (turningOff) 0 else tagInfo(newBare).tagLen
+        return (line.substring(0, info.headLen) + newBare) to (info.headLen + newTagLen)
+    }
+
+    /** 回车继承：上一行的标签转成新行的起始前缀（有序列表自动 +1），无标签返回 null */
+    fun inheritTagPrefix(prevLine: String): String? {
+        val info = tagInfo(prevLine)
+        return when (info.tag) {
+            HeadTag.CHECKBOX -> TASK_TODO
+            HeadTag.BULLET -> BULLET_PREFIX
+            HeadTag.NUMBER -> "${info.number + 1}. "
+            HeadTag.QUOTE -> QUOTE_PREFIX
+            HeadTag.INDENT -> INDENT_PREFIX
+            HeadTag.NONE -> null
+        }
+    }
+
+    /** 尾行缩进：有则去掉（2 个全角空格），无则追加 */
+    fun toggleTailIndent(line: String): String =
+        if (line.endsWith(INDENT_SUFFIX)) line.dropLast(INDENT_SUFFIX.length) else line + INDENT_SUFFIX
+
+    // ---- 图片/录音块 ----
 
     fun isImageLine(line: String): Boolean =
         line.startsWith(IMG_PREFIX) && line.endsWith(IMG_SUFFIX) && line.length > IMG_PREFIX.length + IMG_SUFFIX.length
@@ -261,14 +270,16 @@ object NoteMarkup {
     fun stripHeadingMarkers(text: String): String =
         text.split('\n').joinToString("\n") { withoutHeading(it) }
 
-    /** 预览用：图片/音频行转可读占位 */
+    /** 预览用：图片/音频行转可读占位，任务标记转 ☐/☑ 字形 */
     fun previewText(text: String): String =
         stripHeadingMarkers(text).split('\n')
-            .joinToString("\n") {
+            .joinToString("\n") { line ->
                 when {
-                    isImageLine(it) && imageNameOf(it)?.startsWith("aud_") == true -> "［录音］"
-                    isImageLine(it) -> "［图片］"
-                    else -> it
+                    isImageLine(line) && imageNameOf(line)?.startsWith("aud_") == true -> "［录音］"
+                    isImageLine(line) -> "［图片］"
+                    line.startsWith(TASK_DONE) -> "☑ " + line.substring(TASK_DONE.length)
+                    line.startsWith(TASK_TODO) -> "☐ " + line.substring(TASK_TODO.length)
+                    else -> line
                 }
             }
 
@@ -295,4 +306,38 @@ object NoteMarkup {
         val range = lineRangeAt(text, cursor)
         return imageNameOf(text.substring(range.first, range.last + 1))
     }
+
+    // ---- 旧格式迁移（v1 标记 → Markdown，纯函数便于测试） ----
+
+    private val LEGACY_HEADING = mapOf('\uE201' to MD_H1, '\uE202' to MD_H2, '\uE203' to MD_H3)
+
+    /**
+     * 把 v1.2.20 私有标记正文迁移为 Markdown：
+     * - PUA 标题字符 → "# "/"## "/"### "
+     * - "☐ "/"☑ " → "- [ ] "/"- [x] "（可叠加在标题后）
+     * - "[img:文件名]" 整行 → "![](文件名)"
+     * 其余（无序/有序/引用/缩进/普通文本）原样保留。幂等：对已是 Markdown 的文本原样返回。
+     */
+    fun migrateBodyV1toV2(raw: String): String =
+        raw.split('\n').joinToString("\n") { line ->
+            var out = line
+            // 1) 标题标记
+            out = when {
+                out.isNotEmpty() && LEGACY_HEADING.containsKey(out[0]) -> LEGACY_HEADING[out[0]] + out.substring(1)
+                else -> out
+            }
+            // 2) 勾选前缀（可能紧跟在标题标记之后）
+            val bodyStart = tagInfo(out).headLen
+            val head = out.substring(0, bodyStart)
+            var rest = out.substring(bodyStart)
+            rest = when {
+                rest.startsWith("\u2610 ") -> TASK_TODO + rest.substring(2)   // ☐
+                rest.startsWith("\u2611 ") -> TASK_DONE + rest.substring(2)   // ☑
+                else -> rest
+            }
+            out = head + rest
+            // 3) 图片行
+            val legacy = out.startsWith("[img:") && out.endsWith("]") && out.length > 6
+            if (legacy) IMG_PREFIX + out.substring(5, out.length - 1) + IMG_SUFFIX else out
+        }
 }
