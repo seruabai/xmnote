@@ -29,6 +29,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 禁止窗口聚焦时自动弹输入法（从相册/相机等外部界面返回时不再"输入法来回跳"）；
+        // 用户点输入框的显式弹出请求不受影响
+        window.setSoftInputMode(
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                or android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+        )
         handleIncoming(intent)
         // 进程被杀后用户重启应用：若速记开关此前是开的，恢复侧栏服务（前台启动不受限制）
         if (QuickCaptureService.isEnabled(this) && !QuickCaptureService.running) {

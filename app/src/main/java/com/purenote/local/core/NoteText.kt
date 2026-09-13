@@ -97,6 +97,85 @@ object NoteMarkup {
     const val BOX_UNCHECKED_PREFIX = "$BOX_UNCHECKED "
     const val BOX_CHECKED_PREFIX = "$BOX_CHECKED "
 
+    // 行首标签（与标题标记可叠加，互斥只能一个）：清单/无序/有序/引用/首行缩进。
+    // 全部是纯文本前缀，存储保持可读；显示层由编辑器转换渲染。
+    const val BULLET_PREFIX = "- "
+    const val QUOTE_PREFIX = "> "
+    const val INDENT_CHAR = '\u3000'
+    const val INDENT_PREFIX = "$INDENT_CHAR$INDENT_CHAR"   // 首行缩进 = 2 个全角空格
+    const val INDENT_SUFFIX = "$INDENT_CHAR$INDENT_CHAR"   // 尾行缩进 = 行尾 2 个全角空格
+
+    /** 行首标签种类（NONE = 纯正文） */
+    enum class HeadTag { NONE, CHECKBOX, BULLET, NUMBER, QUOTE, INDENT }
+
+    /** 行标签解析结果：headLen=标题标记长度，tagLen=行首标签长度，number=有序列表序号 */
+    data class TagInfo(val headLen: Int, val tag: HeadTag, val tagLen: Int, val number: Int)
+
+    private val NUMBER_PREFIX_REGEX = Regex("""^(\d+)\. """)
+
+    /** 解析一行的标题标记 + 行首标签 */
+    fun tagInfo(line: String): TagInfo {
+        val head = line.dropWhile { it in HEADING_MARKERS }
+        val headLen = line.length - head.length
+        val m = NUMBER_PREFIX_REGEX.find(head)
+        return when {
+            head.startsWith(BOX_UNCHECKED_PREFIX) || head.startsWith(BOX_CHECKED_PREFIX) ->
+                TagInfo(headLen, HeadTag.CHECKBOX, BOX_UNCHECKED_PREFIX.length, 0)
+            m != null -> TagInfo(headLen, HeadTag.NUMBER, m.value.length, m.groupValues[1].toInt())
+            head.startsWith(BULLET_PREFIX) -> TagInfo(headLen, HeadTag.BULLET, BULLET_PREFIX.length, 0)
+            head.startsWith(QUOTE_PREFIX) -> TagInfo(headLen, HeadTag.QUOTE, QUOTE_PREFIX.length, 0)
+            head.startsWith(INDENT_PREFIX) -> TagInfo(headLen, HeadTag.INDENT, INDENT_PREFIX.length, 0)
+            else -> TagInfo(headLen, HeadTag.NONE, 0, 0)
+        }
+    }
+
+    /** 行内容起点（跳过标题标记与行首标签）在行内的偏移 */
+    fun contentOffsetInLine(line: String): Int {
+        val info = tagInfo(line)
+        return info.headLen + info.tagLen
+    }
+
+    /**
+     * 切换行首标签：同种→移除，不同种→替换，无→添加。
+     * 返回 (新行, 新内容起点在行内偏移)——光标必须随前缀增删平移到内容起点。
+     * numberForNew：新增有序列表时使用的起始序号。
+     */
+    fun toggleHeadTag(line: String, tag: HeadTag, numberForNew: Int = 1): Pair<String, Int> {
+        val head = line.dropWhile { it in HEADING_MARKERS }
+        val headLen = line.length - head.length
+        val info = tagInfo(line)
+        val content = head.substring(info.tagLen)
+        val turningOff = info.tag == tag
+        val newBare = when {
+            turningOff -> content
+            tag == HeadTag.CHECKBOX -> "$BOX_UNCHECKED_PREFIX$content"
+            tag == HeadTag.BULLET -> "$BULLET_PREFIX$content"
+            tag == HeadTag.NUMBER -> "$numberForNew. $content"
+            tag == HeadTag.QUOTE -> "$QUOTE_PREFIX$content"
+            tag == HeadTag.INDENT -> "$INDENT_PREFIX$content"
+            else -> content
+        }
+        val newTagLen = if (turningOff) 0 else tagInfo(newBare).tagLen
+        return (line.substring(0, headLen) + newBare) to (headLen + newTagLen)
+    }
+
+    /** 回车继承：上一行的标签转成新行的起始前缀（有序列表自动 +1），无标签返回 null */
+    fun inheritTagPrefix(prevLine: String): String? {
+        val info = tagInfo(prevLine)
+        return when (info.tag) {
+            HeadTag.CHECKBOX -> BOX_UNCHECKED_PREFIX
+            HeadTag.BULLET -> BULLET_PREFIX
+            HeadTag.NUMBER -> "${info.number + 1}. "
+            HeadTag.QUOTE -> QUOTE_PREFIX
+            HeadTag.INDENT -> INDENT_PREFIX
+            HeadTag.NONE -> null
+        }
+    }
+
+    /** 尾行缩进：有则去掉（2 个全角空格），无则追加 */
+    fun toggleTailIndent(line: String): String =
+        if (line.endsWith(INDENT_SUFFIX)) line.dropLast(INDENT_SUFFIX.length) else line + INDENT_SUFFIX
+
     fun headingLevel(line: String): Int = when (line.firstOrNull()) {
         H1 -> 1
         H2 -> 2
