@@ -1335,19 +1335,22 @@ private fun ChecklistEditor(
                     items[index] = item.copy(done = !item.done)
                     onChangeList()
                 })
+                // 字段与占位符共用同一份基础样式(纪律:占位符必须 copy 完整样式,行高来源不同会错位)
+                val itemTextStyle = TextStyle(
+                    fontSize = typeScale.checklistSp.sp,
+                    lineHeight = typeScale.checklistLineHeightSp.sp,
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both,
+                    ),
+                )
                 BasicTextField(
                     value = item.text,
                     onValueChange = { items[index] = item.copy(text = it); onChangeList() },
-                    textStyle = TextStyle(
-                        fontSize = typeScale.checklistSp.sp,
-                        lineHeight = typeScale.checklistLineHeightSp.sp,
+                    textStyle = itemTextStyle.copy(
                         color = if (item.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                         textDecoration = if (item.done) TextDecoration.LineThrough else null,
-                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                        lineHeightStyle = LineHeightStyle(
-                            alignment = LineHeightStyle.Alignment.Center,
-                            trim = LineHeightStyle.Trim.Both,
-                        ),
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { inner ->
@@ -1355,12 +1358,7 @@ private fun ChecklistEditor(
                             if (item.text.isEmpty()) {
                                 Text(
                                     "清单内容",
-                                    style = TextStyle(
-                                        fontSize = typeScale.checklistSp.sp,
-                                        lineHeight = typeScale.checklistLineHeightSp.sp,
-                                        color = MaterialTheme.colorScheme.outlineVariant,
-                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                    ),
+                                    style = itemTextStyle.copy(color = MaterialTheme.colorScheme.outlineVariant),
                                 )
                             }
                             inner()

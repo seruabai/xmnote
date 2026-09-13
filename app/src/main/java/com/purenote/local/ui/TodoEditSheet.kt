@@ -378,7 +378,7 @@ private fun SheetTitleField(
                 onValueChange(it.text)
             }
         },
-        textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
+        textStyle = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -386,10 +386,14 @@ private fun SheetTitleField(
         decorationBox = { inner ->
             Box {
                 if (tfv.text.isEmpty()) {
+                    // 占位符必须复用字段完整样式(纪律:行高来源不同会首行错位)
                     Text(
                         "待办清单",
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                        style = TextStyle(
+                            fontSize = 16.sp,
+                            lineHeight = 22.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                        ),
                     )
                 }
                 inner()
@@ -453,10 +457,14 @@ private fun SheetItemRow(
             decorationBox = { inner ->
                 Box {
                     if (tfv.text.isEmpty()) {
+                        // 占位符复用字段完整样式(含 22sp 行高)
                         Text(
                             "待办内容",
-                            fontSize = fontSize,
-                            color = MaterialTheme.colorScheme.outlineVariant,
+                            style = TextStyle(
+                                fontSize = fontSize,
+                                lineHeight = 22.sp,
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                            ),
                         )
                     }
                     inner()

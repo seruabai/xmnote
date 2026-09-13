@@ -420,19 +420,26 @@ private fun SearchPill(query: String, onQuery: (String) -> Unit) {
                 modifier = Modifier.size(27.dp),
             )
             Spacer(Modifier.width(12.dp))
+            // 字段与占位符共用同一份样式(显式行高,禁止继承主题行高导致首行错位)
+            val searchStyle = TextStyle(
+                fontSize = 17.sp,
+                lineHeight = 24.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
             BasicTextField(
                 value = query,
                 onValueChange = onQuery,
                 singleLine = true,
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                textStyle = TextStyle(fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurface),
+                textStyle = searchStyle,
                 decorationBox = { inner ->
                     Box {
                         if (query.isEmpty()) {
                             Text(
                                 "搜索笔记",
-                                fontSize = 17.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
+                                style = searchStyle.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
+                                ),
                             )
                         }
                         inner()
