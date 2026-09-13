@@ -1239,8 +1239,9 @@ internal fun transformNoteText(raw: String, typeScale: NoteTypeScale): NoteTextT
                 }
                 when {
                     hasBox -> {
-                        // 任务前缀 "- [ ] "(6字符) → 等长占位:2 全角 + 4 半角空格（方块控件画在前 2 字符处）
-                        val placeholder = "\u3000\u3000" + "\u2002".repeat(info.tagLen - 2)
+                        // 任务前缀 "- [ ] "(6字符) → 等长占位:6 个四分之四em窄空格(总宽≈1.5em≈27dp),
+                        // 勾选方块(≈16dp)后紧跟小间距即正文——缩进克制(用户反馈 72dp 太宽)
+                        val placeholder = "\u2005".repeat(info.tagLen)
                         builder.pushStyle(if (boxChecked) checkedStyle else androidx.compose.ui.text.SpanStyle())
                         builder.append(placeholder)
                         builder.pop()

@@ -196,7 +196,7 @@ class NoteMarkupAndTransformTest {
     fun `任务占位与无序符号替换`() {
         val r = transformNoteText("- [ ] 内容\n- 列表", NoteTextSize.DEFAULT.typeScale())
         val text = r.annotated.text
-        assertTrue("任务前缀渲染为等长占位(2全角+4半角)", text.startsWith("　　\u2002\u2002\u2002\u2002内容"))
+        assertTrue("任务前缀渲染为等长窄空格占位(6xU+2005,总宽约1.5em)", text.startsWith("\u2005".repeat(6) + "内容"))
         assertTrue("无序前缀渲染为 •", text.contains("• 列表"))
         assertFalse(text.contains("- [ ]"))
         assertFalse(text.contains("☐"))
