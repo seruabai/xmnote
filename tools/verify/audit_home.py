@@ -44,7 +44,11 @@ if chips:
 cards = [t for t in nodes if t['clickable'] == 'true' and dp(t['w']) > 100 and dp(t['h']) > 60 and 280 < dp(t['y0']) < 800]
 if cards:
     check('卡片左缘=16', dp(min(c['x0'] for c in cards)), 16.0, 0.8)
-    check('卡片右缘=395.4(屏宽-16)', dp(max(c['x1'] for c in cards)), W - 16, 0.8)
+    # 右缘断言仅在右列存在卡片时校验(单条笔记时瀑布流只有左列)
+    if any(c['x0'] > 540 for c in cards):
+        check('卡片右缘=395.4(屏宽-16)', dp(max(c['x1'] for c in cards)), W - 16, 0.8)
+    else:
+        print('SKIP 卡片右缘(仅单列,无右侧卡片)')
 
 # 顶栏图标视觉右缘 = min(屏宽, 触控容器右缘) - (48-32)/2
 gear = [t for t in nodes if t['clickable'] == 'true' and dp(t['y0']) < 100 and dp(t['x1']) > 380]
