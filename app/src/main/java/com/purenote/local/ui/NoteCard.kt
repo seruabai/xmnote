@@ -1,8 +1,12 @@
 package com.purenote.local.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,8 +29,11 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -50,11 +57,28 @@ fun NoteCard(
     textSize: NoteTextSize = NoteTextSize.DEFAULT,
     selected: Boolean = false,
 ) {
+    // 按压缩放反馈：按下 0.97，松手 tween 回弹（抖音式触感，克制的幅度）
+    val cardInteraction = remember { MutableInteractionSource() }
+    val cardPressed by cardInteraction.collectIsPressedAsState()
+    val cardScale by animateFloatAsState(
+        targetValue = if (cardPressed) 0.97f else 1f,
+        animationSpec = tween(Motion.FAST, easing = Motion.EaseOut),
+        label = "cardPress",
+    )
     Card(
         shape = RoundedCornerShape(16.dp),
         modifier = modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+            .graphicsLayer {
+                scaleX = cardScale
+                scaleY = cardScale
+            }
+            .combinedClickable(
+                interactionSource = cardInteraction,
+                indication = null,
+                onClick = onClick,
+                onLongClick = onLongPress,
+            ),
         colors = CardDefaults.cardColors(containerColor = noteContainerColor(note.colorIndex)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,

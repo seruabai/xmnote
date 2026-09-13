@@ -103,6 +103,7 @@ fun DrawBoardDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false),
     ) {
+        MotionDialogEnter {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 Row(
@@ -154,6 +155,7 @@ fun DrawBoardDialog(
                     ) { Text("清除") }
                 }
             }
+        }
         }
     }
 }

@@ -1,8 +1,11 @@
 package com.purenote.local.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -98,6 +102,14 @@ fun HomeScreen(vm: NoteViewModel) {
         containerColor = MaterialTheme.colorScheme.background,
         floatingActionButton = {
             if (!selecting && !todoSelecting) {
+                // 按压缩放反馈：按下 0.9，松手 spring 回弹（Motion 令牌）
+                val fabInteraction = remember { MutableInteractionSource() }
+                val fabPressed by fabInteraction.collectIsPressedAsState()
+                val fabScale by animateFloatAsState(
+                    targetValue = if (fabPressed) 0.9f else 1f,
+                    animationSpec = Motion.pressSpring(),
+                    label = "fabPress",
+                )
                 FloatingActionButton(
                     onClick = {
                         if (tab == MainTab.NOTES) vm.openEditor(kind = NoteKind.TEXT)
@@ -107,7 +119,13 @@ fun HomeScreen(vm: NoteViewModel) {
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                     elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 3.dp),
-                    modifier = Modifier.size(56.dp),
+                    interactionSource = fabInteraction,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .graphicsLayer {
+                            scaleX = fabScale
+                            scaleY = fabScale
+                        },
                 ) {
                     Icon(Icons.Outlined.Add, "添加", modifier = Modifier.size(28.dp))
                 }
@@ -609,7 +627,12 @@ private fun BottomItem(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    // iOS 标签栏风格：选中用系统蓝 tint，未选中用次级灰，无胶囊背景
+    // iOS 标签栏风格：选中用系统蓝 tint，未选中用次级灰，无胶囊背景；选中图标 spring 弹跳
+    val iconScale by animateFloatAsState(
+        targetValue = if (selected) 1.15f else 1f,
+        animationSpec = Motion.pressSpring(),
+        label = "tabBounce",
+    )
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -619,7 +642,12 @@ private fun BottomItem(
             icon,
             contentDescription = label,
             tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier
+                .size(24.dp)
+                .graphicsLayer {
+                    scaleX = iconScale
+                    scaleY = iconScale
+                },
         )
         Spacer(Modifier.height(3.dp))
         Text(

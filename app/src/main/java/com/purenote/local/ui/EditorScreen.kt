@@ -4,6 +4,14 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -81,6 +89,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
@@ -424,11 +433,21 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         bottomBar = {
             // 工具栏随输入法显隐；录音中保持可见（否则授权回来找不到停止键）；
             // 图片菜单打开时也要保活——菜单弹窗夺焦点会使 IME 隐藏，bottomBar 一拆菜单就闪生即死
-            // imePadding 使其贴键盘顶沿随其升降（用户 2026-09-07 要求）
-            if ((imeVisible || recording || imageMenu) && kind == NoteKind.TEXT) {
+            // 显隐走滑入滑出动画（跟随键盘升降，Motion 令牌）
+            AnimatedVisibility(
+                visible = (imeVisible || recording || imageMenu) && kind == NoteKind.TEXT,
+                enter = slideInVertically(Motion.sheetSpring()) { it } + fadeIn(tween(Motion.FADE)),
+                exit = slideOutVertically(tween(Motion.SCREEN_OUT, easing = Motion.EaseIn)) { it } +
+                    fadeOut(tween(Motion.SCREEN_OUT)),
+            ) {
                 Column(Modifier.imePadding()) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .32f))
-                    if (styleOpen) {
+                    AnimatedContent(
+                        targetState = styleOpen,
+                        transitionSpec = { fadeIn(tween(Motion.FADE)) togetherWith fadeOut(tween(Motion.FADE)) },
+                        label = "stylePanel",
+                    ) { panelOpen ->
+                        if (panelOpen) {
                         // 样式面板：对标参考图——H1-3 调整字号，•/1. 列表，引用，首/尾行缩进，右侧固定关闭
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -502,7 +521,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     }
                 }
             }
-        },
+        }
+    },
     ) { padding ->
         Column(
             Modifier.padding(padding).fillMaxSize().padding(horizontal = 22.dp),
@@ -653,16 +673,18 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         )
     }
 
-    // 正文图片点按大图预览
+    // 正文图片点按大图预览（MotionDialogEnter：缩放+淡入升起）
     previewImage?.let { name ->
         Dialog(onDismissRequest = { previewImage = null }) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { previewImage = null },
-            ) {
-                AsyncThumb(name, Modifier.fillMaxWidth().height(420.dp))
+            MotionDialogEnter {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { previewImage = null },
+                ) {
+                    AsyncThumb(name, Modifier.fillMaxWidth().height(420.dp))
+                }
             }
         }
     }
@@ -955,8 +977,26 @@ private fun MarkupOverlay(
 
     val color = MaterialTheme.colorScheme.onSurfaceVariant
     val check = MaterialTheme.colorScheme.onSurface
+    // 勾选进度动画：切换时填充弹性淡入、对勾从方块中心弹出（Motion 微交互）
+    data class AnimatedZone(val zone: BoxZone, val progress: androidx.compose.runtime.State<Float>)
+    val animatedZones: List<AnimatedZone> = zones.map { z ->
+        androidx.compose.runtime.key(z.start) {
+            val prog = remember(z.start) {
+                androidx.compose.animation.core.Animatable(if (z.checked) 1f else 0f)
+            }
+            LaunchedEffect(z.checked) {
+                prog.animateTo(
+                    if (z.checked) 1f else 0f,
+                    androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 500f),
+                )
+            }
+            AnimatedZone(z, prog.asState())
+        }
+    }
     Canvas(modifier) {
-        for (z in zones) {
+        for (a in animatedZones) {
+            val z = a.zone
+            val p = a.progress.value
             val strokeW = 2.dp.toPx()
             // 画成垂直居中的方角小方块（如 MiCheckbox）
             val boxSize = (z.rect.height * 0.62f)
@@ -969,20 +1009,22 @@ private fun MarkupOverlay(
                 cx + half,
                 cy + half,
             )
-            // 方块背景（未勾透明+描边，已勾深色填充）
-            drawRect(
-                color = if (z.checked) check else androidx.compose.ui.graphics.Color.Transparent,
-                topLeft = androidx.compose.ui.geometry.Offset(r.left, r.top),
-                size = androidx.compose.ui.geometry.Size(r.width, r.height),
-            )
+            // 方块背景：已勾深色填充，透明度随勾选进度弹性进入
+            if (z.checked && p > 0f) {
+                drawRect(
+                    color = check.copy(alpha = p),
+                    topLeft = androidx.compose.ui.geometry.Offset(r.left, r.top),
+                    size = androidx.compose.ui.geometry.Size(r.width, r.height),
+                )
+            }
             drawRect(
                 color = if (z.checked) check else color,
                 topLeft = androidx.compose.ui.geometry.Offset(r.left, r.top),
                 size = androidx.compose.ui.geometry.Size(r.width, r.height),
                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeW),
             )
-            if (z.checked) {
-                // 简单对勾：两条折线
+            if (z.checked && p > 0.01f) {
+                // 简单对勾：两条折线，从方块中心随进度弹出
                 val cx2 = r.left + r.width * 0.5f
                 val cy2 = r.top + r.height * 0.5f
                 val s = r.width * 0.25f
@@ -991,7 +1033,15 @@ private fun MarkupOverlay(
                     lineTo(cx2 - s * 0.35f, cy2 + s * 0.7f)
                     lineTo(cx2 + s * 1.2f, cy2 - s * 0.8f)
                 }
-                drawPath(line, androidx.compose.ui.graphics.Color(0xFFFAFAFA), style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeW * 1.1f))
+                withTransform({
+                    scale(p, p, pivot = androidx.compose.ui.geometry.Offset(r.center.x, r.center.y))
+                }) {
+                    drawPath(
+                        line,
+                        androidx.compose.ui.graphics.Color(0xFFFAFAFA).copy(alpha = p),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeW * 1.1f),
+                    )
+                }
             }
         }
     }
