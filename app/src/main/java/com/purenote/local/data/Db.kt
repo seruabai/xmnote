@@ -237,13 +237,13 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(conte
         return writableDatabase.insert("todos", null, cv)
     }
 
+    // 编辑不写 sort_index：位置保持原样（用户 2026-09-13 要求），排序字段只归拖拽更新
     fun updateTodo(
         id: Long,
         title: String,
         dueAt: Long?,
         allDay: Boolean,
         repeatType: Int,
-        sortIndex: Int,
         now: Long,
     ): Int {
         val cv = ContentValues().apply {
@@ -252,7 +252,6 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(conte
             put("remind_at", dueAt)
             put("all_day", if (allDay) 1 else 0)
             put("repeat_type", repeatType)
-            put("sort_index", sortIndex)
             put("updated_at", now)
         }
         return writableDatabase.update("todos", cv, "id = ?", arrayOf(id.toString()))

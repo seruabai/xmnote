@@ -49,4 +49,15 @@ object TodoGrouper {
 
     fun subsOf(parentId: Long, all: List<Todo>): List<Todo> =
         all.filter { it.parentId == parentId }
+
+    /**
+     * 待办主列表排序：未完成在前 → 拖拽序(sortIndex) → 创建时间倒序。
+     * 末级用 createdAt 而非 updatedAt：编辑待办只更新内容，**位置保持原样**
+     * （用户 2026-09-13 要求：多次更新后不习惯顺序变化）；
+     * 新建仍在顶部，拖拽持久化的 sortIndex 照常生效。
+     */
+    fun sortRootTodos(todos: List<Todo>): List<Todo> =
+        todos.filter { !it.isSubtask }.sortedWith(
+            compareBy<Todo> { it.done }.thenBy { it.sortIndex }.thenByDescending { it.createdAt },
+        )
 }

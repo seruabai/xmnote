@@ -221,7 +221,7 @@ class NoteRepository(context: Context) {
 
     suspend fun updateTodo(id: Long, title: String, dueAt: Long?, allDay: Boolean, repeat: Int) =
         withContext(Dispatchers.IO) {
-            db.updateTodo(id, title.trim(), dueAt, allDay, repeat, sortIndex = 0, now = System.currentTimeMillis())
+            db.updateTodo(id, title.trim(), dueAt, allDay, repeat, now = System.currentTimeMillis())
         }
 
     /**

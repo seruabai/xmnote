@@ -80,11 +80,7 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
     BackHandler(enabled = selecting) { exitSelection() }
     BackHandler(enabled = !selecting && revealedId != null) { revealedId = null }
 
-    val rootTodos = remember(todos) {
-        todos.filter { !it.isSubtask }.sortedWith(
-            compareBy<Todo> { it.done }.thenBy { it.sortIndex }.thenByDescending { it.updatedAt },
-        )
-    }
+    val rootTodos = remember(todos) { TodoGrouper.sortRootTodos(todos) }
     // 拖拽中的可视顺序：平时跟随 rootTodos，拖拽时本地交换，松手后持久化 sortIndex。
     val displayTodos = remember { mutableStateListOf<Todo>() }
     // 松手到 Flow 回流之间有个异步窗口，用 pendingOrder 顶住，防止列表先闪回旧序再跳新序
