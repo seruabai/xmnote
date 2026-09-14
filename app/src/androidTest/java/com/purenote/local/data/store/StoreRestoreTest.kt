@@ -133,6 +133,44 @@ class StoreRestoreTest {
         assertEquals("新库内容不得被旧写入污染", listOf("旧笔记"), noteTitles(repo))
     }
 
+    @Test
+    fun theProductionSavePathAlsoCarriesTheEpoch() = runBlocking {
+        // 这条用例存在的理由：上一版只有直接调用 repo.saveExisting(storeEpoch=...) 的测试，
+        // 而**生产路径**是 EditorScreen -> NoteViewModel -> SaveCoordinator -> repo。
+        // 协调器漏传 storeEpoch 时，默认值 "" 会让 isNotBlank() 守卫直接跳过检查，
+        // 隔离静默失效，而测试照样全绿。这里必须走协调器才算数。
+        val pkg = seedLegacyThenExportPlusOneMore()
+        val repo = NoteRepository(ctx)
+        val oldEpoch = repo.storeEpoch
+        assertTrue(repo.restoreIntoNewStore(pkg.inputStream()) is NoteRepository.RestoreOutcome.Ok)
+
+        val noteId = repo.db.readableDatabase.rawQuery("SELECT id FROM notes LIMIT 1", null)
+            .use { it.moveToFirst(); it.getLong(0) }
+
+        val coordinator = com.purenote.local.feature.notes.SaveCoordinator.forRepository(repo)
+        val result = coordinator.save(
+            com.purenote.local.feature.notes.SaveCommand(
+                noteId = noteId,
+                operationId = "stale-epoch-op",
+                sessionId = "s1",
+                storeEpoch = oldEpoch,
+                editGeneration = 1,
+                expectedRevision = 1,
+                kind = NoteKind.TEXT,
+                title = "旧页面写入",
+                body = "不该写进新库",
+                items = emptyList(),
+                images = emptyList(),
+                colorIndex = 0,
+                folderId = null,
+                pinned = false,
+                remindAt = null,
+            ),
+        )
+        assertEquals("生产路径必须把 storeEpoch 传到仓库", SaveResult.StoreChanged, result)
+        assertEquals("新库内容不得被旧写入污染", listOf("旧笔记"), noteTitles(repo))
+    }
+
     private companion object {
         const val LEGACY = "purenote.db"
     }

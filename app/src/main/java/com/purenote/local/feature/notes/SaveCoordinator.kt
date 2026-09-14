@@ -60,6 +60,7 @@ class SaveCoordinator(private val writer: SaveWriter) {
                     allDay = command.allDay,
                     operationId = command.operationId,
                     expectedRevision = command.expectedRevision,
+                    storeEpoch = command.storeEpoch,
                 )
             }
     }
