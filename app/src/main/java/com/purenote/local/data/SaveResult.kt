@@ -11,8 +11,14 @@ package com.purenote.local.data
  */
 sealed interface SaveResult {
 
-    /** 提交成功。[affected] 为实际影响行数，必须恰好为 1（条件更新的校验依据）。 */
-    data class Saved(val noteId: Long, val affected: Int) : SaveResult
+    /** 提交成功。[revision] 是本次提交产生的修订号。 */
+    data class Saved(val noteId: Long, val revision: Long) : SaveResult
+
+    /**
+     * 版本冲突：数据库中的实际修订号与预期不一致（规范 §7）。
+     * 界面必须保留本地输入，绝不能用"重新读一个 revision 后直接覆盖全文"来解决。
+     */
+    data class Conflict(val actualRevision: Long) : SaveResult
 
     /** 目标记录不存在或已被永久删除 */
     data object NotFound : SaveResult
@@ -23,6 +29,8 @@ sealed interface SaveResult {
 
 /** 存储失败分类（规范 §15：错误分类至少有冲突/空间不足/权限失效/锁定/损坏/不支持/结果未知） */
 enum class StorageFailure {
+    /** 版本冲突：另一处已改过这条记录（规范 §7） */
+    CONFLICT,
     /** 数据库处于损坏保全状态，已拒绝写入 */
     CORRUPTED,
     /** 数据库被其他写入占用 */

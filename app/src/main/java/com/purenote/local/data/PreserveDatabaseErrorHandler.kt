@@ -21,6 +21,16 @@ object CorruptionState {
         corrupted = true
         this.detail = detail
     }
+
+    /**
+     * 仅供测试复位。生产路径**刻意不提供**恢复入口：
+     * 一旦判定损坏就应停止写入、保全现场，由用户显式走恢复流程，
+     * 任何"自动清除故障标记继续用"的做法都会在损坏的库上扩大损失。
+     */
+    internal fun resetForTests() {
+        corrupted = false
+        detail = null
+    }
 }
 
 /**

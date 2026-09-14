@@ -11,10 +11,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 
-class NoteRepository(context: Context) {
+/** [dbName] 仅测试需要（用独立库文件，避免污染真实数据）；应用内一律用默认库名。 */
+class NoteRepository(context: Context, dbName: String = NotesDb.DB_NAME) {
 
     private val appContext = context.applicationContext
-    private val db = NotesDb(appContext)
+    private val db = NotesDb(appContext, dbName)
 
     /** 统一事务入口（规范 §6.1）。多步写操作必须整体提交或整体回滚。 */
     private val tx = DatabaseExecutor(db)
@@ -84,26 +85,73 @@ class NoteRepository(context: Context) {
         remindAt: Long?,
         repeat: RepeatRule = RepeatRule.NONE,
         allDay: Boolean = false,
+        /**
+         * 幂等键：调用方重试时复用同一个 ID，重复提交不会产生第二次修改（规范 §7）。
+         * 阶段性：阶段 D 的 SaveCoordinator 会把它与编辑会话绑定。
+         */
+        operationId: String = java.util.UUID.randomUUID().toString().replace("-", ""),
+        /**
+         * 预期修订号。为 null 时在事务内读取当前值（阶段 C 的过渡行为）；
+         * 阶段 D 的编辑器会传入自己确认过的修订号，从而真正检测并发覆盖。
+         */
+        expectedRevision: Long? = null,
     ): SaveResult = try {
         tx.write { database ->
-            db.updateNote(
-            id = id,
-            kind = kind,
-            title = title,
-            encodedBody = encodeBody(kind, body, items),
-            images = images.joinToString("\n"),
-            colorIndex = colorIndex,
-            folderId = folderId,
-            pinned = pinned,
-            remindAt = remindAt,
-            repeatType = repeat.ordinal,
-            allDay = allDay,
-                now = System.currentTimeMillis(),
-                database = database,
-            ).let { affected ->
-                // 影响行数必须恰好为 1：为 0 说明记录已不存在（被永久删除）。
-                // 多行在 SQLite 里不可能出现（条件带主键），但显式校验可让异常早暴露。
-                if (affected > 0) SaveResult.Saved(id, affected) else SaveResult.NotFound
+            val now = System.currentTimeMillis()
+            val current = NoteStore.readRevision(id, database) ?: return@write SaveResult.NotFound
+            val encodedBody = encodeBody(kind, body, items)
+            val encodedImages = images.joinToString("\n")
+            val base = expectedRevision ?: current
+
+            // 请求身份 = (operationId, noteId, 调用方声明的预期修订, 内容)。
+            // **不能把 base 放进来**：expectedRevision 为 null 时 base 取自库中当前值，
+            // 第一次提交后 base 就变了，重试会算出不同哈希，幂等判定随之失效。
+            val hash = NoteStore.requestHash(
+                "note.save", id, expectedRevision ?: "-",
+                kind.ordinal, title, encodedBody, encodedImages,
+                colorIndex, folderId, pinned, remindAt, repeat.ordinal, allDay,
+            )
+            // 幂等：同 operationId 且请求一致 → 返回原回执，不重复写
+            NoteStore.findOperation(operationId, hash, database)?.let { record ->
+                return@write SaveResult.Saved(id, record.resultRevision)
+            }
+
+            val values = android.content.ContentValues().apply {
+                put("kind", if (kind == NoteKind.CHECKLIST) 1 else 0)
+                put("title", title)
+                put("body", encodedBody)
+                put("images", encodedImages)
+                put("color", colorIndex)
+                put("folder_id", folderId)
+                put("pinned", if (pinned) 1 else 0)
+                put("remind_at", remindAt)
+                put("repeat_type", repeat.ordinal)
+                put("all_day", if (allDay) 1 else 0)
+                put("updated_at", now)
+            }
+
+            when (val outcome = NoteStore.updateNoteCas(id, base, values, database)) {
+                is CasOutcome.Updated -> {
+                    // 规范 §5.3：每次成功提交留一份完整快照（第一版不做压缩/清理）
+                    NoteStore.insertNoteVersion(
+                        noteId = id,
+                        revision = outcome.revision,
+                        snapshotJson = noteSnapshotJson(
+                            id, outcome.revision, kind, title, encodedBody, encodedImages,
+                            colorIndex, folderId, pinned, remindAt, repeat.ordinal, allDay, now,
+                        ),
+                        reason = "save",
+                        operationId = operationId,
+                        now = now,
+                        database = database,
+                    )
+                    NoteStore.recordOperation(
+                        operationId, hash, "note", id, outcome.revision, now, database,
+                    )
+                    SaveResult.Saved(id, outcome.revision)
+                }
+                is CasOutcome.Conflict -> SaveResult.Conflict(outcome.actualRevision)
+                CasOutcome.NotFound -> SaveResult.NotFound
             }
         }
     } catch (cancellation: kotlinx.coroutines.CancellationException) {
@@ -357,7 +405,41 @@ class NoteRepository(context: Context) {
     suspend fun readBackup(source: InputStream): BackupFile =
         backupIo.readBackup(source)
 
+    // ---- 测试用只读探针（不影响生产路径）----
+
+    internal fun debugRevision(noteId: Long): Long =
+        db.readableDatabase.rawQuery("SELECT revision FROM notes WHERE id = ?", arrayOf(noteId.toString()))
+            .use { c -> c.moveToFirst(); c.getLong(0) }
+
+    internal fun debugVersionCount(noteId: Long): Int =
+        db.readableDatabase.rawQuery("SELECT COUNT(*) FROM note_versions WHERE note_id = ?", arrayOf(noteId.toString()))
+            .use { c -> c.moveToFirst(); c.getInt(0) }
+
     // ---- helpers ----
+
+    /**
+     * 历史快照（规范 §5.3）：存的是**原始存储值**，不经过有损的 UI 模型往返，
+     * 因此恢复历史时正文与附件引用都能逐字还原。
+     */
+    private fun noteSnapshotJson(
+        id: Long, revision: Long, kind: NoteKind, title: String, body: String, images: String,
+        colorIndex: Int, folderId: Long?, pinned: Boolean, remindAt: Long?,
+        repeatOrdinal: Int, allDay: Boolean, now: Long,
+    ): String = org.json.JSONObject().apply {
+        put("noteId", id)
+        put("revision", revision)
+        put("kind", kind.ordinal)
+        put("title", title)
+        put("body", body)
+        put("images", images)
+        put("colorIndex", colorIndex)
+        put("folderId", folderId ?: org.json.JSONObject.NULL)
+        put("pinned", pinned)
+        put("remindAt", remindAt ?: org.json.JSONObject.NULL)
+        put("repeat", repeatOrdinal)
+        put("allDay", allDay)
+        put("at", now)
+    }.toString()
 
     private fun encodeBody(kind: NoteKind, body: String, items: List<ChecklistItem>): String =
         when (kind) {

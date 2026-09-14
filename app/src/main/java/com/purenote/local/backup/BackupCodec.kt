@@ -3,6 +3,7 @@ package com.purenote.local.backup
 import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.core.NoteMarkup
 import com.purenote.local.data.NotesDb
 import com.purenote.local.data.RepeatRule
 
@@ -50,6 +51,8 @@ object BackupCodec {
                     kind = kind,
                     title = c.getStringCol(NotesDb.COL_TITLE) ?: "",
                     body = rawBody,
+                    // 导出时如实带上本行正文的格式版本，导入端据此决定要不要迁移
+                    bodyFormatVersion = c.getIntCol("body_format_version"),
                     items = if (kind == 1) {
                         ChecklistCodec.decode(rawBody).map { ChecklistItemDto(it.text, it.done) }
                     } else {
@@ -263,10 +266,21 @@ object BackupCodec {
         }
 
     private fun noteValues(dto: NoteDto, folderId: Long?): ContentValues = ContentValues().apply {
+        // 规范 §5.2 的 body_format_version 在这里真正发挥作用：
+        // 导入是继 onUpgrade 之后的第二条写入 body 的生产路径，
+        // 而它过去完全不看格式版本 —— 把旧备份恢复到全新安装时旧标记会永久残留。
+        // migrateBodyV1toV2 是纯函数且已验证幂等，重复导入安全。
+        val needsMigration = dto.kind == 0 &&
+            dto.bodyFormatVersion < NotesDb.BODY_FORMAT_MARKDOWN
+        val finalBody = if (needsMigration) NoteMarkup.migrateBodyV1toV2(dto.body) else dto.body
         put("uuid", dto.uuid)
         put("kind", dto.kind)
         put("title", dto.title)
-        put("body", dto.body)
+        put("body", finalBody)
+        put(
+            "body_format_version",
+            if (dto.kind == 0) NotesDb.BODY_FORMAT_MARKDOWN else dto.bodyFormatVersion,
+        )
         put("images", dto.images.joinToString("\n"))
         put("color", dto.colorIndex)
         put("folder_id", folderId)

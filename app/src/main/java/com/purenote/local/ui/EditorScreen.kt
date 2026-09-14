@@ -590,6 +590,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             saveFailure?.let { failure ->
                 Text(
                     text = when (failure) {
+                        StorageFailure.CONFLICT -> "这条笔记已在别处被修改，本地内容未覆盖对方（请先复制备份再决定）"
                         StorageFailure.CORRUPTED -> "数据库处于保全状态，已停止写入（内容仍在屏幕上，请先导出备份）"
                         StorageFailure.NO_SPACE -> "保存失败：存储空间不足"
                         StorageFailure.LOCKED -> "保存失败：数据库被占用，稍后自动重试"

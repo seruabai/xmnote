@@ -24,8 +24,19 @@ data class BackupFile(
     val todos: List<TodoDto> = emptyList(),
 ) {
     companion object {
-        /** 备份格式版本。结构不兼容地变更时才 +1。 */
-        const val CURRENT_SCHEMA = 1
+        /**
+         * 备份格式版本。结构不兼容地变更时才 +1。
+         *
+         * v2：NoteDto 增加 [NoteDto.bodyFormatVersion]。
+         * 起因是一个真实缺口——正文格式由 PUA 私有标记改为 Markdown 时，
+         * 库内迁移只挂在 `onUpgrade(oldVersion < 8)` 上，而**新装设备走 onCreate
+         * 根本不经过 onUpgrade**。于是把 v1.2.20 的备份恢复到全新安装上，
+         * 旧标记会逐字节落库并永久残留（PUA 不可见、☐ 不再被识别为勾选框、
+         * [img:] 只显示字面量）。备份格式号当时没有 +1，导入端也无从判断。
+         *
+         * v1 备份没有该字段，反序列化会取默认值，即"旧格式"，导入时被正确迁移。
+         */
+        const val CURRENT_SCHEMA = 2
     }
 }
 
@@ -49,6 +60,13 @@ data class NoteDto(
     val body: String,
     /** 清单条目（仅 kind=CHECKLIST 有值）。保留它是为了备份可读、以及后续云同步复用。 */
     val items: List<ChecklistItemDto> = emptyList(),
+    /**
+     * [body] 这一列所用的正文格式版本：
+     * 1 = PUA 私有标记（v1.2.20 及更早），2 = 标准 Markdown。
+     * 默认取 1：schema=1 的旧备份写于 Markdown 化之前，导入时必须迁移。
+     * 仅对 kind=TEXT 有意义（CHECKLIST 的 body 是 ChecklistCodec 编码）。
+     */
+    val bodyFormatVersion: Int = 1,
     val images: List<String> = emptyList(),
     val colorIndex: Int = 0,
     /** 引用 FolderDto.uuid；无分类为 null */

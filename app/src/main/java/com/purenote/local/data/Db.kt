@@ -44,13 +44,18 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         db.execSQL("CREATE INDEX idx_todos_due ON todos(due_at)")
         db.execSQL("CREATE INDEX idx_todos_trashed ON todos(trashed)")
         db.execSQL("CREATE INDEX idx_todos_trashed_parent ON todos(trashed, parent_id)")
+        // 全新安装也必须与迁移后的库结构完全一致，否则 onUpgrade 之外的分支会漂移
+        createV9Tables(db)
+        db.execSQL(SQL_CREATE_LIBRARY_META_ROW)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE notes ADD COLUMN color INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE notes ADD COLUMN images TEXT NOT NULL DEFAULT ''")
-            db.execSQL(SQL_CREATE_TODOS)
+            // 必须用 v2 时代的历史 DDL：若用当前定义建表，后面 <3/<4/<5/<9> 的
+            // ALTER TABLE ADD COLUMN 会因为列已存在而整条迁移失败（v1 库无法升级）。
+            db.execSQL(SQL_CREATE_TODOS_V2)
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_todos_parent ON todos(parent_id)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_todos_due ON todos(due_at)")
         }
@@ -100,6 +105,24 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
                     }
                 }
             }
+        }
+        if (oldVersion < 9) {
+            // 规范 §5.2：修订号 + 正文格式版本 + 历史/幂等/附件/提醒所需的表。
+            // 加法迁移：只加列建表，不改既有数据、不重建表、不删除任何东西。
+            //
+            // 门槛必须是 oldVersion < 9。规范原文写的是"从当前 DB_VERSION=3 出发，
+            // 先设计 v4 加法迁移"——那是基于过时分叉的假设；真实基线是 8。
+            // 若照抄 < 4，所有存量用户（库在 8）永远不会执行该分支，
+            // revision 列根本不会被加上，随后 §7 的每一条 WHERE revision = ? 全部报错。
+            //
+            // 放在 < 8 之后：正文格式版本的含义是"此刻 body 列的编码"，
+            // 必须等 v8 的 PUA→Markdown 转换跑完再打标（DEFAULT 2 = Markdown）。
+            db.execSQL("ALTER TABLE notes ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE notes ADD COLUMN body_format_version INTEGER NOT NULL DEFAULT 2")
+            db.execSQL("ALTER TABLE todos ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE folders ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+            createV9Tables(db)
+            db.execSQL(SQL_CREATE_LIBRARY_META_ROW)
         }
     }
 
@@ -414,13 +437,18 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
     private fun newUuid(): String = UUID.randomUUID().toString().replace("-", "")
 
     companion object {
-        const val DB_VERSION = 8
+        const val DB_VERSION = 9
         const val DB_NAME = "purenote.db"
+
+        /** 正文格式版本：1 = v1.2.20 及更早的 PUA 私有标记；2 = 标准 Markdown（规范 §5.2） */
+        const val BODY_FORMAT_LEGACY = 1
+        const val BODY_FORMAT_MARKDOWN = 2
 
         private val SQL_CREATE_FOLDERS = """
             CREATE TABLE folders(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT NOT NULL UNIQUE,
+              revision INTEGER NOT NULL DEFAULT 1,
               created_at INTEGER NOT NULL
             )
         """.trimIndent()
@@ -441,6 +469,28 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
               remind_at INTEGER NULL,
               repeat_type INTEGER NOT NULL DEFAULT 0,
               all_day INTEGER NOT NULL DEFAULT 0,
+              revision INTEGER NOT NULL DEFAULT 1,
+              body_format_version INTEGER NOT NULL DEFAULT 2,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            )
+        """.trimIndent()
+
+        /**
+         * v2 分支专用的**历史** DDL：只包含当时存在的列。
+         * 用当前定义建表会让后续 ALTER TABLE ADD COLUMN 因列已存在而失败，
+         * 结果是 v1 库完全无法升级（执行到 < 3 分支即抛错）。
+         */
+        private val SQL_CREATE_TODOS_V2 = """
+            CREATE TABLE todos(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              parent_id INTEGER NULL,
+              title TEXT NOT NULL,
+              done INTEGER NOT NULL DEFAULT 0,
+              done_at INTEGER NULL,
+              due_at INTEGER NULL,
+              remind_at INTEGER NULL,
+              sort_index INTEGER NOT NULL DEFAULT 0,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL
             )
@@ -461,9 +511,119 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
               sort_index INTEGER NOT NULL DEFAULT 0,
               trashed INTEGER NOT NULL DEFAULT 0,
               trashed_at INTEGER NULL,
+              revision INTEGER NOT NULL DEFAULT 1,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL
             )
+        """.trimIndent()
+
+        // ---- v9 新增表（规范 §5.2）：onCreate 与 onUpgrade 共用同一份定义，避免两条路径漂移 ----
+
+        private val SQL_CREATE_V9_TABLES = listOf(
+            """
+            CREATE TABLE library_meta(
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              library_id TEXT NOT NULL,
+              schema_version INTEGER NOT NULL,
+              store_epoch TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE note_versions(
+              note_id INTEGER NOT NULL,
+              revision INTEGER NOT NULL,
+              snapshot_format_version INTEGER NOT NULL,
+              snapshot_json TEXT NOT NULL,
+              reason TEXT NOT NULL DEFAULT '',
+              operation_id TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (note_id, revision)
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE todo_versions(
+              todo_root_id INTEGER NOT NULL,
+              revision INTEGER NOT NULL,
+              snapshot_format_version INTEGER NOT NULL,
+              snapshot_json TEXT NOT NULL,
+              reason TEXT NOT NULL DEFAULT '',
+              operation_id TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (todo_root_id, revision)
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE operations(
+              operation_id TEXT PRIMARY KEY,
+              request_hash TEXT NOT NULL,
+              entity_type TEXT NOT NULL,
+              entity_id INTEGER NOT NULL,
+              result_revision INTEGER NOT NULL,
+              committed_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE attachments(
+              attachment_id TEXT PRIMARY KEY,
+              relative_name TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              sha256 TEXT NOT NULL DEFAULT '',
+              mime TEXT NOT NULL DEFAULT '',
+              state TEXT NOT NULL DEFAULT 'published',
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE note_attachment_refs(
+              note_id INTEGER NOT NULL,
+              attachment_id TEXT NOT NULL,
+              PRIMARY KEY (note_id, attachment_id)
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE version_attachment_refs(
+              note_id INTEGER NOT NULL,
+              revision INTEGER NOT NULL,
+              attachment_id TEXT NOT NULL,
+              PRIMARY KEY (note_id, revision, attachment_id)
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE reminder_jobs(
+              target_kind TEXT NOT NULL,
+              target_id INTEGER NOT NULL,
+              expected_revision INTEGER NOT NULL,
+              desired_at INTEGER NULL,
+              state TEXT NOT NULL DEFAULT 'pending',
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (target_kind, target_id)
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE import_mappings(
+              source_library_id TEXT NOT NULL,
+              entity_type TEXT NOT NULL,
+              source_id TEXT NOT NULL,
+              target_id INTEGER NOT NULL,
+              PRIMARY KEY (source_library_id, entity_type, source_id)
+            )
+            """.trimIndent(),
+            "CREATE INDEX idx_note_versions_created ON note_versions(note_id, created_at)",
+            "CREATE INDEX idx_operations_committed ON operations(committed_at)",
+            "CREATE INDEX idx_refs_attachment ON note_attachment_refs(attachment_id)",
+            "CREATE INDEX idx_version_refs_attachment ON version_attachment_refs(attachment_id)",
+            "CREATE INDEX idx_import_mappings_target ON import_mappings(entity_type, target_id)",
+        )
+
+        private fun createV9Tables(db: SQLiteDatabase) {
+            SQL_CREATE_V9_TABLES.forEach { db.execSQL(it) }
+        }
+
+        /** 库身份 + 存储代次。library_id 跨设备稳定；store_epoch 每次切换活动存储时更换（§5.1/§12）。 */
+        private val SQL_CREATE_LIBRARY_META_ROW = """
+            INSERT OR IGNORE INTO library_meta(id, library_id, schema_version, store_epoch, created_at)
+            VALUES (1, lower(hex(randomblob(16))), 9, lower(hex(randomblob(16))), strftime('%s','now') * 1000)
         """.trimIndent()
 
         // 列名常量

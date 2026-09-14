@@ -17,6 +17,14 @@ import android.database.sqlite.SQLiteDatabase
 @RunWith(AndroidJUnit4::class)
 class PreserveDatabaseErrorHandlerTest {
 
+    @org.junit.After
+    fun resetCorruptionState() {
+        // CorruptionState 是进程级单例（生产上刻意不可恢复）。
+        // 测试必须复位，否则会把故障标记泄漏给同一进程内的其它用例，
+        // 让它们全部以 CORRUPTED 失败。
+        CorruptionState.resetForTests()
+    }
+
     private fun freshDbFile(name: String): File {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val f = File(ctx.cacheDir, name)

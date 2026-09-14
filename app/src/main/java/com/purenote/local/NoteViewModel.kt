@@ -418,6 +418,11 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                     if (remindAt == null) Reminders.cancel(getApplication(), Reminders.KIND_NOTE, noteId)
                     else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, noteId, remindAt)
                 }
+                is SaveResult.Conflict -> {
+                    // 规范 §7/§8：版本冲突绝不能用"重新读一个 revision 后直接覆盖全文"来解决。
+                    // 保留本地输入，如实告知用户，由阶段 D 的编辑状态机决定如何合并。
+                    _saveFailure.value = StorageFailure.CONFLICT
+                }
                 SaveResult.NotFound -> {
                     // 记录已不存在（被永久删除）：不重排提醒，也不伪造成功
                     _saveFailure.value = StorageFailure.UNKNOWN
