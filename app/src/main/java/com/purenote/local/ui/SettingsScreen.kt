@@ -310,15 +310,23 @@ fun SettingsScreen(vm: NoteViewModel) {
             title = { Text("从备份恢复") },
             text = {
                 Text(
-                    "将导入笔记 ${backup.notes.size} 条、待办 ${backup.todos.size} 条、分类 ${backup.folders.size} 个" +
-                        "（已有内容按更新时间自动保留最新，重复导入不会产生重复）",
+                    "备份包含笔记 ${backup.notes.size} 条、待办 ${backup.todos.size} 条、分类 ${backup.folders.size} 个。\n\n" +
+                        "「导入」：合并进当前数据，已有内容按更新时间保留最新，重复导入不产生重复。\n\n" +
+                        "「完整恢复」：回到这份备份的状态，切换到新一代存储；" +
+                        "当前数据仍完整保留，验证通过后才会切换，中断也不会损坏现有数据。",
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    pendingImport = null
-                    vm.importBackup(uri)
-                }) { Text("导入") }
+                Row {
+                    TextButton(onClick = {
+                        pendingImport = null
+                        vm.restoreBackup(uri)
+                    }) { Text("完整恢复") }
+                    TextButton(onClick = {
+                        pendingImport = null
+                        vm.importBackup(uri)
+                    }) { Text("导入") }
+                }
             },
             dismissButton = { TextButton(onClick = { pendingImport = null }) { Text("取消") } },
         )

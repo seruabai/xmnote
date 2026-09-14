@@ -28,7 +28,11 @@ import kotlinx.coroutines.withContext
  *    不能当成"从未执行"（阶段 C 的 operations 表）。
  */
 class DatabaseExecutor(
-    private val helper: NotesDb,
+    /**
+     * 惰性取当前活动库。用函数而不是实例：阶段 F 起活动库由
+     * DatabaseProvider 按活动指针提供，恢复切换后必须拿到新库而不是缓存下来的旧实例。
+     */
+    private val helper: () -> NotesDb,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
@@ -36,7 +40,7 @@ class DatabaseExecutor(
 
     /** 只读访问：不需要事务，也不受写门禁影响（损坏时仍可读，便于导出抢救）。 */
     suspend fun <T> read(block: (SQLiteDatabase) -> T): T = withContext(ioDispatcher) {
-        block(helper.readableDatabase)
+        block(helper().readableDatabase)
     }
 
     /**
@@ -48,7 +52,7 @@ class DatabaseExecutor(
             check(!CorruptionState.corrupted) {
                 "数据库处于损坏保全状态，已拒绝写入（现场已保留）：" + (CorruptionState.detail ?: "")
             }
-            val database = helper.writableDatabase
+            val database = helper().writableDatabase
             database.beginTransaction()
             try {
                 val result = block(database)

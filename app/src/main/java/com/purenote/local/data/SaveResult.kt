@@ -20,6 +20,12 @@ sealed interface SaveResult {
      */
     data class Conflict(val actualRevision: Long) : SaveResult
 
+    /**
+     * 存储代次已变化（规范 §12 第 9 条）：这条命令属于**切换之前**的存储，
+     * 它的内容是针对旧库的，绝不能写进恢复后的新库。
+     */
+    data object StoreChanged : SaveResult
+
     /** 目标记录不存在或已被永久删除 */
     data object NotFound : SaveResult
 

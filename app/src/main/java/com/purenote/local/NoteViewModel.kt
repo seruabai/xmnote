@@ -49,7 +49,8 @@ import java.util.zip.ZipException
  * 存储代次（规范 §5.1）：阶段 F 会从 library_meta 读取，并在切换/恢复活动存储时更换。
  * 当前是单存储实现，取值稳定即可；它的作用是拒绝"切换之后才到达的旧写入"。
  */
-private const val STORE_EPOCH = "local"
+// 存储代次从仓库的活动指针读取（阶段 F）：恢复/s切换后它会变化，
+// 旧写入据此被拒绝，而不是写进新库。
 
 sealed interface Screen {
     data object Home : Screen
@@ -428,7 +429,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     fun beginEditorSession(noteId: Long) {
         viewModelScope.launch {
             val sessionId = java.util.UUID.randomUUID().toString().replace("-", "")
-            val base = EditorReducer.initial(sessionId = sessionId, storeEpoch = STORE_EPOCH)
+            val base = EditorReducer.initial(sessionId = sessionId, storeEpoch = repo.storeEpoch)
             val revision = if (noteId > 0) repo.noteRevision(noteId) else null
             _editorState.value = if (noteId > 0 && revision == null) {
                 EditorReducer.reduce(base, EditorEvent.LoadFailed)
@@ -492,6 +493,9 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                     else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, noteId, remindAt)
                 }
                 is SaveResult.Conflict -> reduceEditor(EditorEvent.SaveConflicted(result.actualRevision))
+                SaveResult.StoreChanged -> reduceEditor(
+                    EditorEvent.SaveFailed("存储已切换（可能刚完成恢复），本次内容未写入"),
+                )
                 SaveResult.NotFound -> reduceEditor(EditorEvent.SaveFailed("笔记已不存在"))
                 is SaveResult.Failed -> reduceEditor(EditorEvent.SaveFailed(describe(result.reason)))
             }
@@ -900,6 +904,42 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 _backupState.value = BackupState.Failed("读取备份失败：${backupFailureReason(e)}")
+            }
+        }
+    }
+
+    /**
+     * 完整恢复（规范 §12）：建新一代存储 -> 导入 -> 验证 -> 原子切换活动指针。
+     * 与 [importBackup] 的区别：导入是**合并**进当前库，恢复是**换一代**整体替换，
+     * 旧代文件与附件一律保留，任何中断都不会损坏当前可用的那一代。
+     */
+    fun restoreBackup(uri: Uri) {
+        if (!backupStartable()) return
+        viewModelScope.launch {
+            _backupState.value = BackupState.Running
+            val ctx = getApplication<Application>()
+            try {
+                val outcome = withContext(Dispatchers.IO) {
+                    ctx.contentResolver.openInputStream(uri)?.use { repo.restoreIntoNewStore(it) }
+                        ?: NoteRepository.RestoreOutcome.Failed("无法读取所选文件（授权可能已失效）")
+                }
+                _backupState.value = when (outcome) {
+                    is NoteRepository.RestoreOutcome.Ok -> {
+                        refresh()
+                        BackupState.Done(
+                            title = "恢复完成",
+                            summary = "已切换到新的存储代次（新增 ${outcome.inserted}、更新 ${outcome.updated}）。" +
+                                "旧数据仍完整保留，可继续用于排查。",
+                            warnings = outcome.warnings,
+                        )
+                    }
+                    is NoteRepository.RestoreOutcome.Failed ->
+                        BackupState.Failed("恢复失败：${outcome.message}。当前数据未被改动。")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _backupState.value = BackupState.Failed("恢复失败：${backupFailureReason(e)}。当前数据未被改动。")
             }
         }
     }

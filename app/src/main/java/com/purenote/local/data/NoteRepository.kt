@@ -5,20 +5,39 @@ import android.database.Cursor
 import com.purenote.local.backup.BackupFile
 import com.purenote.local.backup.BackupIo
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.data.store.DatabaseProvider
+import com.purenote.local.data.store.StoreControl
+import com.purenote.local.data.store.StorePointer
 import com.purenote.local.core.TodoCompletion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 
-/** [dbName] 仅测试需要（用独立库文件，避免污染真实数据）；应用内一律用默认库名。 */
-class NoteRepository(context: Context, dbName: String = NotesDb.DB_NAME) {
+/**
+ * [dbName] 仅测试需要（用独立库文件，避免污染真实数据）；应用内传 null，走活动存储指针。
+ */
+class NoteRepository(context: Context, dbName: String? = null) {
 
     private val appContext = context.applicationContext
-    private val db = NotesDb(appContext, dbName)
+
+    /**
+     * 活动存储（规范 §6.1 / §12）：全应用唯一的数据库提供者。
+     * 测试传了固定库名时不启用指针机制。
+     */
+    private val control: StoreControl? = if (dbName == null) StoreControl(appContext) else null
+    private val provider: DatabaseProvider? = control?.let { DatabaseProvider(appContext, it) }
+
+    private val pinned: NotesDb? = dbName?.let { NotesDb(appContext, it) }
+
+    /** 单点访问。provider 模式下每次向它索取当前活动库（切换恢复后自动拿到新库）。 */
+    internal val db: NotesDb get() = provider?.require() ?: pinned!!
+
+    /** 当前存储代次；写入命令携带它，用于拒绝切换之后才到达的旧写入。 */
+    val storeEpoch: String get() = provider?.storeEpoch ?: "test"
 
     /** 统一事务入口（规范 §6.1）。多步写操作必须整体提交或整体回滚。 */
-    private val tx = DatabaseExecutor(db)
+    private val tx = DatabaseExecutor(helper = { db })
 
     // ---- notes ----
 
@@ -95,7 +114,14 @@ class NoteRepository(context: Context, dbName: String = NotesDb.DB_NAME) {
          * 阶段 D 的编辑器会传入自己确认过的修订号，从而真正检测并发覆盖。
          */
         expectedRevision: Long? = null,
+        /** 发起写入时的存储代次；与当前代次不符则拒绝（规范 §12 第 9 条）。 */
+        storeEpoch: String = "",
     ): SaveResult = try {
+        // 恢复完成后，旧页面的保存任务可能才到达。它的内容针对的是旧库，
+        // 写进新库会造成"恢复后又被旧内容覆盖"。必须在任何写入之前拦下。
+        if (storeEpoch.isNotBlank() && storeEpoch != this.storeEpoch) {
+            return SaveResult.StoreChanged
+        }
         tx.write { database ->
             val now = System.currentTimeMillis()
             val current = NoteStore.readRevision(id, database) ?: return@write SaveResult.NotFound
@@ -404,6 +430,110 @@ class NoteRepository(context: Context, dbName: String = NotesDb.DB_NAME) {
     /** 只解析备份内容（用于导入前预览），不改数据库。 */
     suspend fun readBackup(source: InputStream): BackupFile =
         backupIo.readBackup(source)
+
+    // ---- 规范 §12：恢复到新一代存储，验证通过后才切换活动指针 ----
+
+    sealed interface RestoreOutcome {
+        data class Ok(val inserted: Int, val updated: Int, val newEpoch: String, val warnings: List<String>) : RestoreOutcome
+        data class Failed(val message: String) : RestoreOutcome
+    }
+
+    /**
+     * 整体恢复（规范 §12）：**新一代存储 + 小型活动指针**，不用"就地覆盖"冒充原子操作。
+     *
+     * 关键性质：
+     *  - 活动库在整个过程中**始终可读**，指针切换前它一直是权威；
+     *  - 新库建在另一个文件里，导入后逐项验证，验证不通过就丢弃新库、保留旧库；
+     *  - 切换点是一次 AtomicFile 写（active.json）；
+     *  - 旧 epoch 的库文件与附件一律保留，不在同一次启动里清理。
+     */
+    suspend fun restoreIntoNewStore(source: InputStream): RestoreOutcome = withContext(Dispatchers.IO) {
+        val p = provider ?: return@withContext RestoreOutcome.Failed("测试模式下不支持切换存储")
+        val c = control ?: return@withContext RestoreOutcome.Failed("测试模式下不支持切换存储")
+
+        // 先把备份落到临时文件：既要解析校验、又要导两次（预检 + 实际导入）
+        val staged = File(appContext.cacheDir, "restore-${System.currentTimeMillis()}.zip")
+        val fromEpoch = p.storeEpoch
+        val newEpoch = c.newEpoch()
+        val pointer = StorePointer(epoch = newEpoch, dbName = c.dbNameFor(newEpoch))
+        val target = appContext.getDatabasePath(pointer.dbName)
+
+        try {
+            source.use { input -> staged.outputStream().use { input.copyTo(it) } }
+
+            // 第 1 步：校验包（清单逐项核对），不通过直接拒绝，旧库分毫不动
+            val declared = staged.inputStream().use { BackupIo(appContext).readBackup(it) }
+
+            // 第 2 步：在**新文件**里建库并导入
+            target.parentFile?.mkdirs()
+            if (target.exists()) target.delete()
+            val newDb = p.openForVerification(pointer)
+            val applied = try {
+                val imported = staged.inputStream().use { BackupIo(appContext).import(it, newDb) }
+
+                // 第 3 步：验证结构与业务关系
+                val version = newDb.readableDatabase.version
+                if (version != NotesDb.DB_VERSION) {
+                    error("新库 schema 版本为 $version，期望 ${NotesDb.DB_VERSION}")
+                }
+                val counts = countEntities(newDb)
+                val expectedNotes = declared.notes.size
+                if (counts.first < expectedNotes) {
+                    error("新库只有 ${counts.first} 条笔记，备份声明 $expectedNotes 条")
+                }
+                imported
+            } finally {
+                // 必须先关掉：同一个文件不能同时被两个 helper 打开着去切换
+                newDb.close()
+            }
+
+            // 第 6 步：先记恢复意图，再发布指针
+            c.markRecoveryPrepared(fromEpoch, newEpoch)
+
+            // 第 7/8 步：切换活动指针并打开新库核对
+            p.switchTo(pointer)
+            val reopened = p.require()
+            val reopenedEpoch = p.storeEpoch
+            if (reopenedEpoch != newEpoch) {
+                error("切换后活动 epoch 为 $reopenedEpoch，期望 $newEpoch")
+            }
+            val finalCount = countEntities(reopened).first
+            if (finalCount < declared.notes.size) {
+                error("切换后只读到 $finalCount 条笔记")
+            }
+
+            // 第 9 步：恢复完成；旧 epoch 与恢复前备份一律保留
+            c.clearRecovery()
+            RestoreOutcome.Ok(applied.inserted, applied.updated, newEpoch, applied.warnings)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            cleanupFailedRestore(c, target)
+            throw e
+        } catch (e: Throwable) {
+            // 任何中断都只丢弃"未完成的新库"，活动库与旧 epoch 保持原样
+            cleanupFailedRestore(c, target)
+            RestoreOutcome.Failed(e.message ?: e::class.java.simpleName)
+        } finally {
+            staged.delete()
+        }
+    }
+
+    private fun cleanupFailedRestore(control: StoreControl, target: File) {
+        // 只有"指针还没切过去"时才丢弃新库；已切换则不回滚（旧代仍保留，可人工选择）
+        val active = runCatching { control.activePointer().dbName }.getOrNull()
+        if (active != target.name) {
+            runCatching { target.delete() }
+            runCatching { File(target.absolutePath + "-journal").delete() }
+            runCatching { control.clearRecovery() }
+        }
+    }
+
+    private fun countEntities(db: NotesDb): Pair<Int, Int> {
+        val notes = db.readableDatabase.rawQuery("SELECT COUNT(*) FROM notes", null)
+            .use { it.moveToFirst(); it.getInt(0) }
+        val todos = db.readableDatabase.rawQuery("SELECT COUNT(*) FROM todos", null)
+            .use { it.moveToFirst(); it.getInt(0) }
+        return notes to todos
+    }
 
     // ---- 测试用只读探针（不影响生产路径）----
 
