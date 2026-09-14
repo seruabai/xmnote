@@ -587,8 +587,12 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 val stripNames = imageNames.filterNot { it.startsWith("aud_") || it in NoteMarkup.imageNames(body) }
                 if (stripNames.isNotEmpty()) {
                     ImagesStrip(stripNames) { name ->
+                        // 规范 §2/§10：移除图片只改引用，绝不在这里删文件。
+                        // 原实现在正文尚未保存成功时就 ImageStore.deleteFile()，
+                        // 保存失败即形成"正文还引用着、文件已经没了"的不可恢复状态。
+                        // 物理清理移交给独立的受保护清理入口（需同时确认当前版本、
+                        // 历史版本、回收站与备份引用），阶段 A 起一律不做。
                         imageNames.remove(name)
-                        ImageStore.deleteFile(context, name)
                         markDirty()
                     }
                     Spacer(Modifier.height(12.dp))

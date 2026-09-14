@@ -1,4 +1,4 @@
-﻿package com.purenote.local.data
+package com.purenote.local.data
 
 import android.content.ContentValues
 import android.content.Context
@@ -7,7 +7,14 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.util.UUID
 
 /** [name] 仅测试需要（用独立库文件，避免污染真实数据）；应用内一律用默认库名。 */
-class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(context, name, null, DB_VERSION) {
+class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
+    context,
+    name,
+    null,
+    DB_VERSION,
+    // 规范 §6.3：不安装处理器会落到 Android 默认实现，其 onCorruption 会删除数据库文件。
+    PreserveDatabaseErrorHandler(),
+) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(SQL_CREATE_FOLDERS)
