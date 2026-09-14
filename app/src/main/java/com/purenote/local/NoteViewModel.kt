@@ -19,7 +19,9 @@ import com.purenote.local.data.NoteKind
 import com.purenote.local.data.NotePrefill
 import com.purenote.local.data.NoteRepository
 import com.purenote.local.data.RepeatRule
+import com.purenote.local.data.SaveResult
 import com.purenote.local.data.SortOrder
+import com.purenote.local.data.StorageFailure
 import com.purenote.local.data.Todo
 import com.purenote.local.core.TodoDates
 import com.purenote.local.notify.Reminders
@@ -359,7 +361,17 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         onDone: (Long) -> Unit,
     ) {
         viewModelScope.launch {
-            val id = repo.createNote(kind, title, body, items, images, colorIndex, folderId)
+            // insertOrThrow：创建失败会抛异常，绝不能把 -1 当成有效 ID 继续用（规范 §7）
+            val id = try {
+                repo.createNote(kind, title, body, items, images, colorIndex, folderId)
+            } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                throw cancellation
+            } catch (t: Throwable) {
+                _saveFailure.value = StorageFailure.of(t)
+                refresh()
+                return@launch
+            }
+            _saveFailure.value = null
             if (remindAt != null) {
                 repo.setReminder(id, remindAt, repeat, allDay)
                 Reminders.schedule(getApplication(), Reminders.KIND_NOTE, id, remindAt)
@@ -368,6 +380,14 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
             onDone(id)
         }
     }
+
+    /**
+     * 最近一次写入的失败原因；null = 保存成功或尚未保存。
+     * 规范 §8：界面在磁盘慢、写入失败时必须真实显示"待保存/保存失败"，
+     * 而不是一律当成已保存。
+     */
+    private val _saveFailure = MutableStateFlow<StorageFailure?>(null)
+    val saveFailure: StateFlow<StorageFailure?> = _saveFailure.asStateFlow()
 
     fun updateNote(
         noteId: Long,
@@ -384,12 +404,28 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         allDay: Boolean = false,
     ) {
         viewModelScope.launch {
-            repo.saveExisting(
-                noteId, kind, title, body, items, images, colorIndex, folderId, pinned, remindAt,
-                repeat, allDay,
-            )
-            if (remindAt == null) Reminders.cancel(getApplication(), Reminders.KIND_NOTE, noteId)
-            else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, noteId, remindAt)
+            // 规范 §2：原实现丢弃 saveExisting 的返回值并不加判断地重排提醒 + refresh()，
+            // 保存失败会被静默报告成成功。现在必须按回执分流。
+            when (
+                val result = repo.saveExisting(
+                    noteId, kind, title, body, items, images, colorIndex, folderId, pinned, remindAt,
+                    repeat, allDay,
+                )
+            ) {
+                is SaveResult.Saved -> {
+                    _saveFailure.value = null
+                    // 提醒只在数据确实落库后才重排：提交与系统提醒分离（规范 §9）
+                    if (remindAt == null) Reminders.cancel(getApplication(), Reminders.KIND_NOTE, noteId)
+                    else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, noteId, remindAt)
+                }
+                SaveResult.NotFound -> {
+                    // 记录已不存在（被永久删除）：不重排提醒，也不伪造成功
+                    _saveFailure.value = StorageFailure.UNKNOWN
+                }
+                is SaveResult.Failed -> {
+                    _saveFailure.value = result.reason
+                }
+            }
             refresh()
         }
     }

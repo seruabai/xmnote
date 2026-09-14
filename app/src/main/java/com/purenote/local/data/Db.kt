@@ -16,6 +16,22 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
     PreserveDatabaseErrorHandler(),
 ) {
 
+    /**
+     * 在一个原生事务内执行 [block]（非 suspend：事务与线程绑定）。
+     * 供需要直接持有 [SQLiteDatabase] 的场景使用；常规写入走 DatabaseExecutor。
+     */
+    fun <T> inTransaction(block: (SQLiteDatabase) -> T): T {
+        val database = writableDatabase
+        database.beginTransaction()
+        try {
+            val result = block(database)
+            database.setTransactionSuccessful()
+            return result
+        } finally {
+            database.endTransaction()
+        }
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(SQL_CREATE_FOLDERS)
         db.execSQL(SQL_CREATE_NOTES)
@@ -104,6 +120,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         colorIndex: Int,
         folderId: Long?,
         now: Long,
+        database: SQLiteDatabase = writableDatabase,
     ): Long {
         val cv = ContentValues().apply {
             put("uuid", newUuid())
@@ -116,7 +133,8 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
             put("created_at", now)
             put("updated_at", now)
         }
-        return writableDatabase.insert("notes", null, cv)
+        // insertOrThrow：普通 insert 失败返回 -1，会被当成一个"有效 ID"继续用下去（规范 §7）
+        return database.insertOrThrow("notes", null, cv)
     }
 
     fun updateNote(
@@ -132,6 +150,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         repeatType: Int = 0,
         allDay: Boolean = false,
         now: Long,
+        database: SQLiteDatabase = writableDatabase,
     ): Int {
         val cv = ContentValues().apply {
             put("kind", if (kind == NoteKind.CHECKLIST) 1 else 0)
@@ -146,7 +165,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
             put("all_day", if (allDay) 1 else 0)
             put("updated_at", now)
         }
-        return writableDatabase.update("notes", cv, "id = ?", arrayOf(id.toString()))
+        return database.update("notes", cv, "id = ?", arrayOf(id.toString()))
     }
 
     fun setColor(id: Long, colorIndex: Int): Int {
@@ -225,14 +244,19 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         return writableDatabase.update("folders", cv, "id = ?", arrayOf(id.toString()))
     }
 
-    fun deleteFolder(id: Long): Int {
-        writableDatabase.update(
+    /**
+     * 删除分类，并把该分类下的笔记移出分类。
+     * [database] 允许调用方并入外层事务：两条语句必须同成同败，
+     * 否则中途失败会留下"分类已删、笔记仍指向它"的悬空引用。
+     */
+    fun deleteFolder(id: Long, database: SQLiteDatabase = writableDatabase): Int {
+        database.update(
             "notes",
             ContentValues().apply { putNull("folder_id") },
             "folder_id = ?",
             arrayOf(id.toString()),
         )
-        return writableDatabase.delete("folders", "id = ?", arrayOf(id.toString()))
+        return database.delete("folders", "id = ?", arrayOf(id.toString()))
     }
 
     // ---- todos ----
@@ -245,6 +269,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         repeatType: Int,
         sortIndex: Int,
         now: Long,
+        database: SQLiteDatabase = writableDatabase,
     ): Long {
         val cv = ContentValues().apply {
             put("uuid", newUuid())
@@ -258,7 +283,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
             put("created_at", now)
             put("updated_at", now)
         }
-        return writableDatabase.insert("todos", null, cv)
+        return database.insert("todos", null, cv)
     }
 
     // 编辑不写 sort_index：位置保持原样（用户 2026-09-13 要求），排序字段只归拖拽更新
@@ -300,13 +325,13 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         return writableDatabase.update("todos", cv, "id = ?", arrayOf(id.toString()))
     }
 
-    fun setTodoDone(id: Long, done: Boolean, now: Long): Int {
+    fun setTodoDone(id: Long, done: Boolean, now: Long, database: SQLiteDatabase = writableDatabase): Int {
         val cv = ContentValues().apply {
             put("done", if (done) 1 else 0)
             put("done_at", if (done) now else null as Long?)
             put("updated_at", now)
         }
-        return writableDatabase.update("todos", cv, "id = ?", arrayOf(id.toString()))
+        return database.update("todos", cv, "id = ?", arrayOf(id.toString()))
     }
 
     fun setDoneForChildren(parentId: Long, done: Boolean, now: Long): Int {
@@ -318,13 +343,14 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         return writableDatabase.update("todos", cv, "parent_id = ?", arrayOf(parentId.toString()))
     }
 
-    fun deleteTodoTree(id: Long): Int {
-        val count = writableDatabase.delete("todos", "parent_id = ?", arrayOf(id.toString()))
-        return count + writableDatabase.delete("todos", "id = ?", arrayOf(id.toString()))
+    /** 删除待办及其全部子项。两条语句必须同成同败，否则会留下失去父项的孤儿。 */
+    fun deleteTodoTree(id: Long, database: SQLiteDatabase = writableDatabase): Int {
+        val count = database.delete("todos", "parent_id = ?", arrayOf(id.toString()))
+        return count + database.delete("todos", "id = ?", arrayOf(id.toString()))
     }
 
-    fun deleteSubsOf(parentId: Long): Int =
-        writableDatabase.delete("todos", "parent_id = ?", arrayOf(parentId.toString()))
+    fun deleteSubsOf(parentId: Long, database: SQLiteDatabase = writableDatabase): Int =
+        database.delete("todos", "parent_id = ?", arrayOf(parentId.toString()))
 
     /** 待办整树移入废纸篓（父项连带子项），返回受影响的 id（含子项，用于取消提醒） */
     fun trashTodoTree(id: Long, now: Long): List<Long> {

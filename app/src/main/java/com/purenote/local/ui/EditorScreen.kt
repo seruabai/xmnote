@@ -113,6 +113,7 @@ import com.purenote.local.core.ImageStore
 import com.purenote.local.core.NoteMarkup
 import com.purenote.local.data.ChecklistItem
 import com.purenote.local.data.NoteKind
+import com.purenote.local.data.StorageFailure
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
@@ -392,6 +393,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         DateFormats.yearMonthDayHourMinute(System.currentTimeMillis())
     }
     val words = title.length + body.length + items.sumOf { it.text.length }
+    // 保存回执（规范 §2/§8）：保存失败必须让用户看见
+    val saveFailure by vm.saveFailure.collectAsState()
     val typeScale = preferredTextSize.typeScale()
 
     Scaffold(
@@ -579,8 +582,26 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 "$createdLabel  |  ${words}字",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 20.dp, bottom = 22.dp),
+                modifier = Modifier.padding(top = 20.dp, bottom = if (saveFailure == null) 22.dp else 8.dp),
             )
+
+            // 规范 §8：写入失败时必须如实显示，不能一律当成"已保存"。
+            // 原实现把 saveExisting 的返回值丢掉，界面无从知道内容有没有落库。
+            saveFailure?.let { failure ->
+                Text(
+                    text = when (failure) {
+                        StorageFailure.CORRUPTED -> "数据库处于保全状态，已停止写入（内容仍在屏幕上，请先导出备份）"
+                        StorageFailure.NO_SPACE -> "保存失败：存储空间不足"
+                        StorageFailure.LOCKED -> "保存失败：数据库被占用，稍后自动重试"
+                        StorageFailure.PERMISSION -> "保存失败：没有写入权限"
+                        StorageFailure.UNKNOWN_RESULT -> "保存结果未知：请勿重复编辑，先确认内容"
+                        StorageFailure.UNKNOWN -> "保存失败：内容尚未写入本机"
+                    },
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 22.dp),
+                )
+            }
 
             if (imageNames.isNotEmpty()) {
                 // 附件条只展示正文流之外的遗留附件；正文 [img:] 行已在文中显示缩略图，录音显示录音条

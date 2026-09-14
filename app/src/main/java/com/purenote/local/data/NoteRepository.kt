@@ -16,6 +16,9 @@ class NoteRepository(context: Context) {
     private val appContext = context.applicationContext
     private val db = NotesDb(appContext)
 
+    /** 统一事务入口（规范 §6.1）。多步写操作必须整体提交或整体回滚。 */
+    private val tx = DatabaseExecutor(db)
+
     // ---- notes ----
 
     suspend fun loadNotes(filter: NoteFilter, order: SortOrder = SortOrder.BY_UPDATED): List<Note> =
@@ -81,8 +84,9 @@ class NoteRepository(context: Context) {
         remindAt: Long?,
         repeat: RepeatRule = RepeatRule.NONE,
         allDay: Boolean = false,
-    ): Boolean = withContext(Dispatchers.IO) {
-        db.updateNote(
+    ): SaveResult = try {
+        tx.write { database ->
+            db.updateNote(
             id = id,
             kind = kind,
             title = title,
@@ -94,8 +98,21 @@ class NoteRepository(context: Context) {
             remindAt = remindAt,
             repeatType = repeat.ordinal,
             allDay = allDay,
-            now = System.currentTimeMillis(),
-        ) > 0
+                now = System.currentTimeMillis(),
+                database = database,
+            ).let { affected ->
+                // 影响行数必须恰好为 1：为 0 说明记录已不存在（被永久删除）。
+                // 多行在 SQLite 里不可能出现（条件带主键），但显式校验可让异常早暴露。
+                if (affected > 0) SaveResult.Saved(id, affected) else SaveResult.NotFound
+            }
+        }
+    } catch (cancellation: kotlinx.coroutines.CancellationException) {
+        // 取消不是失败：必须原样传播，否则界面会把"被取消"显示成"保存失败"，
+        // 而调用方可能已经提交，重试就会造成重复写入（规范 §6.1/§15）。
+        throw cancellation
+    } catch (t: Throwable) {
+        // 只归类可理解的错误；原始异常留在边界做诊断，不吞、不伪报成功
+        SaveResult.Failed(StorageFailure.of(t))
     }
 
     suspend fun setColor(id: Long, colorIndex: Int) = withContext(Dispatchers.IO) {
@@ -163,7 +180,8 @@ class NoteRepository(context: Context) {
         db.renameFolder(id, newName)
     }
 
-    suspend fun deleteFolder(id: Long) = withContext(Dispatchers.IO) { db.deleteFolder(id) }
+    /** 删除分类并把其下笔记移出分类：整体一个事务（规范 §2）。 */
+    suspend fun deleteFolder(id: Long) = tx.write { database -> db.deleteFolder(id, database) }
 
     suspend fun folderCounts(): Map<Long, Int> = withContext(Dispatchers.IO) {
         val map = mutableMapOf<Long, Int>()
@@ -228,30 +246,44 @@ class NoteRepository(context: Context) {
      * 勾选父待办时同步所有子任务；切换子待办时则按全部子项重新计算父待办状态。
      * 这样无论变更来自 App 还是桌面悬浮层，父子完成状态都遵循同一规则。
      */
-    suspend fun setTodoDone(todo: Todo, done: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun setTodoDone(todo: Todo, done: Boolean) = tx.write { database ->
         val now = System.currentTimeMillis()
-        db.setTodoDone(todo.id, done, now)
+        db.setTodoDone(todo.id, done, now, database)
         if (!todo.isSubtask) {
+            // 勾选父项要连带全部子项：两条写入必须同成同败，否则会留下
+            // "父项已完成、子项仍未完成"的自相矛盾状态（规范 §6.1）
             db.setDoneForChildren(todo.id, done, now)
         } else {
-            todo.parentId?.let { syncParentDoneFromChildren(it, now) }
+            todo.parentId?.let { syncParentDoneFromChildren(it, now, database) }
         }
     }
 
-    /** 用编辑器中的子任务列表整体替换某父待办的子任务 */
-    suspend fun replaceSubs(parentId: Long, subs: List<Pair<String, Boolean>>) = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        db.deleteSubsOf(parentId)
-        subs.filter { it.first.isNotBlank() }.forEach { (text, done) ->
-            val id = db.insertTodo(parentId, text.trim(), null, false, 0, sortIndex = 0, now = now)
-            if (done) db.setTodoDone(id, true, now)
+    /**
+     * 用编辑器中的子任务列表整体替换某父待办的子任务。
+     *
+     * 规范 §2：原实现"先删全部子任务 → 逐条插入 → 回写父项状态"三步都是裸语句，
+     * 中途失败（磁盘满、进程被杀）会永久丢掉用户原有的全部子任务。
+     * 现在整体在一个事务内，且父项状态依据事务内的实际记录计算。
+     */
+    suspend fun replaceSubs(parentId: Long, subs: List<Pair<String, Boolean>>) =
+        tx.write { database ->
+            val now = System.currentTimeMillis()
+            db.deleteSubsOf(parentId, database)
+            subs.filter { it.first.isNotBlank() }.forEach { (text, done) ->
+                val id = db.insertTodo(
+                    parentId, text.trim(), null, false, 0,
+                    sortIndex = 0, now = now, database = database,
+                )
+                if (done) db.setTodoDone(id, true, now, database)
+            }
+            syncParentDoneFromChildren(parentId, now, database)
         }
-        syncParentDoneFromChildren(parentId, now)
-    }
 
     /** 无子项时保留父待办自己的状态；存在子项时，父项仅在所有子项完成后才完成。 */
-    private fun syncParentDoneFromChildren(parentId: Long, now: Long) {
-        db.readableDatabase.rawQuery(
+    private fun syncParentDoneFromChildren(parentId: Long, now: Long, database: android.database.sqlite.SQLiteDatabase) {
+        // 必须用事务传入的这**一个**连接：WAL 下 readableDatabase 可能是另一条连接，
+        // 看不到本事务内刚插入的子项，父项状态会算错（规范 §6.1）。
+        database.rawQuery(
             "SELECT COUNT(*), SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END) FROM todos WHERE parent_id = ?",
             arrayOf(parentId.toString()),
         ).use { cursor ->
@@ -259,7 +291,7 @@ class NoteRepository(context: Context) {
             val childCount = cursor.getInt(0)
             val incompleteCount = cursor.getInt(1)
             TodoCompletion.parentDone(childCount, incompleteCount)?.let { parentDone ->
-                db.setTodoDone(parentId, parentDone, now)
+                db.setTodoDone(parentId, parentDone, now, database)
             }
         }
     }
@@ -276,7 +308,8 @@ class NoteRepository(context: Context) {
         }
     }
 
-    suspend fun deleteTodoTree(id: Long) = withContext(Dispatchers.IO) { db.deleteTodoTree(id) }
+    /** 删除待办及其全部子项：整体一个事务，避免只删掉子项就中断而留下孤儿（规范 §2）。 */
+    suspend fun deleteTodoTree(id: Long) = tx.write { database -> db.deleteTodoTree(id, database) }
 
     suspend fun trashTodoTree(id: Long): List<Long> = withContext(Dispatchers.IO) {
         db.trashTodoTree(id, System.currentTimeMillis())
