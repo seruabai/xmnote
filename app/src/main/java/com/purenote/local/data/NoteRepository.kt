@@ -2,6 +2,7 @@ package com.purenote.local.data
 
 import android.content.Context
 import android.database.Cursor
+import com.purenote.local.backup.BackupCodec
 import com.purenote.local.backup.BackupFile
 import com.purenote.local.backup.BackupIo
 import com.purenote.local.core.ChecklistCodec
@@ -545,6 +546,26 @@ class NoteRepository(context: Context, dbName: String? = null) {
     internal fun debugRevision(noteId: Long): Long =
         db.readableDatabase.rawQuery("SELECT revision FROM notes WHERE id = ?", arrayOf(noteId.toString()))
             .use { c -> c.moveToFirst(); c.getLong(0) }
+
+    /** 记录数（规范 §14 异常大规模删改检测的输入） */
+    suspend fun noteCount(): Int = tx.read { database ->
+        database.rawQuery("SELECT COUNT(*) FROM notes", null).use { it.moveToFirst(); it.getInt(0) }
+    }
+
+    /**
+     * 内容变更戳：notes/todos 里最大的 updated_at。
+     * 规范 §14 要求"有变化才备份"，用它判断自上次备份以来是否真的改过东西。
+     */
+    suspend fun contentStamp(): Long = tx.read { database ->
+        val notes = database.rawQuery("SELECT IFNULL(MAX(updated_at), 0) FROM notes", null)
+            .use { it.moveToFirst(); it.getLong(0) }
+        val todos = database.rawQuery("SELECT IFNULL(MAX(updated_at), 0) FROM todos", null)
+            .use { it.moveToFirst(); it.getLong(0) }
+        maxOf(notes, todos)
+    }
+
+    /** 库身份（规范 §14：每个 libraryId 一个唯一的周期任务） */
+    suspend fun libraryId(): String = tx.read { database -> BackupCodec.libraryId(db) }
 
     internal fun debugVersionCount(noteId: Long): Int =
         db.readableDatabase.rawQuery("SELECT COUNT(*) FROM note_versions WHERE note_id = ?", arrayOf(noteId.toString()))

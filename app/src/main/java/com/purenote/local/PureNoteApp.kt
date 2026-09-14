@@ -28,6 +28,13 @@ class PureNoteApp : Application() {
                 runCatching { repository.purgeExpiredTrash(TRASH_TTL_MS) }
                 runCatching { repository.purgeExpiredTodoTrash(TRASH_TTL_MS) }
             }
+            // 规范 §14：登记周期任务（每 libraryId 唯一），并做一次前台到期检查
+            runCatching {
+                val libraryId = repository.libraryId()
+                com.purenote.local.platform.backup.BackupScheduler.ensureScheduled(this@PureNoteApp, libraryId)
+                com.purenote.local.platform.backup.BackupScheduler
+                    .runImmediatelyIfDue(this@PureNoteApp, libraryId)
+            }
             runCatching {
                 repository.allFutureReminders().forEach { (id, at) ->
                     Reminders.schedule(this@PureNoteApp, Reminders.KIND_NOTE, id, at)

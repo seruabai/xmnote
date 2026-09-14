@@ -176,6 +176,29 @@ fun SettingsScreen(vm: NoteViewModel) {
                     ArrowRow("从备份恢复", enabled = !backupRunning, progress = backupRunning) {
                         importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                     }
+
+                    // 规范 §14：只能显示**最后一次实际成功时间**。
+                    // 周期任务是"尽力调度"，系统会因电量、待机、配额推迟执行，
+                    // 显示"每 30 分钟备份一次"是在骗用户。
+                    val appContext = LocalContext.current.applicationContext
+                    val lastAuto = remember(backupState, appContext) {
+                        com.purenote.local.feature.backup.LocalBackupStore
+                            .forApp(appContext)
+                            .readState()
+                            .lastSuccessAt
+                    }
+                    Text(
+                        if (lastAuto <= 0L) {
+                            "自动备份：尚未执行过（首次成功后会显示时间）"
+                        } else {
+                            "自动备份：上次成功 " +
+                                DateFormats.smartDate(lastAuto) + " " + DateFormats.hourMinute(lastAuto) +
+                                "（由系统择机执行，可能推迟）"
+                        },
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
                 }
             }
 

@@ -52,6 +52,9 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.activity.compose)
 
+  // 规范 §3：自动备份的周期调度（尽力执行，系统可能推迟）
+  implementation(libs.androidx.work.runtime.ktx)
+
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.lifecycle.viewmodel.ktx)
