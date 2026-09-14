@@ -32,6 +32,16 @@ object BackupJson {
         }
         return parsed
     }
+
+    fun encodeManifest(manifest: BackupManifest): String =
+        json.encodeToString(BackupManifest.serializer(), manifest)
+
+    /** 清单解析失败同样抛 [BackupFormatException]：宁可拒绝，也不当作"没有清单"放行。 */
+    fun decodeManifest(text: String): BackupManifest = try {
+        json.decodeFromString(BackupManifest.serializer(), text)
+    } catch (e: Exception) {
+        throw BackupFormatException("备份清单无法解析，包可能已损坏", e)
+    }
 }
 
 class BackupFormatException(message: String, cause: Throwable? = null) : Exception(message, cause)

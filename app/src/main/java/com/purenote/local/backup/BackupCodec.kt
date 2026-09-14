@@ -112,6 +112,11 @@ object BackupCodec {
     }
 
     /** 采集本地现状，供 [BackupMerger] 判断新增/覆盖/跳过。 */
+    /** 库身份（规范 §5.1）：备份里记录来源库，跨库导入时用于建映射。 */
+    fun libraryId(db: NotesDb): String =
+        db.readableDatabase.rawQuery("SELECT library_id FROM library_meta WHERE id = 1", null)
+            .use { c -> if (c.moveToFirst()) c.getString(0) ?: "" else "" }
+
     fun snapshot(db: NotesDb): BackupMerger.LocalSnapshot {
         val rdb = db.readableDatabase
         val noteIds = mutableMapOf<String, Long>()

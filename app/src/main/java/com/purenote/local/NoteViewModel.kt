@@ -811,11 +811,21 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                     ctx.contentResolver.openOutputStream(uri)?.use { out ->
                         tmp.inputStream().use { it.copyTo(out) }
                     } ?: throw IllegalStateException("无法写入所选位置")
+
+                    // 规范 §11.3：SAF 提供者不保证原子 rename、可靠 fsync 或立即可读回。
+                    // 写完后必须重新打开并核对字节；核不上就如实说"尚未验证"，
+                    // 绝不能因为"写调用成功了"就把这份外部副本当成有效备份
+                    // （它可能是下一页就被覆盖的旧有效副本的替代品）。
+                    val unverified = verifyExternalCopy(ctx, uri, tmp)
                     BackupState.Done(
-                        title = "导出完成",
-                        summary = result.summary + if (result.missingAttachments > 0) {
-                            "。有 ${result.missingAttachments} 个附件文件缺失，未能打包"
-                        } else "",
+                        title = if (unverified == null) "导出完成" else "导出完成（尚未验证）",
+                        summary = result.summary +
+                            if (result.missingAttachments > 0) {
+                                "。有 ${result.missingAttachments} 个附件文件缺失，未能打包"
+                            } else {
+                                ""
+                            } +
+                            if (unverified != null) "。$unverified" else "",
                     )
                 }
             } catch (e: CancellationException) {
@@ -826,6 +836,51 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                 tmp.delete()
             }
         }
+    }
+
+    /**
+     * 读回外部副本并核对大小与 SHA-256。
+     * @return null 表示已核实；否则返回给用户看的"尚未验证"说明。
+     */
+    private fun verifyExternalCopy(ctx: Context, uri: Uri, tmp: File): String? = try {
+        val expectedSize = tmp.length()
+        val readBackSize = ctx.contentResolver.openInputStream(uri)?.use { countBytes(it) }
+        when {
+            readBackSize == null -> "已写出，但无法读取回来验证"
+            readBackSize != expectedSize ->
+                "已写出，但读回大小不符（写出 $expectedSize，读回 $readBackSize）"
+            else -> {
+                val written = tmp.inputStream().use { sha256Of(it) }
+                val readBack = ctx.contentResolver.openInputStream(uri)?.use { sha256Of(it) }
+                if (readBack != null && readBack == written) null else "已写出，但读回校验值不符"
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        "已写出，但验证失败：${e.message ?: e::class.java.simpleName}"
+    }
+
+    private fun countBytes(input: java.io.InputStream): Long {
+        var total = 0L
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+        }
+        return total
+    }
+
+    private fun sha256Of(input: java.io.InputStream): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            digest.update(buffer, 0, read)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /** 只解析备份内容供 UI 弹确认框，不写库。 */
