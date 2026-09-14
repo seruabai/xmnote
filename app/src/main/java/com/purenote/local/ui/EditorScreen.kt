@@ -792,12 +792,11 @@ private fun TextNoteBody(
                         return if (lineEnd < text.length) lineEnd + 1 else lineEnd
                     }
                 } else {
+                    // 标题标记与行首标签都是"控件不是文本"，光标一律钳到内容起点。
+                    // 曾只护 tagLen，标题的 "# " 不设防 → 光标可停在标记内部，退格/输入都会把标题拆坏。
                     val info = NoteMarkup.tagInfo(lineText)
-                    if (info.tagLen > 0) {
-                        val lo = lineStart + info.headLen
-                        val hi = lo + info.tagLen
-                        if (p in lo until hi) return hi
-                    }
+                    val contentStart = lineStart + info.headLen + info.tagLen
+                    if (contentStart > lineStart && p in lineStart until contentStart) return contentStart
                 }
                 if (nl == -1) break
                 search = nl + 1
@@ -824,7 +823,10 @@ private fun TextNoteBody(
         value = tfv,
         // 不传 textStyle 会回落到默认样式：输入文字比"开始书写或"占位小且首行位置错位
         textStyle = bodyTextStyle,
-        onValueChange = { raw ->
+        onValueChange = { raw0 ->
+            // 先保证图片行是完整整行，再钳制光标：否则光标会停在标记内部
+            val normalized = NoteMarkup.terminateTrailingImageLine(raw0.text)
+            val raw = if (normalized === raw0.text) raw0 else raw0.copy(text = normalized)
             val new = clampSelection(raw)
             val oldText = tfv.text
             onCursor(new.selection.end)
@@ -843,20 +845,11 @@ private fun TextNoteBody(
                     onChange(patched)
                     return@BasicTextField
                 }
-                // 图片行被追加字符（"[img:x.jpg]c"）→ 把追加内容拆到下一行，保持图片行原子
-                val insAt = new.selection.end - 1
-                val insLineRange = NoteMarkup.lineRangeAt(new.text, insAt.coerceIn(0, new.text.length))
-                val insLine = new.text.substring(insLineRange.first, insLineRange.last + 1)
-                if (insLine.startsWith(NoteMarkup.IMG_PREFIX) && !NoteMarkup.isImageLine(insLine)) {
-                    val close = insLine.indexOf(']')
-                    if (close in 1 until insLine.length) {
-                        val fixedLine = insLine.substring(0, close + 1) + "\n" + insLine.substring(close + 1)
-                        val patched = new.text.substring(0, insLineRange.first) + fixedLine +
-                            new.text.substring(insLineRange.last + 1)
-                        tfv = new.copy(text = patched, selection = androidx.compose.ui.text.TextRange((insAt + 2).coerceAtMost(patched.length)))
-                        onChange(patched)
-                        return@BasicTextField
-                    }
+                // 图片行被追加字符（"![](x.jpg)c"）→ 把追加内容拆到下一行，保持图片行原子
+                NoteMarkup.imageLineAppendIntercept(new.text, new.selection.end)?.let { (patched, cursor) ->
+                    tfv = new.copy(text = patched, selection = androidx.compose.ui.text.TextRange(cursor))
+                    onChange(patched)
+                    return@BasicTextField
                 }
             }
             tfv = new
@@ -1169,12 +1162,23 @@ internal fun backspaceIntercept(oldText: String, cursorAfter: Int): Pair<String,
     val cursorLineText = oldText.substring(cursorLineRange.first, cursorLineRange.last + 1)
     val info = NoteMarkup.tagInfo(cursorLineText)
     val contentStart = cursorLineRange.first + info.headLen + info.tagLen
-    if (info.tagLen > 0 && delIdx == contentStart - 1) {
-        val newLine = cursorLineText.substring(0, info.headLen) +
-            cursorLineText.substring(info.headLen + info.tagLen)
-        val patched = oldText.substring(0, cursorLineRange.first) + newLine +
-            oldText.substring(cursorLineRange.last + 1)
-        return patched to (cursorLineRange.first + info.headLen)
+    if (delIdx == contentStart - 1) {
+        // 标签行（勾选/列表/引用/缩进）：整个标签一次移除，标题标记保留
+        if (info.tagLen > 0) {
+            val newLine = cursorLineText.substring(0, info.headLen) +
+                cursorLineText.substring(info.headLen + info.tagLen)
+            val patched = oldText.substring(0, cursorLineRange.first) + newLine +
+                oldText.substring(cursorLineRange.last + 1)
+            return patched to (cursorLineRange.first + info.headLen)
+        }
+        // 标题行（无其他标签）：整个 "# " 一次移除。
+        // 否则默认退格只删掉标记里的空格 → "# 标题" 变成字面量 "#标题"，标题样式静默丢失。
+        if (info.headLen > 0) {
+            val newLine = cursorLineText.substring(info.headLen)
+            val patched = oldText.substring(0, cursorLineRange.first) + newLine +
+                oldText.substring(cursorLineRange.last + 1)
+            return patched to cursorLineRange.first
+        }
     }
     return null
 }
@@ -1192,7 +1196,10 @@ internal fun transformNoteText(raw: String, typeScale: NoteTypeScale): NoteTextT
     val origToTrans = IntArray(raw.length + 1)
     val imageBlocks = mutableListOf<ImageBlock>()
     var pos = 0
-    for ((idx, line) in raw.split('\n').withIndex()) {
+    // 按行切分只做一次：曾在循环体内反复 raw.split('\n')，复杂度 O(行数²)，
+    // 800 行笔记每次按键 40ms+（该函数每按键至少跑两遍：composition + filter）
+    val lines = raw.split('\n')
+    for ((idx, line) in lines.withIndex()) {
         val level = NoteMarkup.headingLevel(line)
         val imgName = NoteMarkup.imageNameOf(line)
         val info = NoteMarkup.tagInfo(line)
@@ -1280,7 +1287,7 @@ internal fun transformNoteText(raw: String, typeScale: NoteTypeScale): NoteTextT
             repeat(IMAGE_BLOCK_EXTRA_LINES) { builder.append('\n') }
             imageBlocks += ImageBlock(pos, pos + line.length, blockStart, builder.length)
         }
-        if (idx < raw.split('\n').lastIndex) builder.append('\n')
+        if (idx < lines.lastIndex) builder.append('\n')
         // 图片行行尾（原 '\n'）在追加了空行之后：取最后一个换行后的位置
         if (imgName != null) origToTrans[pos + line.length] = builder.length - 1
         pos += line.length + 1

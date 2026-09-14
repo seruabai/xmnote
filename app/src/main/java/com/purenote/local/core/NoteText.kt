@@ -120,10 +120,15 @@ object NoteMarkup {
         val level = hm?.groupValues?.get(1)?.length ?: 0
         val rest = line.substring(headLen)
         val m = NUMBER_PREFIX_REGEX.find(rest)
+        // 序号超出 Int 上限（如 "13800138000. 张三" / "20260913120000. 会议"）时按普通正文处理。
+        // 曾用 groupValues[1].toInt()，对这类行抛 NumberFormatException：
+        // 首页卡片渲染(tagInfo←withoutHeading←stripHeadingMarkers←NoteCard)直接崩溃，升级迁移(onUpgrade)回滚后每次开库重抛。
+        val bigNumber = m?.groupValues?.get(1)?.toLongOrNull()
         val (tag, tagLen, number) = when {
             rest.startsWith(TASK_TODO) -> Triple(HeadTag.CHECKBOX, TASK_TODO.length, 0)
             rest.startsWith(TASK_DONE) -> Triple(HeadTag.CHECKBOX, TASK_DONE.length, 0)
-            m != null -> Triple(HeadTag.NUMBER, m.value.length, m.groupValues[1].toInt())
+            m != null && bigNumber != null && bigNumber <= Int.MAX_VALUE ->
+                Triple(HeadTag.NUMBER, m.value.length, bigNumber.toInt())
             rest.startsWith(BULLET_PREFIX) -> Triple(HeadTag.BULLET, BULLET_PREFIX.length, 0)
             rest.startsWith(QUOTE_PREFIX) -> Triple(HeadTag.QUOTE, QUOTE_PREFIX.length, 0)
             rest.startsWith(INDENT_PREFIX) -> Triple(HeadTag.INDENT, INDENT_PREFIX.length, 0)
@@ -171,6 +176,17 @@ object NoteMarkup {
         val nl = text.indexOf('\n', pos)
         val end = if (nl == -1) text.length else nl
         return start until maxOf(end, start)
+    }
+
+    /**
+     * 图片行必须是"完整整行"。若它恰好是最后一行且没有尾换行，光标只能停在标记内部
+     * （钳制逻辑在 lineEnd == text.length 时无处可去），此后任何输入都会破坏标记，
+     * 进而让 imageNames(body) 找不到文件、附件从笔记中永久消失。统一补一个尾换行。
+     */
+    fun terminateTrailingImageLine(text: String): String {
+        if (text.isEmpty() || text.endsWith("\n")) return text
+        val lastStart = text.lastIndexOf('\n') + 1
+        return if (isImageLine(text.substring(lastStart))) "$text\n" else text
     }
 
     /** 光标位置所在行的完整内容 */
@@ -239,7 +255,7 @@ object NoteMarkup {
         return when (info.tag) {
             HeadTag.CHECKBOX -> TASK_TODO
             HeadTag.BULLET -> BULLET_PREFIX
-            HeadTag.NUMBER -> "${info.number + 1}. "
+            HeadTag.NUMBER -> "${if (info.number >= Int.MAX_VALUE) 1 else info.number + 1}. "
             HeadTag.QUOTE -> QUOTE_PREFIX
             HeadTag.INDENT -> INDENT_PREFIX
             HeadTag.NONE -> null
@@ -285,6 +301,30 @@ object NoteMarkup {
 
     // ---- 编辑器操作（基于光标位置改行） ----
 
+    /**
+     * 图片行被追加字符时的拆行修复（纯函数便于测试）：
+     * "![](a.jpg)x" → "![](a.jpg)\nx"，保持图片行原子，避免标记被拆散后图片永久消失。
+     *
+     * 标记的结束位置是 [IMG_PREFIX] 之后的第一个 ')'。
+     * 曾用 indexOf(']')：新语法 "![](name)" 里 ']' 位于第 3 个字符，会把标记本身切成 "![]",
+     * 实测 "![](img_1.jpg)c" → "![]\n(img_1.jpg)c"。
+     *
+     * @param cursorAfter 追加字符后的光标位置
+     * @return (新文本, 新光标)；无需修复时返回 null
+     */
+    fun imageLineAppendIntercept(text: String, cursorAfter: Int): Pair<String, Int>? {
+        val insAt = cursorAfter - 1
+        if (insAt < 0 || insAt >= text.length) return null
+        val range = lineRangeAt(text, insAt)
+        val line = text.substring(range.first, range.last + 1)
+        if (!line.startsWith(IMG_PREFIX) || isImageLine(line)) return null
+        val close = line.indexOf(')', IMG_PREFIX.length)
+        if (close !in IMG_PREFIX.length until line.length) return null
+        val fixedLine = line.substring(0, close + 1) + "\n" + line.substring(close + 1)
+        val patched = text.substring(0, range.first) + fixedLine + text.substring(range.last + 1)
+        return patched to (insAt + 2).coerceAtMost(patched.length)
+    }
+
     /** 用替换后的行重建正文 */
     fun replaceLine(text: String, range: IntRange, newLine: String): String =
         text.substring(0, range.first) + newLine + text.substring(range.last + 1)
@@ -294,11 +334,14 @@ object NoteMarkup {
         val range = lineRangeAt(text, cursor)
         val line = text.substring(range.first, range.last + 1)
         val tag = IMG_PREFIX + fileName + IMG_SUFFIX
-        return if (line.isBlank()) {
+        val out = if (line.isBlank()) {
             replaceLine(text, range, tag)
         } else {
-            text.substring(0, range.last + 1) + "\n" + tag
+            // 必须拼回本行之后的全部内容：曾漏掉 text.substring(range.last + 1)，
+            // 导致光标行之后的所有行被永久删除（拍照/相册/录音/手写四个入口均触发，500ms 防抖自动落库）。
+            text.substring(0, range.last + 1) + "\n" + tag + text.substring(range.last + 1)
         }
+        return terminateTrailingImageLine(out)
     }
 
     /** 当前光标选中的图片行文件名（用于替换手写图等场景）；无则 null */
