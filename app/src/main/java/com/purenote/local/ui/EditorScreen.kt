@@ -85,6 +85,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -113,8 +114,9 @@ import com.purenote.local.core.ImageStore
 import com.purenote.local.core.NoteMarkup
 import com.purenote.local.data.ChecklistItem
 import com.purenote.local.data.NoteKind
-import com.purenote.local.data.StorageFailure
+import com.purenote.local.feature.notes.SaveStatus
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import java.io.File
@@ -175,6 +177,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     }
 
     if (screen.noteId > 0 && !loaded) {
+        // 建立编辑会话基线：读取当前修订号作为下一次 CAS 的 expectedRevision
+        vm.beginEditorSession(screen.noteId)
         vm.getNoteOnce(screen.noteId) { note ->
             if (note == null) {
                 vm.goHome()
@@ -211,7 +215,11 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         }
     }
 
-    fun markDirty() { revision++ }
+    fun markDirty() {
+        revision++
+        // 规范 §8：每次输入推进编辑代次，保存回执只能标记它自己那一代
+        vm.markEditorEdited()
+    }
 
     fun emptyDraft(): Boolean = when (kind) {
         NoteKind.TEXT -> title.isBlank() && body.isBlank() && imageNames.isEmpty()
@@ -257,9 +265,16 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         }
     }
 
+    val exitScope = rememberCoroutineScope()
+
     fun saveAndClose() {
         persist()
-        vm.goHome()
+        // 规范 §8 flushAndAwait：先等本次提交真正落库，再退出编辑器。
+        // 原实现是 persist() 后立刻 goHome()——界面已经走了，内容还在异步路上。
+        exitScope.launch {
+            vm.awaitPendingSaves()
+            vm.goHome()
+        }
     }
 
     LaunchedEffect(loaded) {
@@ -393,8 +408,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         DateFormats.yearMonthDayHourMinute(System.currentTimeMillis())
     }
     val words = title.length + body.length + items.sumOf { it.text.length }
-    // 保存回执（规范 §2/§8）：保存失败必须让用户看见
-    val saveFailure by vm.saveFailure.collectAsState()
+    // 编辑会话状态机（规范 §8）：待保存 / 保存中 / 保存失败 / 冲突
+    val editorState by vm.editorState.collectAsState()
     val typeScale = preferredTextSize.typeScale()
 
     Scaffold(
@@ -582,26 +597,34 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 "$createdLabel  |  ${words}字",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 20.dp, bottom = if (saveFailure == null) 22.dp else 8.dp),
+                modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
             )
 
-            // 规范 §8：写入失败时必须如实显示，不能一律当成"已保存"。
-            // 原实现把 saveExisting 的返回值丢掉，界面无从知道内容有没有落库。
-            saveFailure?.let { failure ->
+            // 规范 §8：必须如实区分"还没存"与"存好了"。
+            // 原实现把 saveExisting 的返回值丢掉，界面无从知道内容有没有落库；
+            // 现在由状态机给出，且旧回执只能标记它自己那一代次。
+            val statusText = when (editorState.saveStatus) {
+                SaveStatus.SAVING -> "保存中…"
+                SaveStatus.PENDING -> "待保存"
+                SaveStatus.FAILED -> editorState.failure ?: "保存失败"
+                SaveStatus.CONFLICT -> editorState.failure ?: "已在别处被修改"
+                SaveStatus.IDLE -> null
+            }
+            if (statusText != null) {
                 Text(
-                    text = when (failure) {
-                        StorageFailure.CONFLICT -> "这条笔记已在别处被修改，本地内容未覆盖对方（请先复制备份再决定）"
-                        StorageFailure.CORRUPTED -> "数据库处于保全状态，已停止写入（内容仍在屏幕上，请先导出备份）"
-                        StorageFailure.NO_SPACE -> "保存失败：存储空间不足"
-                        StorageFailure.LOCKED -> "保存失败：数据库被占用，稍后自动重试"
-                        StorageFailure.PERMISSION -> "保存失败：没有写入权限"
-                        StorageFailure.UNKNOWN_RESULT -> "保存结果未知：请勿重复编辑，先确认内容"
-                        StorageFailure.UNKNOWN -> "保存失败：内容尚未写入本机"
-                    },
+                    text = statusText,
                     fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.error,
+                    color = if (editorState.saveStatus == SaveStatus.IDLE) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else if (editorState.saveStatus == SaveStatus.PENDING || editorState.saveStatus == SaveStatus.SAVING) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
                     modifier = Modifier.padding(bottom = 22.dp),
                 )
+            } else {
+                Spacer(Modifier.height(14.dp))
             }
 
             if (imageNames.isNotEmpty()) {

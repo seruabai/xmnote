@@ -24,6 +24,11 @@ import com.purenote.local.data.SortOrder
 import com.purenote.local.data.StorageFailure
 import com.purenote.local.data.Todo
 import com.purenote.local.core.TodoDates
+import com.purenote.local.feature.notes.EditorEvent
+import com.purenote.local.feature.notes.EditorReducer
+import com.purenote.local.feature.notes.EditorState
+import com.purenote.local.feature.notes.SaveCommand
+import com.purenote.local.feature.notes.SaveCoordinator
 import com.purenote.local.notify.Reminders
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -32,12 +37,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.zip.ZipException
+
+/**
+ * 存储代次（规范 §5.1）：阶段 F 会从 library_meta 读取，并在切换/恢复活动存储时更换。
+ * 当前是单存储实现，取值稳定即可；它的作用是拒绝"切换之后才到达的旧写入"。
+ */
+private const val STORE_EPOCH = "local"
 
 sealed interface Screen {
     data object Home : Screen
@@ -360,18 +372,20 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         allDay: Boolean = false,
         onDone: (Long) -> Unit,
     ) {
-        viewModelScope.launch {
+        lastSaveJob = viewModelScope.launch {
             // insertOrThrow：创建失败会抛异常，绝不能把 -1 当成有效 ID 继续用（规范 §7）
             val id = try {
                 repo.createNote(kind, title, body, items, images, colorIndex, folderId)
             } catch (cancellation: kotlinx.coroutines.CancellationException) {
                 throw cancellation
             } catch (t: Throwable) {
-                _saveFailure.value = StorageFailure.of(t)
+                reduceEditor(EditorEvent.SaveFailed(describe(StorageFailure.of(t))))
                 refresh()
                 return@launch
             }
-            _saveFailure.value = null
+            // 新建成功后把会话基线重置到 revision=1：
+            // 否则编辑器仍以为基线是 0，下一次保存的 CAS 必然冲突（规范 §7/§8）。
+            reduceEditor(EditorEvent.Loaded(content = "", revision = 1L))
             if (remindAt != null) {
                 repo.setReminder(id, remindAt, repeat, allDay)
                 Reminders.schedule(getApplication(), Reminders.KIND_NOTE, id, remindAt)
@@ -382,12 +396,52 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 最近一次写入的失败原因；null = 保存成功或尚未保存。
-     * 规范 §8：界面在磁盘慢、写入失败时必须真实显示"待保存/保存失败"，
-     * 而不是一律当成已保存。
+     * 编辑器会话状态（规范 §8）。界面据此显示 待保存 / 保存中 / 保存失败 / 冲突，
+     * 并据此决定下一次 CAS 的 expectedRevision。
      */
-    private val _saveFailure = MutableStateFlow<StorageFailure?>(null)
-    val saveFailure: StateFlow<StorageFailure?> = _saveFailure.asStateFlow()
+    private val _editorState = MutableStateFlow(EditorReducer.initial("", ""))
+    val editorState: StateFlow<EditorState> = _editorState.asStateFlow()
+
+    /** 同一条笔记最多一个写入在途（规范 §8） */
+    private val saveCoordinator = SaveCoordinator.forRepository(repo)
+
+    /** 最近一次提交的任务，供 flushAndAwait 使用（规范 §8：主动返回前等待提交完成） */
+    private var lastSaveJob: Job? = null
+
+    /**
+     * 规范 §8：主动返回时执行 flushAndAwait——等待最新编辑代次真正提交后再离开。
+     * 不做这一步就会出现"点了返回、界面已经退出、内容其实没落库"。
+     * 系统杀进程不保证执行该流程（规范已声明）。
+     */
+    suspend fun awaitPendingSaves() {
+        lastSaveJob?.join()
+    }
+
+    private fun reduceEditor(event: EditorEvent) {
+        _editorState.update { EditorReducer.reduce(it, event) }
+    }
+
+    /**
+     * 进入编辑器时建立会话基线：读取当前修订号作为 expectedRevision。
+     * 规范 §8：只有同一会话自己已确认的连续提交，才能推进下一次命令的预期修订。
+     */
+    fun beginEditorSession(noteId: Long) {
+        viewModelScope.launch {
+            val sessionId = java.util.UUID.randomUUID().toString().replace("-", "")
+            val base = EditorReducer.initial(sessionId = sessionId, storeEpoch = STORE_EPOCH)
+            val revision = if (noteId > 0) repo.noteRevision(noteId) else null
+            _editorState.value = if (noteId > 0 && revision == null) {
+                EditorReducer.reduce(base, EditorEvent.LoadFailed)
+            } else {
+                EditorReducer.reduce(base, EditorEvent.Loaded(content = "", revision = revision ?: 0L))
+            }
+        }
+    }
+
+    /** 用户改了内容：代次 +1，界面转为"待保存" */
+    fun markEditorEdited() {
+        reduceEditor(EditorEvent.Edited(_editorState.value.content))
+    }
 
     fun updateNote(
         noteId: Long,
@@ -403,36 +457,56 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         repeat: RepeatRule = RepeatRule.NONE,
         allDay: Boolean = false,
     ) {
-        viewModelScope.launch {
-            // 规范 §2：原实现丢弃 saveExisting 的返回值并不加判断地重排提醒 + refresh()，
-            // 保存失败会被静默报告成成功。现在必须按回执分流。
-            when (
-                val result = repo.saveExisting(
-                    noteId, kind, title, body, items, images, colorIndex, folderId, pinned, remindAt,
-                    repeat, allDay,
-                )
-            ) {
+        val state = _editorState.value
+        // 记录已不存在 / 加载失败：不写入，也不要把内容伪装成已保存（规范 §8）
+        if (state.readOnly) return
+        lastSaveJob = viewModelScope.launch {
+            // 规范 §8：每次提交携带**编辑器自己确认过的**修订号作为 expectedRevision，
+            // 这样并发覆盖才会被真正检测到（而不是每次读一个最新值再盲写）。
+            // 会话基线可能还没建立（beginEditorSession 是异步读修订号的）。
+            // 此时绝不能静默丢弃这一笔——那正是"点了返回，内容没存"的来源。
+            // 回退为读取当前修订号（阶段 C 的过渡行为）；基线就绪后一律使用
+            // 编辑器自己确认过的 committedRevision，CAS 才有意义。
+            val expectedRevision = if (state.loaded) {
+                state.committedRevision
+            } else {
+                repo.noteRevision(noteId) ?: return@launch
+            }
+            val command = SaveCommand(
+                noteId = noteId,
+                operationId = java.util.UUID.randomUUID().toString().replace("-", ""),
+                sessionId = state.sessionId,
+                storeEpoch = state.storeEpoch,
+                editGeneration = state.editGeneration,
+                expectedRevision = expectedRevision,
+                kind = kind, title = title, body = body, items = items, images = images,
+                colorIndex = colorIndex, folderId = folderId, pinned = pinned,
+                remindAt = remindAt, repeat = repeat, allDay = allDay,
+            )
+            reduceEditor(EditorEvent.SaveStarted(command.editGeneration))
+            when (val result = saveCoordinator.save(command)) {
                 is SaveResult.Saved -> {
-                    _saveFailure.value = null
+                    reduceEditor(EditorEvent.SaveSucceeded(command.editGeneration, result.revision))
                     // 提醒只在数据确实落库后才重排：提交与系统提醒分离（规范 §9）
                     if (remindAt == null) Reminders.cancel(getApplication(), Reminders.KIND_NOTE, noteId)
                     else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, noteId, remindAt)
                 }
-                is SaveResult.Conflict -> {
-                    // 规范 §7/§8：版本冲突绝不能用"重新读一个 revision 后直接覆盖全文"来解决。
-                    // 保留本地输入，如实告知用户，由阶段 D 的编辑状态机决定如何合并。
-                    _saveFailure.value = StorageFailure.CONFLICT
-                }
-                SaveResult.NotFound -> {
-                    // 记录已不存在（被永久删除）：不重排提醒，也不伪造成功
-                    _saveFailure.value = StorageFailure.UNKNOWN
-                }
-                is SaveResult.Failed -> {
-                    _saveFailure.value = result.reason
-                }
+                is SaveResult.Conflict -> reduceEditor(EditorEvent.SaveConflicted(result.actualRevision))
+                SaveResult.NotFound -> reduceEditor(EditorEvent.SaveFailed("笔记已不存在"))
+                is SaveResult.Failed -> reduceEditor(EditorEvent.SaveFailed(describe(result.reason)))
             }
             refresh()
         }
+    }
+
+    private fun describe(reason: StorageFailure): String = when (reason) {
+        StorageFailure.CONFLICT -> "这条笔记已在别处被修改"
+        StorageFailure.CORRUPTED -> "数据库处于保全状态，已停止写入"
+        StorageFailure.NO_SPACE -> "存储空间不足"
+        StorageFailure.LOCKED -> "数据库被占用"
+        StorageFailure.PERMISSION -> "没有写入权限"
+        StorageFailure.UNKNOWN_RESULT -> "保存结果未知"
+        StorageFailure.UNKNOWN -> "保存失败"
     }
 
     fun setNoteColor(note: Note, colorIndex: Int) {

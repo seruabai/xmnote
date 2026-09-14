@@ -407,6 +407,11 @@ class NoteRepository(context: Context, dbName: String = NotesDb.DB_NAME) {
 
     // ---- 测试用只读探针（不影响生产路径）----
 
+    /** 当前修订号；记录不存在时返回 null（规范 §7 的 expectedRevision 基线） */
+    suspend fun noteRevision(noteId: Long): Long? = tx.read { database ->
+        NoteStore.readRevision(noteId, database)
+    }
+
     internal fun debugRevision(noteId: Long): Long =
         db.readableDatabase.rawQuery("SELECT revision FROM notes WHERE id = ?", arrayOf(noteId.toString()))
             .use { c -> c.moveToFirst(); c.getLong(0) }
