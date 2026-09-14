@@ -131,6 +131,43 @@ class AttachmentStore(
         return digest.digest().toHex()
     }
 
+    /**
+     * 以调用方指定的文件名发布（仍**绝不覆盖**：目标已存在则失败）。
+     *
+     * 之所以保留调用方命名：正文里存的就是文件名，而 `img_`/`aud_`/`draw_` 前缀
+     * 是当前正文格式的一部分（`NoteMarkup.audioNames` 靠 `aud_` 前缀区分录音），
+     * 改成纯 UUID 需要再动一次正文格式与迁移——那正是上一轮出问题的地方。
+     * 这里只取 AttachmentStore 的安全机制：先暂存、校验后、不覆盖地发布。
+     */
+    fun publishAs(staged: File, fileName: String): Outcome {
+        if (!staged.exists()) return Outcome.Failed("暂存文件不存在，可能已被清理")
+        val expectedSize = staged.length()
+        if (expectedSize == 0L) return Outcome.Failed("暂存文件为空")
+        publishedDir.mkdirs()
+        val target = File(publishedDir, fileName)
+        if (target.exists()) return Outcome.Failed("目标文件已存在，拒绝覆盖：$fileName")
+        if (!staged.renameTo(target)) {
+            return try {
+                staged.inputStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+                staged.delete()
+                verifyPublished(target, expectedSize, fileName)
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                target.delete()
+                Outcome.Failed("发布附件失败：" + (t.message ?: t::class.java.simpleName))
+            }
+        }
+        return verifyPublished(target, expectedSize, fileName)
+    }
+
+    /** 生成唯一文件名，保留既有前缀约定。时间戳单独用会在同一毫秒内撞名。 */
+    fun newFileName(prefix: String, extension: String): String {
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US)
+            .format(java.util.Date())
+        val unique = UUID.randomUUID().toString().replace("-", "").take(6)
+        return "$prefix${stamp}_$unique.${normalizeExtension(extension)}"
+    }
+
     fun resolve(fileName: String): File = File(publishedDir, fileName)
 
     /** 释放未被发布的暂存文件（未完成的项受控清理，规范 §10） */
