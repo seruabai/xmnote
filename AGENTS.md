@@ -15,7 +15,7 @@
 ## 1. 项目事实
 
 - 仓库 seruabai/xmnote，产品名“纯记 PureNote”，包名 com.purenote.local。
-- Android 本地优先笔记/待办，当前无网络权限。Kotlin、Compose + Material 3，单 Activity、单模块，手写 SQLite，无 Room/Hilt/Retrofit。
+- Android 本地优先笔记/待办，**数据以本机为准**。网络权限仅用于用户自选的 WebDAV 云同步（默认关闭），除同步外无任何上传。Kotlin、Compose + Material 3，单 Activity、单模块，手写 SQLite，无 Room/Hilt/Retrofit。
 - 版本以 app/build.gradle.kts 为唯一事实源，不在规则文件重复维护版本号。
 - 功能包括文本/清单、图片、分类、搜索、置顶/多选、废纸篓、提醒、悬浮速记、分享导入。
 - 已定风格为奶油暖黄与奶油纸，支持深浅主题；未经用户要求不推翻配色。
