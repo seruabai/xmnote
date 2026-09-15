@@ -6,6 +6,44 @@
 
 ---
 
+## v1.2.21（versionCode 24）
+
+- 日期：2026-09-16
+- 摘要：云能力首版（WebDAV 完整备份包）+ 规范 A0–G 数据可靠性重构一并交付
+- 说明：v1.2.20 只改了编辑器工具栏，未写版本存档块；本次发布的 APK 相对 v1.2.20 同时包含 A0–G 与 H 的全部改动，因此放在同一个存档块里说明。
+
+### 规范 A0–G（数据可靠性，2026-09-15 完成，随本版首次发布）
+- [数据库]修**砖化级缺陷**：超长序号（`13800138000. `）令首页卡片渲染抛异常、应用进不去；同一行数据在 `onUpgrade` 内触发事务回滚导致 `user_version` 恒为 7、每次开库都崩。
+- [编辑器]修「插图吞行」：`insertImageLineAtCursor` 非空行分支未拼回尾部，光标行之后内容被永久删除（500ms 防抖会把它落库）。
+- [图片]修 `indexOf(]`) 用于 `![](` 语法会把图片标记主动拆碎；移除图片改为只改引用，物理删除移交受保护入口。
+- [数据库]v8→**v9 加法迁移**：`revision` / `body_format_version` + 9 张新表（历史快照、操作幂等、附件引用、提醒期望、跨库映射）。
+- [数据层]统一事务入口 `DatabaseExecutor`；`replaceSubs` 三步无事务改为整体提交；保存结果 `SaveResult` 显式返回，界面不再忽略失败。
+- [编辑]新增编辑状态机 + `SaveCoordinator`（每会话最多一个写入在途，旧回执不冒充新内容已保存）；附件改为不可变发布（临时写入→校验→发布）。
+- [备份]整库导出加 `manifest.json` 逐项 SHA-256；导入前全量校验，坏包/截断/改字节/缺附件一律拒绝；SAF 外部副本写后读回核对。
+- [存储]活动存储指针 + 按代恢复：恢复过程当前库始终可读，指针切换前不被替换；旧代次写入被隔离（`StoreChanged`）。
+- [备份]WorkManager 周期自动备份 + 保留策略 + 异常大规模删改时暂停轮换并固定恢复点；只显示实际成功时间。
+
+### H 阶段：云能力（本版新增）
+- [权限]新增 `INTERNET` / `ACCESS_NETWORK_STATE`：只在用户开启云同步并点「立即同步」时联网；未开启时应用不发起任何网络请求（已用服务器日志核对：设置页停留期间零请求）。
+- [云同步]新增 `sync/` 包：`RemoteTransport` 抽象（只有文件动作，无厂商字段）+ `WebDavTransport`（手写 PROPFIND/MKCOL/GET/PUT/DELETE，207 Multi-Status 自研解析，无 XML 依赖）。
+- [云同步]传输单位是**完整备份包**（阶段 E 的 zip），不是逐条记录；首版**只上传**，不做双向同步、不回读覆盖本地、不自动删除远端旧包。
+- [云同步]上传后**读回校验**：大小 + 把远端整包读回来跑清单校验 + 比对 `backupId`，全部通过才记录"同步成功"。
+- [凭据]账号与应用密码用 **AndroidKeyStore + AES-GCM** 加密保存，不写明文、不进日志；Keystore 不可用时保存失败并如实提示，不降级为明文。
+- [设置页]新增「云同步」栏：服务器地址 / 远端目录 / 账号 / 应用密码 + 测试连接 + 立即同步 + 上次成功时间；不做进度百分比（WebDAV 的 PUT 没有可靠回执进度）。
+- [安全]`network_security_config.xml`：明文 HTTP 只对模拟器宿主机（10.0.2.2/10.0.2.3）与回环开放，真实云盘一律 HTTPS。
+- [依赖]新增 OkHttp 4.12.0（含 MockWebServer 做协议级单测）；`BackupIo` 新增 `inspect()` 供云同步上传前后校验同一份包。
+
+### 验证
+- JVM 单测 198 全绿；设备套件 66 通过 0 失败（另 2 项 WebDAV 用例在未提供本地服务器时按 `assumeTrue` 跳过）；Lint 无 error。
+- 端到端：`tools/verify/cloud_sync_webdav.ps1` 起真实 wsgidav 服务器，设备侧完成上传并在服务器目录核对到落盘包与 SHA-256。
+
+### 涉及文件
+- `app/build.gradle.kts`、`gradle/libs.versions.toml`、`app/src/main/AndroidManifest.xml`、`app/src/main/res/xml/network_security_config.xml`
+- `app/src/main/java/com/purenote/local/sync/*`、`ui/CloudSyncSection.kt`、`ui/SettingsScreen.kt`、`NoteViewModel.kt`、`data/NoteRepository.kt`、`backup/*`、`data/*`、`feature/*`、`platform/backup/*`
+- `app/src/test/java/com/purenote/local/sync/*`、`app/src/androidTest/java/com/purenote/local/sync/CloudSyncWebDavTest.kt`、`tools/verify/cloud_sync_webdav.ps1`
+- `wiki/SPEC_REBUILD_MAPPING.md`、`wiki/SPEC_REBUILD_REPORT.md`、`wiki/SYNC_DESIGN.md`、`wiki/DECISIONS.md`、`wiki/TASK_PROGRESS.md`、`wiki/CHANGELOG.md`、`AGENTS.md`、`README.md`
+
+---
 ## v1.2.19（versionCode 22）
 
 - 日期：2026-09-07
