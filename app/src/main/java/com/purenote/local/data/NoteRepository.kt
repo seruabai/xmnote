@@ -245,18 +245,6 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
         db.purgeExpiredTrash(maxAgeMs, System.currentTimeMillis())
     }
 
-    suspend fun allFutureReminders(): List<Pair<Long, Long>> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Pair<Long, Long>>()
-        val now = System.currentTimeMillis()
-        db.readableDatabase.rawQuery(
-            "SELECT id, remind_at FROM notes WHERE trashed = 0 AND remind_at IS NOT NULL AND remind_at > ?",
-            arrayOf(now.toString()),
-        ).use { c ->
-            while (c.moveToNext()) list += c.getLong(0) to c.getLong(1)
-        }
-        list
-    }
-
     // ---- folders ----
 
     suspend fun loadFolders(): List<Folder> = withContext(Dispatchers.IO) {
@@ -483,18 +471,6 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
 
     suspend fun trashCompletedTodos(): List<Long> = withContext(Dispatchers.IO) {
         db.trashCompletedTodos(System.currentTimeMillis())
-    }
-
-    suspend fun allFutureTodoReminders(): List<Pair<Long, Long>> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Pair<Long, Long>>()
-        val now = System.currentTimeMillis()
-        db.readableDatabase.rawQuery(
-            "SELECT id, remind_at FROM todos WHERE trashed = 0 AND done = 0 AND remind_at IS NOT NULL AND remind_at > ?",
-            arrayOf(now.toString()),
-        ).use { c ->
-            while (c.moveToNext()) list += c.getLong(0) to c.getLong(1)
-        }
-        list
     }
 
     // ---- 备份 / 恢复 ----
