@@ -29,6 +29,8 @@ import com.purenote.local.feature.notes.EditorReducer
 import com.purenote.local.feature.notes.EditorState
 import com.purenote.local.feature.notes.SaveCommand
 import com.purenote.local.feature.notes.SaveCoordinator
+import com.purenote.local.notify.AndroidAlarmSink
+import com.purenote.local.notify.ReminderReconciler
 import com.purenote.local.notify.Reminders
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -406,6 +408,9 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     /** 同一条笔记最多一个写入在途（规范 §8） */
     private val saveCoordinator = SaveCoordinator.forRepository(repo)
 
+    /** 提醒协调器（规范 §9）：数据提交与系统提醒分离 */
+    private val reconciler = ReminderReconciler(repo, AndroidAlarmSink(getApplication()))
+
     /** 最近一次提交的任务，供 flushAndAwait 使用（规范 §8：主动返回前等待提交完成） */
     private var lastSaveJob: Job? = null
 
@@ -488,9 +493,9 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
             when (val result = saveCoordinator.save(command)) {
                 is SaveResult.Saved -> {
                     reduceEditor(EditorEvent.SaveSucceeded(command.editGeneration, result.revision))
-                    // 提醒只在数据确实落库后才重排：提交与系统提醒分离（规范 §9）
-                    if (remindAt == null) Reminders.cancel(getApplication(), Reminders.KIND_NOTE, noteId)
-                    else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, noteId, remindAt)
+                    // 规范 §9：期望的提醒状态已经在**保存事务里**落库，这里只负责把它推给平台。
+                    // 协调器会逐个核对修订号，过期期望不会覆盖新提醒。
+                    reconciler.applyPending()
                 }
                 is SaveResult.Conflict -> reduceEditor(EditorEvent.SaveConflicted(result.actualRevision))
                 SaveResult.StoreChanged -> reduceEditor(

@@ -6,6 +6,10 @@ import com.purenote.local.backup.BackupCodec
 import com.purenote.local.backup.BackupFile
 import com.purenote.local.backup.BackupIo
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.notify.ReminderJob
+import com.purenote.local.notify.ReminderStore
+import com.purenote.local.notify.ReminderTarget
+import com.purenote.local.notify.Reminders
 import com.purenote.local.data.store.DatabaseProvider
 import com.purenote.local.data.store.StoreControl
 import com.purenote.local.data.store.StorePointer
@@ -18,7 +22,7 @@ import java.io.InputStream
 /**
  * [dbName] 仅测试需要（用独立库文件，避免污染真实数据）；应用内传 null，走活动存储指针。
  */
-class NoteRepository(context: Context, dbName: String? = null) {
+class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
 
     private val appContext = context.applicationContext
 
@@ -177,6 +181,11 @@ class NoteRepository(context: Context, dbName: String? = null) {
                     )
                     NoteStore.recordOperation(
                         operationId, hash, "note", id, outcome.revision, now, database,
+                    )
+                    // 规范 §9：期望的提醒状态与数据在**同一个事务**里落库。
+                    // 保存失败就没有这条期望，系统闹钟也就不会被改成与数据不一致的样子。
+                    ReminderJobsTable.upsert(
+                        database, Reminders.KIND_NOTE, id, outcome.revision, remindAt, now,
                     )
                     SaveResult.Saved(id, outcome.revision)
                 }
@@ -540,6 +549,58 @@ class NoteRepository(context: Context, dbName: String? = null) {
     }
 
     // ---- 测试用只读探针（不影响生产路径）----
+
+    // ---- 规范 §9：提醒协调所需的数据访问 ----
+
+    override suspend fun pendingJobs(): List<ReminderJob> = tx.read { ReminderJobsTable.pending(it) }
+
+    override suspend fun knownTargets(): List<Pair<String, Long>> = tx.read { ReminderJobsTable.knownTargets(it) }
+
+    override suspend fun desiredTargets(): List<ReminderTarget> = tx.read { database ->
+        val out = mutableListOf<ReminderTarget>()
+        database.rawQuery(
+            "SELECT id, revision, remind_at FROM notes WHERE trashed = 0",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                out += ReminderTarget(Reminders.KIND_NOTE, c.getLong(0), c.getLong(1), if (c.isNull(2)) null else c.getLong(2))
+            }
+        }
+        // 只有顶层待办触发提醒；子项跟随父项
+        database.rawQuery(
+            "SELECT id, revision, remind_at FROM todos WHERE trashed = 0 AND parent_id IS NULL",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                out += ReminderTarget(Reminders.KIND_TODO, c.getLong(0), c.getLong(1), if (c.isNull(2)) null else c.getLong(2))
+            }
+        }
+        out
+    }
+
+    override suspend fun findTarget(kind: String, targetId: Long): ReminderTarget? = tx.read { database ->
+        val table = if (kind == Reminders.KIND_TODO) "todos" else "notes"
+        val extra = if (kind == Reminders.KIND_TODO) " AND parent_id IS NULL" else ""
+        database.rawQuery(
+            "SELECT id, revision, remind_at FROM $table WHERE id = ? AND trashed = 0$extra",
+            arrayOf(targetId.toString()),
+        ).use { c ->
+            if (c.moveToFirst()) {
+                ReminderTarget(kind, c.getLong(0), c.getLong(1), if (c.isNull(2)) null else c.getLong(2))
+            } else {
+                null
+            }
+        }
+    }
+
+    override suspend fun upsertJob(kind: String, targetId: Long, revision: Long, remindAt: Long?) =
+        tx.write { database ->
+            ReminderJobsTable.upsert(database, kind, targetId, revision, remindAt, System.currentTimeMillis())
+        }
+
+    override suspend fun markApplied(kind: String, targetId: Long) = tx.write { database ->
+        ReminderJobsTable.markApplied(database, kind, targetId, System.currentTimeMillis())
+    }
 
     /** 当前修订号；记录不存在时返回 null（规范 §7 的 expectedRevision 基线） */
     suspend fun noteRevision(noteId: Long): Long? = tx.read { database ->

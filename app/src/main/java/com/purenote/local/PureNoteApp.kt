@@ -2,6 +2,8 @@ package com.purenote.local
 
 import android.app.Application
 import com.purenote.local.data.NoteRepository
+import com.purenote.local.notify.AndroidAlarmSink
+import com.purenote.local.notify.ReminderReconciler
 import com.purenote.local.notify.Reminders
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,13 +37,11 @@ class PureNoteApp : Application() {
                 com.purenote.local.platform.backup.BackupScheduler
                     .runImmediatelyIfDue(this@PureNoteApp, libraryId)
             }
+            // 规范 §9：启动时按数据库现状**全量重算**提醒，而不只是"把还有效的重新排一遍"。
+            // 全量重算会把已经不该存在的闹钟也取消掉——换机恢复、误删、时钟变化之后
+            // 残留的闹钟会在错误的时间弹出来，只补不删是清不掉的。
             runCatching {
-                repository.allFutureReminders().forEach { (id, at) ->
-                    Reminders.schedule(this@PureNoteApp, Reminders.KIND_NOTE, id, at)
-                }
-                repository.allFutureTodoReminders().forEach { (id, at) ->
-                    Reminders.schedule(this@PureNoteApp, Reminders.KIND_TODO, id, at)
-                }
+                ReminderReconciler(repository, AndroidAlarmSink(this@PureNoteApp)).reconcileAll()
             }
         }
     }
