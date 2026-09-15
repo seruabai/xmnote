@@ -32,6 +32,13 @@ import com.purenote.local.feature.notes.SaveCoordinator
 import com.purenote.local.notify.AndroidAlarmSink
 import com.purenote.local.notify.ReminderReconciler
 import com.purenote.local.notify.Reminders
+import com.purenote.local.sync.AndroidCredentialStore
+import com.purenote.local.sync.AndroidNetworkStatus
+import com.purenote.local.sync.BackupSyncEngine
+import com.purenote.local.sync.CredentialStore
+import com.purenote.local.sync.PrefsSyncSettingsStore
+import com.purenote.local.sync.SyncSettingsStore
+import com.purenote.local.sync.WebDavConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -81,6 +88,35 @@ sealed interface BackupState {
     data class Done(val title: String, val summary: String, val warnings: List<String> = emptyList()) : BackupState
     data class Failed(val message: String) : BackupState
 }
+
+/**
+ * 云同步（H 阶段）在界面上要显示的东西。
+ *
+ * 刻意只暴露界面真正会画的三件事：开关、远端摘要（账号/服务器/上次成功时间）、一次运行的结果。
+ * 不做"同步进度百分比"——WebDAV 的 PUT 没有可靠的回执进度，
+ * 编一个百分比出来是在骗用户（与"自动备份只显示实际成功时间"同一条原则）。
+ */
+sealed interface CloudState {
+    data object Idle : CloudState
+    data class Running(val text: String) : CloudState
+    data class Done(val title: String, val summary: String, val warnings: List<String> = emptyList()) : CloudState
+    data class Failed(val message: String) : CloudState
+}
+
+/** 已保存的云同步配置（密码只回显账号，不显示密码本身）。 */
+data class CloudConfigState(
+    val available: Boolean = false,
+    val enabled: Boolean = false,
+    val serverUrl: String = "",
+    val remoteDir: String = WebDavConfig.DEFAULT_DIR,
+    val account: String = "",
+    val hasPassword: Boolean = false,
+    val lastSuccessAt: Long = 0L,
+    val lastBytes: Long = 0L,
+    val lastNoteCount: Int = 0,
+    /** 当前网络是否可用（用于在按钮上给出可读提示，而不是等超时） */
+    val online: Boolean = true,
+)
 
 class NoteViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -952,6 +988,175 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                 _backupState.value = BackupState.Failed("恢复失败：${backupFailureReason(e)}。当前数据未被改动。")
             }
         }
+    }
+
+    // ---- 云同步（规范 §17 阶段 H） ----
+    //
+    // 界面只发三个动作：保存配置 / 测试连接 / 立即同步。
+    // 引擎负责顺序与校验，这里只做状态搬运和把异常翻成人话。
+
+    private val _cloudState = MutableStateFlow<CloudState>(CloudState.Idle)
+    val cloudState: StateFlow<CloudState> = _cloudState.asStateFlow()
+
+    private val _cloudConfig = MutableStateFlow(CloudConfigState())
+    val cloudConfig: StateFlow<CloudConfigState> = _cloudConfig.asStateFlow()
+
+    /** 载入已保存的云同步配置（设置页展开时调用一次即可）。 */
+    fun loadCloudConfig() {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val settings = PrefsSyncSettingsStore(ctx)
+            val remote = settings.loadRemote()
+            val creds = AndroidCredentialStore(ctx).load()
+            val net = AndroidNetworkStatus(ctx)
+            val meta = settings.loadMeta()
+            _cloudConfig.value = CloudConfigState(
+                available = remote != null && creds != null,
+                enabled = remote?.enabled ?: false,
+                serverUrl = remote?.serverUrl.orEmpty(),
+                remoteDir = remote?.remoteDir ?: WebDavConfig.DEFAULT_DIR,
+                account = creds?.account.orEmpty(),
+                hasPassword = creds != null,
+                lastSuccessAt = meta.lastSuccessAt,
+                lastBytes = meta.lastBytes,
+                lastNoteCount = meta.lastNoteCount,
+                online = net.isOnline(),
+            )
+        }
+    }
+
+    /**
+     * 保存配置。密码单独走 Keystore；保存失败必须如实告知，不能静默降级为明文。
+     * @param testAfterSave 保存后立即测一次连接
+     */
+    fun saveCloudConfig(
+        serverUrl: String,
+        remoteDir: String,
+        account: String,
+        password: String,
+        enabled: Boolean,
+        testAfterSave: Boolean = false,
+    ) {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val creds = AndroidCredentialStore(ctx)
+            val previous = creds.load()
+            val accountChanged = previous?.account != account
+            val keepPassword = password.isEmpty()
+
+            val effective = if (keepPassword && previous != null && !accountChanged) {
+                previous
+            } else {
+                CredentialStore.Credentials(account, password)
+            }
+            if (effective.account.isBlank() || effective.appPassword.isBlank()) {
+                _cloudState.value = CloudState.Failed("请同时填写账号与应用密码（只填一项无法连接）")
+                return@launch
+            }
+
+            val saved = creds.save(effective)
+            if (!saved) {
+                _cloudState.value = CloudState.Failed(
+                    "无法安全保存密码（Keystore 不可用）。为避免把密码明文写进设备，本次未保存。",
+                )
+                return@launch
+            }
+
+            PrefsSyncSettingsStore(ctx).saveRemote(
+                SyncSettingsStore.RemoteConfig(
+                    serverUrl = serverUrl.trim(),
+                    remoteDir = remoteDir.trim().ifEmpty { WebDavConfig.DEFAULT_DIR },
+                    enabled = enabled,
+                ),
+            )
+            loadCloudConfig()
+            // 账号或密码变了，上一次的"连接可用"结论就作废，逼一次重新测试
+            if (accountChanged || !keepPassword) _cloudState.value = CloudState.Idle
+            if (testAfterSave) testCloudConnection() else {
+                if (_cloudState.value is CloudState.Idle) toastCloud("已保存云同步设置")
+            }
+        }
+    }
+
+    fun setCloudEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val settings = PrefsSyncSettingsStore(ctx)
+            val remote = settings.loadRemote()
+            if (remote == null) {
+                _cloudState.value = CloudState.Failed("请先填写服务器地址、账号与应用密码")
+                loadCloudConfig()
+                return@launch
+            }
+            settings.saveRemote(remote.copy(enabled = enabled))
+            loadCloudConfig()
+            if (enabled) {
+                _cloudState.value = CloudState.Idle
+                toastCloud("已开启云同步（只在你点击「立即同步」时才会上传）")
+            }
+        }
+    }
+
+    fun testCloudConnection() {
+        if (_cloudState.value is CloudState.Running) return
+        viewModelScope.launch {
+            _cloudState.value = CloudState.Running("正在连接服务器…")
+            _cloudState.value = repo.cloudTestConnection().fold(
+                onSuccess = { count ->
+                    CloudState.Done("连接成功", "远端目录可访问，现有 $count 个文件。")
+                },
+                onFailure = { CloudState.Failed(cloudReason(it)) },
+            )
+        }
+    }
+
+    /** 立即同步：导出 -> 上传 -> 读回校验 -> 只有校验通过才算成功。 */
+    fun syncCloudNow(allowIncomplete: Boolean = false) {
+        if (_cloudState.value is CloudState.Running) return
+        viewModelScope.launch {
+            val result = repo.cloudSync(allowIncomplete) { engineState ->
+                if (engineState is BackupSyncEngine.State.Running) {
+                    _cloudState.value = CloudState.Running(engineState.detail.ifBlank { "正在同步…" })
+                }
+            }
+            result.fold(
+                onSuccess = { outcome ->
+                    _cloudState.value = CloudState.Done(
+                        title = "云端备份完成",
+                        summary = outcome.remotePath + "（" + (outcome.bytes / 1024) + " KB，笔记 " +
+                            outcome.noteCount + " 条，已读回校验）",
+                        warnings = outcome.warnings,
+                    )
+                    loadCloudConfig()
+                },
+                onFailure = { e ->
+                    _cloudState.value = CloudState.Failed(cloudReason(e))
+                    loadCloudConfig()
+                },
+            )
+        }
+    }
+
+    fun clearCloudConfig() {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            AndroidCredentialStore(ctx).clear()
+            PrefsSyncSettingsStore(ctx).clearRemote()
+            _cloudState.value = CloudState.Idle
+            loadCloudConfig()
+            toastCloud("已清除云同步配置与凭据")
+        }
+    }
+
+    fun dismissCloudResult() {
+        if (_cloudState.value !is CloudState.Running) _cloudState.value = CloudState.Idle
+    }
+
+    private fun cloudReason(e: Throwable): String =
+        e.message?.takeIf { it.isNotBlank() } ?: e::class.java.simpleName
+
+    private fun toastCloud(text: String) {
+        android.widget.Toast.makeText(getApplication(), text, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     fun importBackup(uri: Uri) {

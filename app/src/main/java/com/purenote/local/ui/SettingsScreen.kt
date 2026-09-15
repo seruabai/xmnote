@@ -203,6 +203,10 @@ fun SettingsScreen(vm: NoteViewModel) {
             }
 
             Spacer(Modifier.height(21.dp))
+            SettingsSectionTitle("云同步")
+            CloudSyncSection(vm)
+
+            Spacer(Modifier.height(21.dp))
             SettingsSectionTitle("提醒")
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -235,7 +239,12 @@ fun SettingsScreen(vm: NoteViewModel) {
             ) {
                 Column {
                     ArrowRow("隐私政策") {
-                        showInfo("隐私政策", "纯记是本地笔记应用。笔记、待办、图片与提醒信息仅保存在本机，不上传服务器，也不用于广告画像。")
+                        showInfo(
+                            "隐私政策",
+                            "纯记的数据以本机为准：笔记、待办、图片与提醒信息都存在你的设备上，离线完整可用。" +
+                                "应用只在你开启并点击「立即同步」时联网，把一份完整备份包直接上传到你自己填写的 WebDAV " +
+                                "网盘目录；不经开发者服务器，没有账号体系，不做遥测与统计，也不用数据做广告画像。",
+                        )
                     }
                     ArrowRow("用户协议") {
                         showInfo("用户协议", "使用纯记即表示你同意自行保管本地数据。卸载应用或清除数据前，请先完成必要备份。")
@@ -245,8 +254,11 @@ fun SettingsScreen(vm: NoteViewModel) {
                             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
                         )
                     }
-                    ArrowRow("ICP备案号", "本应用为纯本地开源项目") {
-                        showInfo("ICP备案号", "纯记不提供联网信息服务，因此没有网站 ICP 备案号。")
+                    ArrowRow("ICP备案号", "本应用自行搭建的服务器数为 0") {
+                        showInfo(
+                            "ICP备案号",
+                            "纯记没有开发者运营的联网信息服务（云同步是设备直连用户自己的网盘），因此没有网站 ICP 备案号。",
+                        )
                     }
                     ArrowRow("生成式人工智能服务备案号", "本应用未接入生成式人工智能服务") {
                         showInfo("生成式人工智能服务备案号", "纯记不会联网调用生成式人工智能服务。")

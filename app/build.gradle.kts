@@ -61,6 +61,9 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.serialization.json)
 
+  // H 阶段云能力：WebDAV 传输。仅用户开启云同步并主动点击时才会发起请求。
+  implementation(libs.okhttp)
+
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.compose.material3)
@@ -69,6 +72,9 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.tooling)
 
   testImplementation(libs.junit)
+
+  // MockWebServer 让 WebDAV 协议层能在 JVM 上真跑一次 HTTP 交互，而不是靠 mock 假装
+  testImplementation(libs.okhttp.mockwebserver)
 
   androidTestImplementation(libs.androidx.test.junit)
   androidTestImplementation(libs.androidx.test.runner)

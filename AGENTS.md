@@ -60,6 +60,7 @@ gradlew.bat :app:compileDebugKotlin   # Kotlin 编译
 gradlew.bat :app:testDebugUnitTest   # 单元测试，可用 --tests 筛选
 gradlew.bat :app:lintDebug           # 按风险运行 Lint
 gradlew.bat :app:assembleDebug       # APK，并归档到 ../APP/
+powershell -File tools/verify/cloud_sync_webdav.ps1   # 云同步端到端（起临时 WebDAV + 设备测试，需模拟器）
 ```
 
 ## 6. 日常完成与交接

@@ -12,6 +12,8 @@ androidxTestJunit = "1.2.1"
 androidxTestRunner = "1.6.2"
 # 规范 §3/§14：自动备份的尽力调度。来源 androidx.work，官方稳定版，非预览版。
 androidxWork = "2.11.0"
+# H 阶段云能力：WebDAV 手写 5 个动词 + 解析 207。用 okhttp 而非厂商 SDK（SYNC_DESIGN §4.2）。
+okhttp = "4.12.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -32,6 +34,8 @@ androidx-test-runner = { module = "androidx.test:runner", version.ref = "android
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "androidxWork" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

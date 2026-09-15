@@ -109,7 +109,7 @@
 | E | 逻辑快照、ZIP+manifest、全量校验、SAF | 全新目录恢复并逐项验证成功 | ✅ 完成 |
 | F | 存储代、active 指针、旧任务隔离 | 每个切换中断点可恢复，旧版本原始副本保留 | ✅ 完成 |
 | G | WorkManager、保留策略、系统备份规则 | 真机验证；明确实际备份时间；无未解决丢数据问题 | ✅ 完成 |
-| H | WebDAV 完整包传输 | 独立验证；不实现未设计的双向同步 | 待用户决策（网络权限） |
+| H | WebDAV 完整包传输 | 独立验证；不实现未设计的双向同步 | ✅ 完成（2026-09-16，用户已拍板申请 INTERNET） |
 
 ## 4. 现有重复实现清单（规范 §4 要求先查）
 
@@ -128,3 +128,54 @@
 - **事务**：仅 `BackupCodec.kt:157-254`
 - **物理文件删除**：`ImageStore.deleteFile:43`（调用点 `EditorScreen.kt:591`）、`AudioRecorder.kt:76`（取消录音）、`BackupIo.kt:69,72`（临时文件）
 - **未保护的自动清理**：`PureNoteApp.kt:23-24`
+## 附录 B：阶段 H（云能力）对应表
+
+> 完成日期：2026-09-16　分支：`spec/rebuild-a-h`　前置：阶段 E 的完整备份包（`manifest.json` + 逐项 SHA-256）
+> 产品决策：2026-09-15 用户明确「联网只用于用户自己的云同步，此外无任何上传」→ 允许申请 INTERNET 权限。
+> 交付边界（规范 §17 阶段 H 原文）：**WebDAV 完整包传输**，独立验证，**不顺带实现未经设计的双向同步**。
+
+### B.1 规范条目 → 现有代码 → 拟修改文件 → 实现方法 → 故障测试
+
+| 规范条目 | 现有代码 | 本次新增/修改 | 实现方法 | 故障测试 |
+|---|---|---|---|---|
+| §17 H「WebDAV 完整包传输」 | 无任何网络代码；应用此前**不申请网络权限** | `app/src/main/AndroidManifest.xml` | 加 `INTERNET` + `ACCESS_NETWORK_STATE`，并在权限处写明用途（只用于用户自选的云同步） | 未配置时不发任何请求（引擎门禁先判配置与网络） |
+| §4.2「单一 RemoteFileStore 抽象，厂商差异不得外泄」 | 无 | `sync/RemoteModels.kt` | `RemoteTransport` 只有文件动作（list/stat/openRead/upload/delete）+ `StoreCapabilities` + 7 类 `RemoteException`；接口内无 provider 字段、无 ByteArray 形状（避免被迫整包进内存） | `BackupSyncEngineTest` 用内存假实现跑完整顺序 |
+| §4.2「第一实现 WebDAV，手写动词 + 解析 207」 | 无 | `sync/WebDavTransport.kt`、`sync/WebDavXml.kt` | PROPFIND/MKCOL/GET/PUT/DELETE；207 用无依赖的最小解析器（不用 sardine，不引 XML 库也就没有 XXE 面） | `WebDavTransportTest`（MockWebServer 真跑 HTTP）：认证头 UTF-8、MKCOL、If-Match/412、401/429/507 映射、404→null |
+| §4.3「凭据必须用 Keystore 保管」 | 无 | `sync/CredentialStore.kt`、`sync/AndroidCredentialStore.kt` | AES-GCM + `AndroidKeyStore`，密文与 IV 存 SharedPreferences；**Keystore 不可用时保存失败并如实告知，不降级为明文** | `AndroidCredentialStore` 用接口隔离，引擎测试用 `InMemoryCredentialStore` |
+| §11.1/§11.2「传输的必须是可校验的完整包」 | `BackupIo.export()`（阶段 E，含 manifest） | `backup/BackupIo.kt` | 新增 `inspect(stream)`：解包 + **逐项 SHA-256 校验清单** + 取出 `backupId`/`libraryId`/计数/完整性；`readEntries`/`ReadResult` 提为 `internal` 供测试复用同一份解析 | `TestBackupPackage` 造真包，引擎测试读回后跑同一套校验 |
+| §12「恢复必须换一代，不能就地覆盖」 | 阶段 F 已有存储代 | 未改动 | 云同步只**上传**，不触碰本地存储代与活动指针 | 同步失败不影响本地库（引擎只读本地、只写远端） |
+| §14「只能显示实际成功时间」 | 自动备份已按此实现 | `ui/CloudSyncSection.kt` | 界面显示「尚未成功同步过 / 上次成功 <时间>（大小、条数）」；不显示进度百分比——WebDAV 的 PUT 没有可靠回执进度 | 手动核对文案来源只有 `lastSuccessAt` |
+| §18「关键接口必须有真实实现，不能空方法或固定成功返回」 | 无 | 全部新增文件 | 上传后**读回远端整包**再跑一次清单校验并比对 `backupId`；校验不过不记录成功 | `BackupSyncEngineTest` 的大小不符 / 读到别人包 / 本地不完整 / 无网络 / 未配置 / 凭据丢失 六类 |
+
+### B.2 与 SYNC_DESIGN §4.3 的差异（**有意为之，不是遗漏**）
+
+| SYNC_DESIGN 的设想 | 阶段 H 的实际交付 | 理由 |
+|---|---|---|
+| `notes/<uuid>.json` 逐条布局 + dirty 集合 + LWW 冲突 | 只传**完整备份包**（`<dir>/purenote-<时间戳>.purenote.zip`） | 逐条布局是双向同步的前提，而规范 §17 明确要求「不顺带实现未经设计的双向同步」；先让"换机不丢数据"这条路可信 |
+| 附件按 sha256 内容寻址、分块上传 | 附件随整包一起打包（阶段 E 已有） | 内容寻址要配合增量同步才有意义；整包传输不需要，且能复用已验证的完整性校验 |
+| S3 第二驱动 | 未做 | 抽象已经留好位置（新增实现类 + 设置页表单即可），但没有真实服务器就无法"独立验证"，不做未验证的实现 |
+
+### B.3 已知限制（如实列明）
+
+- **单向**：只上传，不回读覆盖本地，也不删除远端旧包。多设备之间不会互相看到对方的新笔记（各自上传的是各自库的完整包）。
+- **无保留策略**：远端不会自动删旧包（本地有 `BackupRetention`）。云盘配额由用户自己管理，界面不代替用户做删除决定。
+- **未做限流退避**：坚果云免费版 600 请求/30 分钟，一次同步只用到 3~4 个请求（MKCOL/PUT/PROPFIND/GET），远未逼近；`RemoteException.RateLimited` 已带 `Retry-After`，接入自动同步时需要退避。
+- **凭据强度**：Keystore 只保住"备份文件被拷走/应用目录被读"两类泄露；拿到设备解密能力的攻击者仍可读出密码。E2EE（SYNC_DESIGN P2）未做。
+- **未在真机验证**：本次验证在 API 36 模拟器 + 本机临时 WebDAV 服务器（`10.0.2.2`）完成；真实云盘（坚果云/Nextcloud）的连接与限流行为需用户用自己的账号复测一次。
+### B.4 本次实际跑过的验证（2026-09-16）
+
+| 套件 | 命令 | 结果 |
+|---|---|---|
+| JVM 单测 | `gradlew.bat :app:testDebugUnitTest` | **198 项全绿**（A–G 时 164 → 新增 34：路径/207 解析/SyncContract 纯函数、MockWebServer 协议、引擎顺序与校验、凭据接口） |
+| 设备端到端 | `powershell -File tools/verify/cloud_sync_webdav.ps1` | **通过**：临时起真实 wsgidav（207 Multi-Status + 真落盘），设备测试 2 项通过，服务器目录里出现 `purenote/purenote-20260915-1627.purenote.zip`（894 字节，已核对 SHA-256） |
+| 设备全量 | `gradlew.bat :app:connectedDebugAndroidTest`（`ANDROID_SERIAL=emulator-5554`） | **66 项通过 / 0 失败**（另 2 项 skip：就是上面那个 WebDAV 用例在没传 `webdavHost` 时的 `assumeTrue` 跳过——临时服务器没起时它应该跳过而不是假装通过） |',
+'| Lint | `gradlew.bat :app:lintDebug` | **无 error**（修掉 4 个 NewApi：`java.time.DateTimeFormatter` 要 API 26，minSdk 是 24，改用 `SimpleDateFormat`） |',
+'| APK | `gradlew.bat :app:assembleDebug` | 成功，归档 `../APP/纯记+1.2.20.apk`（20.8 MB，含新增 OkHttp） |'
+
+验证过程中真实发现并修掉的问题（都是"看起来对、实际错"的类型）：
+
+1. **每个请求都没带 Basic 认证头**：凭证算出来了却没加到任何请求上。最初的单元测试只断言"请求到达服务器"，没抓住；改成断言 `Authorization` 头之后立刻暴露。
+2. **207 里的目录条目被当成文件**：被查询的目录自己会出现在响应里，结尾斜杠有的有（Nextcloud）有的没有（wsgidav）。只按路径判断会漏判，改为显式看 `resourcetype` 是否含 `collection`。
+3. **网络门禁误判国内网络**：`isOnline()` 原本要求 `NET_CAPABILITY_VALIDATED`，而 Android 的连通性探测走 Google 的 `generate_204`，在国内网络下经常判定不通过——会出现"系统说没网、实际能连坚果云"。降为 `NET_CAPABILITY_INTERNET`，真正的失败以传输异常为准。
+4. **服务器回执大小不符时重传**：原先把"回执大小不对"当瞬时错误重试一次。它其实是服务器/代理在改写请求，重传不可能变好，只会多花一次上行流量和限流配额，改为直接判失败。
+5. **设备测试用中文方法名导致 D8 dex 失败**：`dexBuilderDebugAndroidTest` 直接报 `Compilation failed to complete`。设备测试一律用 ASCII 方法名（JVM 测试不受影响，沿用既有中文名风格）。

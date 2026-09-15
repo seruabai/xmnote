@@ -28,9 +28,18 @@ import java.util.zip.ZipOutputStream
  * 兼容性：`manifest.json` 是格式 v2 新增的。读没有清单的旧包时不拒绝，
  * 但在 [ImportResult.warnings] 里如实说明"未经完整性校验"。
  */
-class BackupIo(private val context: Context) {
+class BackupIo(private val context: Context?) {
 
     companion object {
+        /**
+         * 只解包不校验清单（校验由 [BackupVerifier] 负责）。
+         *
+         * 放在伴生对象里给 JVM 测试用：测试需要"读回一份假包并核对它还是原来那份"，
+         * 但不需要 Context。生产路径仍走实例方法，行为是同一份实现。
+         */
+        internal fun inspectEntries(source: InputStream): ReadResult =
+            BackupIo(null).readEntries(source)
+
         const val ENTRY_JSON = "backup.json"
         const val ENTRY_MANIFEST = "manifest.json"
         const val ATTACHMENT_DIR = "attachments/"
@@ -62,7 +71,7 @@ class BackupIo(private val context: Context) {
                 zip.closeEntry()
                 entries += ManifestEntry(ENTRY_JSON, jsonBytes.size.toLong(), BackupVerifier.sha256Of(jsonBytes))
 
-                val dir = ImageStore.imagesDir(context)
+                val dir = ImageStore.imagesDir(requireContext())
                 backup.notes.flatMap { it.images }.distinct().forEach { name ->
                     val safe = sanitizeEntryName(name) ?: return@forEach
                     val src = File(dir, safe)
@@ -134,6 +143,42 @@ class BackupIo(private val context: Context) {
     }
 
     /**
+     * 读回一个**已存在**的备份包的清单（云同步上传前/上传后校验用）。
+     *
+     * 与 [readBackup] 的区别：这里额外返回 manifest，并且**校验清单**。
+     * 云同步的场景是"已经有一份刚生成的包，要确认它是完整、可恢复的再传上去"，
+     * 而不是"解析内容准备导入"。
+     *
+     * @throws BackupFormatException 包里没有清单，或清单与内容对不上
+     */
+    suspend fun inspect(source: InputStream): InspectResult = withContext(Dispatchers.IO) {
+        val read = readEntries(source)
+        read.json ?: throw BackupFormatException("备份包里没有 $ENTRY_JSON")
+        val rawManifest = read.manifestJson
+            ?: throw BackupFormatException("备份包没有完整性清单，不能作为云同步的源")
+        val manifest = BackupJson.decodeManifest(rawManifest)
+        when (val outcome = BackupVerifier.verify(manifest, read.digests)) {
+            is BackupVerifier.Outcome.Ok -> Unit
+            is BackupVerifier.Outcome.Failed ->
+                throw BackupFormatException(
+                    "备份完整性校验未通过：\n" + outcome.reasons.joinToString("\n"),
+                )
+        }
+        InspectResult(
+            manifest = manifest,
+            attachmentCount = read.attachments.size,
+            attachmentBytes = read.attachments.values.sumOf { it.size.toLong() },
+        )
+    }
+
+    /** [inspect] 的结果：清单（含 backupId / libraryId / 计数）+ 实际附件统计。 */
+    data class InspectResult(
+        val manifest: BackupManifest,
+        val attachmentCount: Int,
+        val attachmentBytes: Long,
+    )
+
+    /**
      * 导入。顺序：读取并解析 -> **先校验清单** -> 规划 -> 应用数据库（事务）-> 再还原附件。
      * 校验不通过直接抛 [BackupFormatException]，不做任何写入。
      */
@@ -164,7 +209,7 @@ class BackupIo(private val context: Context) {
         // 规范 §13.2：把来源库身份带进导入，用于建立跨库实体映射
         val applied = BackupCodec.apply(db, plan, snapshot, sourceLibraryId = manifest?.libraryId ?: "")
 
-        val dir = ImageStore.imagesDir(context)
+        val dir = ImageStore.imagesDir(requireContext())
         var restored = 0
         var skippedExisting = 0
         val attachWarnings = mutableListOf<String>()
@@ -190,7 +235,7 @@ class BackupIo(private val context: Context) {
         )
     }
 
-    private class ReadResult(
+    internal class ReadResult(
         val json: String?,
         val manifestJson: String?,
         val attachments: Map<String, ByteArray>,
@@ -201,7 +246,7 @@ class BackupIo(private val context: Context) {
      * 解出 backup.json / manifest.json / 附件表，并同步计算每个条目的 size 与 SHA-256。
      * 非法路径、重复条目一律拒绝整个导入，不静默跳过。
      */
-    private fun readEntries(source: InputStream): ReadResult {
+    internal fun readEntries(source: InputStream): ReadResult {
         var json: String? = null
         var manifestJson: String? = null
         val attachments = mutableMapOf<String, ByteArray>()
@@ -242,6 +287,13 @@ class BackupIo(private val context: Context) {
      * 只取纯文件名，拒绝任何目录穿越。
      * `..`、`/`、`\`、绝对路径、空名一律视为非法。
      */
+    /**
+     * 只有真正碰附件目录的路径才需要 Context。
+     * 显式抛错而不是 !!：将来有人把 null 传进生产路径时，错误信息要能说明原因。
+     */
+    private fun requireContext(): Context = context
+        ?: error("BackupIo 需要 Context 才能读写附件目录（只有测试用的解包路径可以传 null）")
+
     private fun sanitizeEntryName(raw: String): String? = BackupPaths.sanitizeEntryName(raw)
 
     data class ExportResult(

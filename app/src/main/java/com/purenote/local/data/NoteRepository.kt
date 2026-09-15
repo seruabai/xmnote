@@ -1,10 +1,17 @@
 package com.purenote.local.data
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.database.Cursor
+import android.os.Build
 import com.purenote.local.backup.BackupCodec
 import com.purenote.local.backup.BackupFile
 import com.purenote.local.backup.BackupIo
+import com.purenote.local.sync.BackupSyncEngine
+import com.purenote.local.sync.CloudBackupOwner
+import com.purenote.local.sync.CredentialStore
+import com.purenote.local.sync.RemoteTransport
+import com.purenote.local.sync.WebDavConfig
 import com.purenote.local.core.ChecklistCodec
 import com.purenote.local.core.NoteMarkup
 import com.purenote.local.notify.ReminderJob
@@ -23,7 +30,7 @@ import java.io.InputStream
 /**
  * [dbName] 仅测试需要（用独立库文件，避免污染真实数据）；应用内传 null，走活动存储指针。
  */
-class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
+class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, CloudBackupOwner {
 
     private val appContext = context.applicationContext
 
@@ -551,6 +558,86 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
     suspend fun readBackup(source: InputStream): BackupFile =
         backupIo.readBackup(source)
 
+    // ---- 规范 §17 阶段 H：云能力（完整备份包传输） ----
+    //
+    // 引擎挂在这里而不是 ViewModel：装配（凭据/偏好/网络判定/暂存目录）只写一遍，
+    // 界面层只发起动作并显示结果。
+    //
+    // 同一时刻只允许一次云操作：并发的两次同步会在远端互相覆盖，且都是"成功"。
+
+    private val cloudGate = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 测试连接：认证 + 列举远端目录。 */
+    suspend fun cloudTestConnection(): Result<Int> = cloudGate.run { syncEngine.testConnection() }
+
+    /** 立即同步一次完整备份包（导出 -> 上传 -> 读回校验）。 */
+    suspend fun cloudSync(
+        allowIncomplete: Boolean = false,
+        onState: (BackupSyncEngine.State) -> Unit = {},
+    ): Result<BackupSyncEngine.Outcome> =
+        cloudGate.run { syncEngine.syncNow(allowIncomplete, onState) }
+
+    private inline fun <T> java.util.concurrent.atomic.AtomicBoolean.run(block: () -> T): T {
+        if (!compareAndSet(false, true)) {
+            error("已有云同步操作在进行中，请等它结束")
+        }
+        try {
+            return block()
+        } finally {
+            set(false)
+        }
+    }
+
+    private val syncEngine: BackupSyncEngine by lazy {
+        BackupSyncEngine.forApp(appContext, owner = this, transportFactory = cloudTransportFactory)
+    }
+
+    /**
+     * 测试注入点：替换远端传输实现（例如换成内存假实现）。
+     * 生产永远用 WebDAV；存在这个钩子是为了让"一次同步的完整顺序"能在 JVM 上被真实测到。
+     */
+    var cloudTransportFactory: (WebDavConfig, CredentialStore.Credentials) -> RemoteTransport =
+        WEB_DAV_FACTORY
+
+    // ---- CloudBackupOwner ----
+
+    override suspend fun exportBackup(target: File): Boolean {
+        val result = exportBackup(target, currentAppVersion())
+        return result.file.isFile && result.verified
+    }
+
+    override fun appVersion(): String = currentAppVersion()
+
+    override suspend fun verifyBackupFile(file: File): CloudBackupOwner.BackupInspection =
+        file.inputStream().use { verifyBackup(it) }
+
+    override suspend fun verifyBackup(source: InputStream): CloudBackupOwner.BackupInspection {
+        val result = backupIo.inspect(source)
+        return CloudBackupOwner.BackupInspection(
+            backupId = result.manifest.backupId,
+            libraryId = result.manifest.libraryId,
+            noteCount = result.manifest.counts.notes,
+            attachmentCount = result.manifest.counts.attachments,
+            complete = result.manifest.complete,
+        )
+    }
+
+    private fun currentAppVersion(): String = runCatching {
+        val pm = appContext.packageManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageInfo(appContext.packageName, PackageManager.PackageInfoFlags.of(0)).versionName
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(appContext.packageName, 0).versionName
+        }
+    }.getOrNull().orEmpty()
+
+    companion object {
+        /** 生产传输实现：WebDAV（第一实现）。 */
+        val WEB_DAV_FACTORY: (WebDavConfig, CredentialStore.Credentials) -> RemoteTransport =
+            { config, creds -> com.purenote.local.sync.WebDavTransport(config, creds) }
+    }
+
     // ---- 规范 §12：恢复到新一代存储，验证通过后才切换活动指针 ----
 
     sealed interface RestoreOutcome {
@@ -740,7 +827,7 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
             .use { c -> c.moveToFirst(); c.getLong(0) }
 
     /** 记录数（规范 §14 异常大规模删改检测的输入） */
-    suspend fun noteCount(): Int = tx.read { database ->
+    override suspend fun noteCount(): Int = tx.read { database ->
         database.rawQuery("SELECT COUNT(*) FROM notes", null).use { it.moveToFirst(); it.getInt(0) }
     }
 
@@ -757,7 +844,7 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
     }
 
     /** 库身份（规范 §14：每个 libraryId 一个唯一的周期任务） */
-    suspend fun libraryId(): String = tx.read { database -> BackupCodec.libraryId(db) }
+    override suspend fun libraryId(): String = tx.read { database -> BackupCodec.libraryId(db) }
 
     internal fun debugVersionCount(noteId: Long): Int =
         db.readableDatabase.rawQuery("SELECT COUNT(*) FROM note_versions WHERE note_id = ?", arrayOf(noteId.toString()))
