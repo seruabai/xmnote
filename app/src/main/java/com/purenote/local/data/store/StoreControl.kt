@@ -63,6 +63,8 @@ class StoreControl(private val context: Context) {
          * 锁必须是进程级的，指针的读取与生成才真正互斥。
          */
         private val LOCK = Any()
+
+        const val DB_PREFIX = "purenote-"
     }
 
     private val lock = LOCK
@@ -83,18 +85,33 @@ class StoreControl(private val context: Context) {
      * 接管这一步是必需的：老用户的数据库文件已经存在，
      * 如果这里直接生成新 epoch 的名字，App 会打开一个空库——表现为"升级后笔记全没了"。
      */
-    /** [justInitialized] 为 true 表示这次才生成指针（首次运行），此时允许创建库文件。 */
-    data class ActiveStore(val pointer: StorePointer, val justInitialized: Boolean)
+    /**
+     * [justInitialized] 为 true 表示这次才生成指针（首次运行），此时允许创建库文件。
+     * [ambiguous] 为 true 表示指针不可用、且磁盘上存在**多个**候选库，
+     * 无法判断哪个是用户的数据——此时必须进入恢复选择，绝不能猜。
+     */
+    data class ActiveStore(
+        val pointer: StorePointer,
+        val justInitialized: Boolean,
+        val ambiguous: Boolean = false,
+    )
 
     fun active(): ActiveStore = synchronized(lock) {
         val existing = readPointer()
         if (existing != null) {
-            ActiveStore(existing, justInitialized = false)
-        } else {
-            val adopted = adoptExisting()
-            writePointer(adopted)
-            ActiveStore(adopted, justInitialized = true)
+            return@synchronized ActiveStore(existing, justInitialized = false)
         }
+        val adopted = adoptExisting()
+        if (adopted == null) {
+            // 多个候选：不落盘、不猜、不建空库（规范 §12 中断处理表最后一行）
+            return@synchronized ActiveStore(
+                pointer = StorePointer(epoch = "", dbName = ""),
+                justInitialized = false,
+                ambiguous = true,
+            )
+        }
+        writePointer(adopted)
+        return@synchronized ActiveStore(adopted, justInitialized = true)
     }
 
     fun activePointer(): StorePointer = active().pointer
@@ -154,7 +171,7 @@ class StoreControl(private val context: Context) {
 
     fun newEpoch(): String = UUID.randomUUID().toString().replace("-", "")
 
-    fun dbNameFor(epoch: String): String = "purenote-$epoch.db"
+    fun dbNameFor(epoch: String): String = DB_PREFIX + epoch + ".db"
 
     private fun readPointer(): StorePointer? = readJson(activeFile)?.let { json ->
         val epoch = json.optString("epoch")
@@ -168,16 +185,43 @@ class StoreControl(private val context: Context) {
         )
     }
 
-    private fun adoptExisting(): StorePointer {
+    /**
+     * 指针缺失或损坏时决定"该用哪个库"。
+     *
+     * **只在毫无歧义时才自动接管**（规范 §12 明令"不只按文件时间猜测最新库"）：
+     *  - 经典库名 `purenote.db` 存在 -> 接管它；
+     *  - 恰好只有一个非空的代次库 -> 接管它（上次在"建库成功、指针未落盘"之间被杀）；
+     *  - 一个候选都没有 -> 首次运行，生成新代；
+     *  - **有两个及以上候选 -> 返回 null，交由上层进入恢复选择**。
+     *    按修改时间挑"最新的那个"看起来聪明，实际是在用户的多份数据里赌一个，
+     *    赌错就是把用户笔记者引到一个空的或过期的库上。
+     */
+    private fun adoptExisting(): StorePointer? {
         val legacy = legacyDatabaseFile()
-        return if (legacy.exists() && legacy.length() > 0) {
-            // 接管既有库：沿用原来的文件名，epoch 只作标识
-            StorePointer(epoch = "legacy", dbName = legacyDbName())
-        } else {
-            val epoch = newEpoch()
-            StorePointer(epoch = epoch, dbName = dbNameFor(epoch))
+        if (legacy.exists() && legacy.length() > 0) {
+            return StorePointer(epoch = "legacy", dbName = legacyDbName())
+        }
+        val candidates = databaseDir()
+            ?.listFiles { f -> f.isFile && f.name.startsWith(DB_PREFIX) && f.name.endsWith(".db") && f.length() > 0 }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+        return when (candidates.size) {
+            0 -> {
+                val epoch = newEpoch()
+                StorePointer(epoch = epoch, dbName = dbNameFor(epoch))
+            }
+            1 -> {
+                val only = candidates.first()
+                StorePointer(epoch = epochOf(only.name), dbName = only.name)
+            }
+            else -> null
         }
     }
+
+    private fun databaseDir(): File? = context.getDatabasePath("probe").parentFile
+
+    private fun epochOf(dbName: String): String =
+        dbName.removePrefix(DB_PREFIX).removeSuffix(".db")
 
     private fun writePointer(pointer: StorePointer) = writeJson(
         activeFile,

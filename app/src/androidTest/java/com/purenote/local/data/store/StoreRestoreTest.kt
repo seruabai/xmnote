@@ -6,13 +6,13 @@ import com.purenote.local.backup.BackupIo
 import com.purenote.local.data.NoteKind
 import com.purenote.local.data.NoteRepository
 import com.purenote.local.data.NotesDb
-import org.junit.Assert.assertFalse
 import com.purenote.local.data.SaveResult
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -43,11 +43,13 @@ class StoreRestoreTest {
     }
 
     private fun cleanup() {
-        val control = StoreControl(ctx)
-        val names = mutableListOf(LEGACY)
-        runCatching { names += control.activePointer().dbName }
         File(ctx.filesDir, "store-control").deleteRecursively()
-        names.forEach { runCatching { ctx.deleteDatabase(it) } }
+        // 必须清掉**所有**候选库，而不是只清自己记下的那个：
+        // 只要 databases/ 里留下两个 purenote-*.db，下一次"指针缺失"的启动
+        // 就会被正确地判成"有歧义、拒绝猜测"——这是产品该有的行为，
+        // 但会让下一个用例从"恢复选择"状态开始，而不是从全新安装开始。
+        databaseDir()?.listFiles { f -> f.name.endsWith(".db") || f.name.endsWith(".db-journal") }
+            ?.forEach { runCatching { it.delete() } }
         File(ctx.cacheDir, "restore-test.purenote.zip").delete()
     }
 
@@ -204,6 +206,116 @@ class StoreRestoreTest {
         )
         assertEquals("生产路径必须把 storeEpoch 传到仓库", SaveResult.StoreChanged, result)
         assertEquals("新库内容不得被旧写入污染", listOf("旧笔记"), noteTitles(repo))
+    }
+
+    // ---- 规范 §12「中断处理」表里剩下的几种情形 ----
+
+    @Test
+    fun aCorruptPointerDoesNotCreateABlankDatabase() {
+        // 表中最后一行：active.json 缺失或损坏但发现现有库 -> 进入恢复选择，
+        // 不自动创建空白库，也不只按文件时间猜测最新库。
+        val control = StoreControl(ctx)
+        val pointer = control.active().pointer
+        val db = NotesDb(ctx, pointer.dbName)
+        db.insertNote(NoteKind.TEXT, "原有笔记", "正文", "", 0, null, 1000L)
+        db.close()
+
+        // 清掉别的用例可能留下的候选库，让"该用哪个库"无歧义
+        databaseDir()?.listFiles { f -> f.name.startsWith("purenote-") && f.name.endsWith(".db") }
+            ?.filter { it.name != pointer.dbName }
+            ?.forEach { it.delete() }
+
+        // 把指针文件弄坏
+        val activeFile = File(ctx.filesDir, "store-control/active.json")
+        val good = activeFile.readText()
+        activeFile.writeText("{ this is not json")
+
+        val recovered = StoreControl(ctx).active()
+        assertTrue("损坏的指针必须被丢弃而不是当成有效值", recovered.pointer.dbName.isNotBlank())
+        // 关键：绝不能因为读不出指针就把用户原有数据丢在一边、另起一个空库
+        assertEquals(
+            "必须仍然指向那个有数据的库，而不是新建一个",
+            pointer.dbName,
+            recovered.pointer.dbName,
+        )
+        assertTrue("原有库文件必须还在", ctx.getDatabasePath(pointer.dbName).exists())
+
+        activeFile.writeText(good)
+    }
+
+    @Test
+    fun multipleCandidateDatabasesRefuseToBeGuessedAt() {
+        // 规范 §12 中断处理表最后一行：「active.json 缺失或损坏但发现现有库 ->
+        // 进入恢复选择，不自动创建空白库，**也不只按文件时间猜测最新库**」。
+        // 这条用例就是为了钉住"不猜"——按时间挑最新的那个，赌错就是把用户
+        // 引到一个空的或过期的库上，而且从界面上完全看不出来。
+        val control = StoreControl(ctx)
+        control.active()
+
+        val dir = databaseDir()!!
+        dir.listFiles { f -> f.name.startsWith("purenote-") && f.name.endsWith(".db") }?.forEach { it.delete() }
+        // 造两个都有数据的候选库
+        listOf("purenote-aaaa.db", "purenote-bbbb.db").forEach { name ->
+            val db = NotesDb(ctx, name)
+            db.insertNote(NoteKind.TEXT, "候选 $name", "正文", "", 0, null, 1000L)
+            db.close()
+        }
+        File(ctx.filesDir, "store-control/active.json").writeText("{ broken")
+
+        val active = StoreControl(ctx).active()
+        assertTrue("有多个候选时必须拒绝猜测", active.ambiguous)
+
+        val provider = DatabaseProvider(ctx, StoreControl(ctx))
+        val failure = runCatching { provider.require() }.exceptionOrNull()
+        assertTrue("必须进入恢复而不是猜一个，实际=$failure", failure is StoreMissingException)
+
+        // 两个候选库都必须原样保留，一个都不能被动过
+        listOf("purenote-aaaa.db", "purenote-bbbb.db").forEach {
+            assertTrue("$it 必须保留", ctx.getDatabasePath(it).exists())
+        }
+    }
+
+    private fun databaseDir(): File? = ctx.getDatabasePath("probe").parentFile
+
+    @Test
+    fun anInterruptedRestoreLeavesTheOldStoreActive() = runBlocking {
+        // 表中第二行：新目录完成但指针未切换 -> 旧活动库继续有效。
+        // 这里用"包校验不通过"来代表恢复在切换之前中止。
+        val pkg = seedLegacyThenExportPlusOneMore()
+        val repo = NoteRepository(ctx)
+        val before = repo.storeEpoch
+        val beforeTitles = noteTitles(repo)
+
+        val truncated = pkg.readBytes().copyOf(0)   // 空包 -> 必然在校验阶段失败
+        val outcome = repo.restoreIntoNewStore(ByteArrayInputStream(truncated))
+        assertTrue("必须失败", outcome is NoteRepository.RestoreOutcome.Failed)
+
+        assertEquals("活动存储不得被切换", before, repo.storeEpoch)
+        assertEquals("旧活动库必须继续有效", beforeTitles, noteTitles(repo))
+        assertTrue("旧库文件必须保留", ctx.getDatabasePath(LEGACY).exists())
+
+        // 而且此时恢复记录不应残留，否则每次启动都以为恢复没走完
+        assertNull("中止的恢复不应留下恢复记录", StoreControl(ctx).readRecovery())
+    }
+
+    @Test
+    fun thePreviousEpochRemainsReadableAfterASuccessfulRestore() = runBlocking {
+        // 表中第 9 步：旧 epoch 与恢复前备份继续保留，不在同一次启动里清理。
+        val pkg = seedLegacyThenExportPlusOneMore()
+        val repo = NoteRepository(ctx)
+        val oldEpoch = repo.storeEpoch
+        val oldDbName = StoreControl(ctx).activePointer().dbName
+
+        assertTrue(repo.restoreIntoNewStore(pkg.inputStream()) is NoteRepository.RestoreOutcome.Ok)
+        assertNotEquals("必须换了一代", oldEpoch, repo.storeEpoch)
+
+        // 直接打开旧库：数据必须还在（这是"至少一代完整数据可用"的另一半）
+        val old = NotesDb(ctx, oldDbName)
+        val titles = old.readableDatabase.rawQuery("SELECT title FROM notes ORDER BY title", null)
+            .use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+        old.close()
+        assertEquals("旧代的两条笔记必须都还在", listOf("导出后新增", "旧笔记"), titles)
+        assertNull("恢复完成后恢复记录必须清掉", StoreControl(ctx).readRecovery())
     }
 
     private companion object {

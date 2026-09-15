@@ -85,6 +85,14 @@ class DatabaseProvider(
     val storeEpoch: String get() = ensurePointer().epoch
 
     fun status(): StoreStatus {
+        val active = control.active()
+        if (active.ambiguous) {
+            // 多个候选库，无法判断哪个是用户的数据 —— 不猜、不建空库
+            return StoreStatus.Missing(
+                StorePointer(epoch = "", dbName = ""),
+                control.readRecovery(),
+            )
+        }
         val pointer = ensurePointer()
         return if (context.getDatabasePath(pointer.dbName).let { it.exists() && it.length() > 0 }) {
             StoreStatus.Ready(pointer.epoch, pointer.dbName, pointerJustInitialized)
@@ -105,6 +113,9 @@ class DatabaseProvider(
         current?.let { return it }
         return synchronized(lock) {
             current?.let { return it }
+            if (control.active().ambiguous) {
+                throw StoreMissingException(StorePointer(epoch = "", dbName = ""))
+            }
             val resolved = ensurePointer()
             val file = context.getDatabasePath(resolved.dbName)
             val exists = file.exists() && file.length() > 0
