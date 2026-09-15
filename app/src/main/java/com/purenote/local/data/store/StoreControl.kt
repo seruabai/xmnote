@@ -50,11 +50,27 @@ data class RecoveryRecord(
  */
 class StoreControl(private val context: Context) {
 
-    private val lock = Any()
+    private companion object {
+        /**
+         * **进程级**锁，而不是实例级。
+         *
+         * 这是一个真实故障的根因：原先每个 StoreControl 实例各持一把锁，
+         * 而 NoteRepository 在 3 处被构造（Application、ReminderReceiver ×2），
+         * 每处都新建一个 StoreControl。两个实例同时看到"没有指针"，
+         * 各自生成一个 epoch 并各写一次 active.json —— 结果磁盘上出现**两个库**，
+         * 写进 A 的数据在 B 里看不见。
+         *
+         * 锁必须是进程级的，指针的读取与生成才真正互斥。
+         */
+        private val LOCK = Any()
+    }
+
+    private val lock = LOCK
 
     val controlDir: File get() = File(context.filesDir, "store-control")
     private val activeFile get() = File(controlDir, "active.json")
     private val recoveryFile get() = File(controlDir, "recovery.json")
+    private val readyFile get() = File(controlDir, "ready.json")
 
     /** 旧版遗留的库名：首次运行且没有指针时优先接管它，绝不能凭空建一个空库。 */
     private fun legacyDbName(): String = "purenote.db"
@@ -85,6 +101,7 @@ class StoreControl(private val context: Context) {
 
     fun publish(pointer: StorePointer) = synchronized(lock) {
         writePointer(pointer)
+        readyFile.delete()   // 换了一代存储：新库要重新走一次"成功打开"才被认可
     }
 
     /** 记录"恢复已准备"，用于识别上次恢复是否走完（规范 §12 第 6 步）。 */
@@ -113,6 +130,26 @@ class StoreControl(private val context: Context) {
 
     fun clearRecovery() = synchronized(lock) {
         recoveryFile.delete()
+    }
+
+    /**
+     * 标记某个代次的数据库**确实被成功打开过**。
+     *
+     * 为什么需要它：指针是在"解析出活动存储"时落盘的，而库文件要到
+     * DatabaseProvider.require() 真正打开时才创建。两者之间被强杀（崩溃注入里很容易命中），
+     * 下次启动就会看到"指针存在、库文件不存在"，被误判成"库丢了"而进入恢复状态——
+     * 一个全新安装、从没有过数据的应用被自己的保护机制挡在门外。
+     *
+     * 有了这个标记就能区分：
+     *   指针在 + 无标记 + 库不存在 -> 从未成功建立过，照常创建；
+     *   指针在 + 有标记 + 库不存在 -> 确实丢过，进入恢复，绝不静默重建空库。
+     */
+    fun markReady(epoch: String) = synchronized(lock) {
+        writeJson(readyFile, JSONObject().put("epoch", epoch))
+    }
+
+    fun isReady(epoch: String): Boolean = synchronized(lock) {
+        readJson(readyFile)?.optString("epoch") == epoch
     }
 
     fun newEpoch(): String = UUID.randomUUID().toString().replace("-", "")

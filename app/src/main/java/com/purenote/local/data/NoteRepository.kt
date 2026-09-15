@@ -22,12 +22,15 @@ class NoteRepository(context: Context, dbName: String? = null) {
 
     private val appContext = context.applicationContext
 
+
     /**
      * 活动存储（规范 §6.1 / §12）：全应用唯一的数据库提供者。
      * 测试传了固定库名时不启用指针机制。
      */
-    private val control: StoreControl? = if (dbName == null) StoreControl(appContext) else null
-    private val provider: DatabaseProvider? = control?.let { DatabaseProvider(appContext, it) }
+    private val provider: DatabaseProvider? =
+        if (dbName == null) DatabaseProvider.forApp(appContext) else null
+
+    private val control: StoreControl? get() = provider?.control
 
     private val pinned: NotesDb? = dbName?.let { NotesDb(appContext, it) }
 

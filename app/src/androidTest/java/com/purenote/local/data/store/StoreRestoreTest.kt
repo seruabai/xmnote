@@ -6,6 +6,7 @@ import com.purenote.local.backup.BackupIo
 import com.purenote.local.data.NoteKind
 import com.purenote.local.data.NoteRepository
 import com.purenote.local.data.NotesDb
+import org.junit.Assert.assertFalse
 import com.purenote.local.data.SaveResult
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -29,10 +30,17 @@ class StoreRestoreTest {
     private val ctx get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Before
-    fun setUp() = cleanup()
+    fun setUp() {
+        // 进程级提供者会被缓存，用例之间必须丢弃，否则测的是上一个用例的实例
+        DatabaseProvider.resetForTests()
+        cleanup()
+    }
 
     @After
-    fun tearDown() = cleanup()
+    fun tearDown() {
+        cleanup()
+        DatabaseProvider.resetForTests()
+    }
 
     private fun cleanup() {
         val control = StoreControl(ctx)
@@ -97,19 +105,46 @@ class StoreRestoreTest {
     }
 
     @Test
-    fun pointerToAMissingDatabaseRaisesInsteadOfCreatingAnEmptyOne() {
-        // 先正常初始化出指针，再把库文件删掉，模拟"库丢了但指针还在"
-        val control = StoreControl(ctx)
-        val pointer = control.active().pointer
+    fun aStoreThatWasOpenedAndThenLostRaisesInsteadOfBeingSilentlyRecreated() {
+        // 先真正打开一次（落 ready 标记），再把库文件删掉，模拟"库丢了但指针还在"
+        val first = DatabaseProvider(ctx, StoreControl(ctx))
+        first.require()
+        val pointer = StoreControl(ctx).activePointer()
+        first.close()
         ctx.deleteDatabase(pointer.dbName)
 
         val provider = DatabaseProvider(ctx, StoreControl(ctx))
-        val status = provider.status()
-        assertTrue("必须进入缺失/恢复状态，而不是 Ready", status is StoreStatus.Missing)
+        assertTrue("必须进入缺失/恢复状态，而不是 Ready", provider.status() is StoreStatus.Missing)
 
         val failure = runCatching { provider.require() }.exceptionOrNull()
         assertTrue("必须抛 StoreMissingException，实际=$failure", failure is StoreMissingException)
-        assertFalse("绝不能顺手建出一个空库", ctx.getDatabasePath(pointer.dbName).let { it.exists() && it.length() > 0 })
+        assertFalse(
+            "绝不能顺手建出一个空库",
+            ctx.getDatabasePath(pointer.dbName).let { it.exists() && it.length() > 0 },
+        )
+    }
+
+    @Test
+    fun aCrashBetweenPublishingThePointerAndCreatingTheDatabaseDoesNotBrickTheApp() {
+        // 这是崩溃注入实测暴露出来的窗口：指针先落盘，库文件要到 require() 打开时才创建。
+        // 在两步之间被强杀，下次启动会看到"指针在、库不在"。
+        // 早先的实现会把它当成"库丢了"抛 StoreMissingException ——
+        // 一个从未有过数据的新装应用，被自己的保护机制挡在门外，永远打不开。
+        val control = StoreControl(ctx)
+        control.active()                       // 只落指针，不建库
+        val pointer = control.activePointer()
+        ctx.deleteDatabase(pointer.dbName)
+        assertFalse("前置：库文件确实不存在", ctx.getDatabasePath(pointer.dbName).exists())
+
+        val provider = DatabaseProvider(ctx, StoreControl(ctx))
+        val db = provider.require()            // 必须照常创建
+        assertTrue("应照常建库", ctx.getDatabasePath(pointer.dbName).exists())
+        assertEquals(
+            "建立出来的必须是可用的库",
+            NotesDb.DB_VERSION,
+            db.writableDatabase.version,
+        )
+        db.close()
     }
 
     @Test

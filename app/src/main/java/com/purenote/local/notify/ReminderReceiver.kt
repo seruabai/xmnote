@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
+import com.purenote.local.PureNoteApp
 import com.purenote.local.R
 import com.purenote.local.core.TodoDates
 import com.purenote.local.data.NoteRepository
@@ -25,7 +26,10 @@ class ReminderReceiver : BroadcastReceiver() {
         val result = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                val repo = NoteRepository(appContext)
+                // 规范 §6.1：Receiver 不自行构造数据层，统一取 Application 持有的那一个。
+                // 自行构造会让进程里出现第二个 DatabaseProvider，各自解析活动指针
+                // -> 可能生成两个库 -> 写进去的提醒状态读不出来。
+                val repo = (appContext as PureNoteApp).repository
                 if (kind == Reminders.KIND_TODO) {
                     val todo = repo.getTodo(targetId)
                     if (todo != null && !todo.done) {
@@ -84,7 +88,10 @@ class BootReceiver : BroadcastReceiver() {
                 val result = goAsync()
                 CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                     try {
-                        val repo = NoteRepository(appContext)
+                        // 规范 §6.1：Receiver 不自行构造数据层，统一取 Application 持有的那一个。
+                // 自行构造会让进程里出现第二个 DatabaseProvider，各自解析活动指针
+                // -> 可能生成两个库 -> 写进去的提醒状态读不出来。
+                val repo = (appContext as PureNoteApp).repository
                         repo.allFutureReminders().forEach { (id, at) ->
                             Reminders.schedule(appContext, Reminders.KIND_NOTE, id, at)
                         }

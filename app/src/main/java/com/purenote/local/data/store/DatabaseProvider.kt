@@ -25,8 +25,35 @@ sealed interface StoreStatus {
  */
 class DatabaseProvider(
     private val context: Context,
-    private val control: StoreControl,
+    internal val control: StoreControl,
 ) {
+
+    companion object {
+        @Volatile
+        private var shared: DatabaseProvider? = null
+
+        /**
+         * 进程内唯一实例（规范 §6.1：Application 持有，Activity / ViewModel /
+         * 悬浮服务 / 提醒 Receiver **都不自行构造**）。
+         *
+         * 必须唯一，而不是"每次 new 一个也行"：每个实例都会各自解析活动指针，
+         * 并发时可能各自生成不同的 epoch，最终在磁盘上留下两个互不可见的库。
+         */
+        fun forApp(context: Context): DatabaseProvider {
+            val app = context.applicationContext
+            return shared ?: synchronized(DatabaseProvider::class.java) {
+                shared ?: DatabaseProvider(app, StoreControl(app)).also { shared = it }
+            }
+        }
+
+        /** 仅供测试：丢弃进程级实例，避免用例之间互相污染。 */
+        internal fun resetForTests() {
+            synchronized(DatabaseProvider::class.java) {
+                shared?.close()
+                shared = null
+            }
+        }
+    }
 
     private val lock = Any()
 
@@ -61,7 +88,7 @@ class DatabaseProvider(
         val pointer = ensurePointer()
         return if (context.getDatabasePath(pointer.dbName).let { it.exists() && it.length() > 0 }) {
             StoreStatus.Ready(pointer.epoch, pointer.dbName, pointerJustInitialized)
-        } else if (pointerJustInitialized) {
+        } else if (pointerJustInitialized || !control.isReady(pointer.epoch)) {
             // 首次运行：文件确实还不存在，允许创建
             StoreStatus.Ready(pointer.epoch, pointer.dbName, true)
         } else {
@@ -81,10 +108,16 @@ class DatabaseProvider(
             val resolved = ensurePointer()
             val file = context.getDatabasePath(resolved.dbName)
             val exists = file.exists() && file.length() > 0
-            if (!exists && !pointerJustInitialized) {
+            if (!exists && !pointerJustInitialized && control.isReady(resolved.epoch)) {
+                // 只有"确实成功打开过、之后又不见了"才进入恢复状态。
+                // 若从未成功打开过（例如上次在"落指针"与"建库"之间被强杀），
+                // 照常创建，否则全新安装会被自己的保护机制挡在门外。
                 throw StoreMissingException(resolved)
             }
             open(resolved).also {
+                // 真正触达数据库，确认文件与 schema 已建立
+                it.writableDatabase
+                control.markReady(resolved.epoch)
                 current = it
                 currentPointer = resolved
             }

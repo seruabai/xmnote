@@ -27,12 +27,17 @@ class StoreControlTest {
 
     @Before
     fun setUp() {
+        // 进程级提供者会被缓存，用例之间必须丢弃，否则测的是上一个用例的实例
+        DatabaseProvider.resetForTests()
         cleanup()
         control = StoreControl(ctx)
     }
 
     @After
-    fun tearDown() = cleanup()
+    fun tearDown() {
+        cleanup()
+        DatabaseProvider.resetForTests()
+    }
 
     private fun cleanup() {
         File(ctx.filesDir, "store-control").deleteRecursively()
