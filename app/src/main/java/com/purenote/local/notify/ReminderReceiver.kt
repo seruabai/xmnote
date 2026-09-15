@@ -89,15 +89,15 @@ class BootReceiver : BroadcastReceiver() {
                 CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                     try {
                         // 规范 §6.1：Receiver 不自行构造数据层，统一取 Application 持有的那一个。
-                // 自行构造会让进程里出现第二个 DatabaseProvider，各自解析活动指针
-                // -> 可能生成两个库 -> 写进去的提醒状态读不出来。
-                val repo = (appContext as PureNoteApp).repository
-                        repo.allFutureReminders().forEach { (id, at) ->
-                            Reminders.schedule(appContext, Reminders.KIND_NOTE, id, at)
-                        }
-                        repo.allFutureTodoReminders().forEach { (id, at) ->
-                            Reminders.schedule(appContext, Reminders.KIND_TODO, id, at)
-                        }
+                        // 自行构造会让进程里出现第二个 DatabaseProvider，各自解析活动指针
+                        // -> 可能生成两个库 -> 写进去的提醒状态读不出来。
+                        val repo = (appContext as PureNoteApp).repository
+
+                        // 规范 §9：开机后按数据库现状**全量重算**，而不是"把还有效的重排一遍"。
+                        // 原来那个循环只补不删——换机恢复、误删、时区变化之后残留的闹钟
+                        // 会在错误的时间弹出来，只补是清不掉的。
+                        // 与 PureNoteApp 启动时走的是同一条路径，不再各写一份。
+                        ReminderReconciler(repo, AndroidAlarmSink(appContext)).reconcileAll()
                         // 用户此前开启了速记侧栏则开机恢复（BOOT_COMPLETED 允许拉起前台服务）
                         if (QuickCaptureService.isEnabled(appContext)) {
                             QuickCaptureService.start(appContext)
