@@ -13,6 +13,7 @@ import com.purenote.local.sync.CredentialStore
 import com.purenote.local.sync.RemoteTransport
 import com.purenote.local.sync.WebDavConfig
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.core.NoteBody
 import com.purenote.local.core.NoteMarkup
 import com.purenote.local.notify.ReminderJob
 import com.purenote.local.notify.ReminderStore
@@ -876,22 +877,31 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
         put("at", now)
     }.toString()
 
+    /**
+     * 落库前统一转成 v3 块文档。
+     *
+     * 现有编辑器仍是"纯文本 + 标记"模型，所以入口收的是 Markdown 正文/清单条目；
+     * 转换由 core/NoteBody 统一负责，Repository 不再自己判断格式。
+     */
     private fun encodeBody(kind: NoteKind, body: String, items: List<ChecklistItem>): String =
-        when (kind) {
-            NoteKind.TEXT -> body
-            NoteKind.CHECKLIST -> ChecklistCodec.encode(items)
-        }
+        NoteBody.encodeFromLegacy(isChecklist = kind == NoteKind.CHECKLIST, body = body, items = items)
 
     private fun Cursor.toNote(): Note {
         val kind = if (getInt(NotesDb.COL_KIND) == 1) NoteKind.CHECKLIST else NoteKind.TEXT
         val rawBody = getString(NotesDb.COL_BODY) ?: ""
+        // 按行内版本号解码（迁移未成功的行仍是旧格式），再转回旧界面模型
+        val doc = NoteBody.decode(
+            isChecklist = kind == NoteKind.CHECKLIST,
+            raw = rawBody,
+            formatVersion = getInt(NotesDb.COL_BODY_FORMAT),
+        )
         return Note(
             id = getLong(NotesDb.COL_ID),
             uuid = getString(NotesDb.COL_UUID) ?: "",
             kind = kind,
             title = getString(NotesDb.COL_TITLE) ?: "",
-            body = if (kind == NoteKind.TEXT) rawBody else "",
-            items = if (kind == NoteKind.CHECKLIST) ChecklistCodec.decode(rawBody) else emptyList(),
+            body = if (kind == NoteKind.TEXT) NoteBody.toMarkup(doc) else "",
+            items = if (kind == NoteKind.CHECKLIST) NoteBody.toChecklistItems(doc) else emptyList(),
             images = (getString(NotesDb.COL_IMAGES) ?: "")
                 .split('\n')
                 .filter { it.isNotBlank() },

@@ -124,6 +124,35 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
             createV9Tables(db)
             db.execSQL(SQL_CREATE_LIBRARY_META_ROW)
         }
+        if (oldVersion < 10) {
+            // 正文块文档化（body_format_version 2 → 3）。
+            // 与 v8 同一套路：真正的转换是纯函数（core/NoteBody.upgradeStoredBody，有单测），
+            // 这里只做逐行搬运。
+            //
+            // 保全原则：单行转换失败**不改该行**，它继续保持旧版本号；读取端按行内版本号
+            // 解析（core/NoteBody.decode 还会做格式嗅探兜底），所以"没迁移成功"只是没升级，
+            // 绝不会让笔记显示为空或内容错乱。
+            val values = android.content.ContentValues()
+            db.rawQuery("SELECT id, kind, body, body_format_version FROM notes", null).use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val isChecklist = c.getInt(1) == 1
+                    val raw = c.getString(2) ?: ""
+                    val version = c.getInt(3)
+                    val migrated = runCatching {
+                        com.purenote.local.core.NoteBody.upgradeStoredBody(
+                            isChecklist = isChecklist,
+                            rawBody = raw,
+                            formatVersion = version,
+                        )
+                    }.getOrNull() ?: continue // 单行失败就跳过，该行保持旧版本号，读取端仍能解析
+                    values.clear()
+                    values.put(COL_BODY, migrated.first)
+                    values.put(COL_BODY_FORMAT, migrated.second)
+                    db.update("notes", values, "id = ?", arrayOf(id.toString()))
+                }
+            }
+        }
     }
 
     private fun addUuidColumn(db: SQLiteDatabase, table: String) {
@@ -150,6 +179,9 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
             put("kind", if (kind == NoteKind.CHECKLIST) 1 else 0)
             put("title", title)
             put("body", encodedBody)
+            // 显式写版本号：不能依赖 DDL 默认值，否则"库里是 v3 JSON、标记却是 v2"会被
+            // 读取端按 Markdown 解析（历史上 body_format_version 就是靠默认值漏掉的）
+            put(COL_BODY_FORMAT, BODY_FORMAT_BLOCKS)
             put("images", images)
             put("color", colorIndex)
             put("folder_id", folderId)
@@ -179,6 +211,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
             put("kind", if (kind == NoteKind.CHECKLIST) 1 else 0)
             put("title", title)
             put("body", encodedBody)
+            put(COL_BODY_FORMAT, BODY_FORMAT_BLOCKS)
             put("images", images)
             put("color", colorIndex)
             put("folder_id", folderId)
@@ -437,12 +470,15 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
     private fun newUuid(): String = UUID.randomUUID().toString().replace("-", "")
 
     companion object {
-        const val DB_VERSION = 9
+        const val DB_VERSION = 10
         const val DB_NAME = "purenote.db"
 
         /** 正文格式版本：1 = v1.2.20 及更早的 PUA 私有标记；2 = 标准 Markdown（规范 §5.2） */
         const val BODY_FORMAT_LEGACY = 1
         const val BODY_FORMAT_MARKDOWN = 2
+
+        /** v3：正文改为块文档 JSON（core/RichDoc），解析入口统一走 core/NoteBody */
+        const val BODY_FORMAT_BLOCKS = 3
 
         private val SQL_CREATE_FOLDERS = """
             CREATE TABLE folders(
@@ -470,7 +506,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
               repeat_type INTEGER NOT NULL DEFAULT 0,
               all_day INTEGER NOT NULL DEFAULT 0,
               revision INTEGER NOT NULL DEFAULT 1,
-              body_format_version INTEGER NOT NULL DEFAULT 2,
+              body_format_version INTEGER NOT NULL DEFAULT 3,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL
             )
@@ -634,6 +670,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         const val COL_KIND = "kind"
         const val COL_TITLE = "title"
         const val COL_BODY = "body"
+        const val COL_BODY_FORMAT = "body_format_version"
         const val COL_IMAGES = "images"
         const val COL_COLOR = "color"
         const val COL_FOLDER = "folder_id"

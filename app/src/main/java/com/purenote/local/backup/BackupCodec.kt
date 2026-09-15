@@ -306,20 +306,20 @@ object BackupCodec {
 
     private fun noteValues(dto: NoteDto, folderId: Long?): ContentValues = ContentValues().apply {
         // 规范 §5.2 的 body_format_version 在这里真正发挥作用：
-        // 导入是继 onUpgrade 之后的第二条写入 body 的生产路径，
-        // 而它过去完全不看格式版本 —— 把旧备份恢复到全新安装时旧标记会永久残留。
-        // migrateBodyV1toV2 是纯函数且已验证幂等，重复导入安全。
-        val needsMigration = dto.kind == 0 &&
-            dto.bodyFormatVersion < NotesDb.BODY_FORMAT_MARKDOWN
-        val finalBody = if (needsMigration) NoteMarkup.migrateBodyV1toV2(dto.body) else dto.body
+        // 导入是继 onUpgrade 之后的第二条写入 body 的生产路径。
+        // 现在库内统一是 v3 块文档，所以不再只做"v1→v2 的补救"，而是把任意来源版本
+        // （1/2/3，含历史上漏标版本号的包）统一解码后重新编码成 v3 —— 解码入口是
+        // core/NoteBody，纯函数且幂等，重复导入安全：v3 包再导入一次结果完全相同。
+        val doc = com.purenote.local.core.NoteBody.decode(
+            isChecklist = dto.kind == 1,
+            raw = dto.body,
+            formatVersion = dto.bodyFormatVersion,
+        )
         put("uuid", dto.uuid)
         put("kind", dto.kind)
         put("title", dto.title)
-        put("body", finalBody)
-        put(
-            "body_format_version",
-            if (dto.kind == 0) NotesDb.BODY_FORMAT_MARKDOWN else dto.bodyFormatVersion,
-        )
+        put("body", com.purenote.local.core.NoteBody.encode(doc))
+        put("body_format_version", NotesDb.BODY_FORMAT_BLOCKS)
         put("images", dto.images.joinToString("\n"))
         put("color", dto.colorIndex)
         put("folder_id", folderId)
