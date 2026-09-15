@@ -154,7 +154,38 @@ object BackupCodec {
      * [local] 必须传入 [snapshot] 的结果：子待办的父项可能只存在于本机、
      * 不在备份里，需要靠它把 uuid 解析回本地 id，否则会被误判为孤儿而提升为顶层。
      */
-    fun apply(db: NotesDb, plan: BackupMerger.Plan, local: BackupMerger.LocalSnapshot): Applied {
+    /**
+     * 规范 §13.2：以「来源库 + 来源实体 ID」建立映射，
+     * 让"同一份备份导入两次"和"跨库同数字 ID"都能被识别，而不是按标题猜是不是同一条。
+     * [sourceLibraryId] 取自备份清单里的 library_id；旧格式包没有清单时为空串。
+     */
+    private fun recordImportMapping(
+        db: NotesDb,
+        sourceLibraryId: String,
+        entityType: String,
+        sourceId: String,
+        targetId: Long,
+    ) {
+        if (sourceId.isBlank()) return
+        db.writableDatabase.insertWithOnConflict(
+            "import_mappings",
+            null,
+            android.content.ContentValues().apply {
+                put("source_library_id", sourceLibraryId)
+                put("entity_type", entityType)
+                put("source_id", sourceId)
+                put("target_id", targetId)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    fun apply(
+        db: NotesDb,
+        plan: BackupMerger.Plan,
+        local: BackupMerger.LocalSnapshot,
+        sourceLibraryId: String = "",
+    ): Applied {
         var inserted = 0
         var updated = 0
         var skipped = 0
@@ -190,7 +221,10 @@ object BackupCodec {
                     is BackupMerger.NoteAction.Insert -> {
                         val folderId = action.folderName?.let { folderIdByName[it] }
                         val id = db.writableDatabase.insert("notes", null, noteValues(action.dto, folderId))
-                        if (id != -1L) inserted++
+                        if (id != -1L) {
+                            inserted++
+                            recordImportMapping(db, sourceLibraryId, "note", action.dto.uuid, id)
+                        }
                     }
                     is BackupMerger.NoteAction.Update -> {
                         val folderId = action.folderName?.let { folderIdByName[it] }

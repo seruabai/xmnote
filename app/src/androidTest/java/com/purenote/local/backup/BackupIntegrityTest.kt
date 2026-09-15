@@ -183,6 +183,44 @@ class BackupIntegrityTest {
         }
     }
 
+    @Test
+    fun importingRecordsCrossLibraryMappings() = runBlocking {
+        // 规范 §13.2：以「来源库 + 来源实体 ID」建立映射，
+        // 而不是靠标题猜是不是同一条笔记。
+        val json = BackupJson.encode(
+            BackupFile(
+                appVersion = "test",
+                notes = listOf(
+                    NoteDto(
+                        uuid = "src-note-1", kind = 0, title = "来自别的库", body = "正文",
+                        bodyFormatVersion = NotesDb.BODY_FORMAT_MARKDOWN,
+                        createdAt = 1000L, updatedAt = 1000L,
+                    ),
+                ),
+            ),
+        )
+        val manifest = BackupManifest(
+            appVersion = "test", sourceSchema = 9, libraryId = "source-lib-xyz", backupId = "b",
+            createdAt = 1L,
+            entries = listOf(entryOf(BackupIo.ENTRY_JSON, json.toByteArray(Charsets.UTF_8))),
+        )
+        io.import(ByteArrayInputStream(buildPackage(json, manifest = manifest)), db)
+
+        val mapped = db.readableDatabase.rawQuery(
+            "SELECT source_library_id, entity_type, source_id, target_id FROM import_mappings",
+            null,
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(listOf(c.getString(0), c.getString(1), c.getString(2), c.getLong(3).toString()))
+            }
+        }
+        assertEquals(1, mapped.size)
+        assertEquals("source-lib-xyz", mapped.single()[0])
+        assertEquals("note", mapped.single()[1])
+        assertEquals("src-note-1", mapped.single()[2])
+        assertTrue("目标 id 必须是真实存在的笔记", mapped.single()[3].toLong() > 0)
+    }
+
     private companion object {
         const val DB = "backup-integrity-test.db"
         const val DB2 = "backup-integrity-test2.db"

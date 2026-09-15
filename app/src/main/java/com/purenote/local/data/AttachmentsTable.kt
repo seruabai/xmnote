@@ -62,6 +62,26 @@ internal object AttachmentsTable {
         )
     }
 
+    /**
+     * 记录"某个历史版本引用了哪些附件"（规范 §5.2/§10）。
+     *
+     * 与 note_attachment_refs 分开存是必须的：当前版本的引用可以被清理，
+     * 但历史版本一旦还引用着某个附件，那个文件就不能被当成垃圾删掉——
+     * 否则用户回滚到旧版本时会看到一堆破图。
+     */
+    fun addVersionRef(db: SQLiteDatabase, noteId: Long, revision: Long, attachmentId: String) {
+        db.insertWithOnConflict(
+            "version_attachment_refs",
+            null,
+            ContentValues().apply {
+                put("note_id", noteId)
+                put("revision", revision)
+                put("attachment_id", attachmentId)
+            },
+            SQLiteDatabase.CONFLICT_IGNORE,
+        )
+    }
+
     fun countFor(db: SQLiteDatabase, relativeName: String): Int =
         db.rawQuery("SELECT COUNT(*) FROM attachments WHERE relative_name = ?", arrayOf(relativeName))
             .use { it.moveToFirst(); it.getInt(0) }

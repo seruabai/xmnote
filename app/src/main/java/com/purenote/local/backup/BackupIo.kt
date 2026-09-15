@@ -161,7 +161,8 @@ class BackupIo(private val context: Context) {
 
         val snapshot = BackupCodec.snapshot(db)
         val plan = BackupMerger.plan(backup, snapshot)
-        val applied = BackupCodec.apply(db, plan, snapshot)
+        // 规范 §13.2：把来源库身份带进导入，用于建立跨库实体映射
+        val applied = BackupCodec.apply(db, plan, snapshot, sourceLibraryId = manifest?.libraryId ?: "")
 
         val dir = ImageStore.imagesDir(context)
         var restored = 0

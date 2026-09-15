@@ -99,6 +99,32 @@ class AttachmentMetadataTest {
         assertEquals("不再被正文引用的当前版本引用应被清理", 0, count)
     }
 
+    @Test
+    fun eachRevisionRecordsItsOwnAttachmentReferences() = runBlocking {
+        // 规范 §5.2/§10：历史版本的引用必须单独留档。
+        // 只记当前版本的话，一旦用户回滚到旧版本，那些附件会被当成垃圾清掉，
+        // 用户看到的就是一堆破图。
+        val id = repo.createNote(NoteKind.TEXT, "t", "![](v1.jpg)", emptyList(), listOf("v1.jpg"), 0, null)
+
+        repo.saveExisting(id, NoteKind.TEXT, "t", "![](v1.jpg)", emptyList(), listOf("v1.jpg"), 0, null, false, null)
+        repo.saveExisting(id, NoteKind.TEXT, "t", "![](v2.jpg)", emptyList(), listOf("v2.jpg"), 0, null, false, null)
+
+        val byRevision = repo.db.readableDatabase.rawQuery(
+            "SELECT revision, attachment_id FROM version_attachment_refs WHERE note_id = ? ORDER BY revision, attachment_id",
+            arrayOf(id.toString()),
+        ).use { c -> buildList { while (c.moveToNext()) add(c.getLong(0) to c.getString(1)) } }
+
+        assertEquals(2, byRevision.size)
+        assertEquals("第 2 版引用 v1", 2L to "v1.jpg", byRevision[0])
+        assertEquals("第 3 版引用 v2", 3L to "v2.jpg", byRevision[1])
+
+        // 当前版本的引用只剩 v2；v1 的历史引用必须还在
+        val current = repo.db.readableDatabase.rawQuery(
+            "SELECT attachment_id FROM note_attachment_refs WHERE note_id = ?", arrayOf(id.toString()),
+        ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+        assertEquals(listOf("v2.jpg"), current)
+    }
+
     private companion object {
         const val DB = "attachment-metadata-test.db"
     }

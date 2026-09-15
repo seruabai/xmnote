@@ -193,7 +193,11 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
                     val referenced = (NoteMarkup.imageNames(encodedBody) + encodedImages.split('\n'))
                         .filter { it.isNotBlank() }
                         .toSet()
-                    referenced.forEach { AttachmentsTable.addNoteRef(database, id, it) }
+                    referenced.forEach {
+                        AttachmentsTable.addNoteRef(database, id, it)
+                        // 同时记进历史版本引用：这个版本以后可能被回滚，附件不能算垃圾
+                        AttachmentsTable.addVersionRef(database, id, outcome.revision, it)
+                    }
                     AttachmentsTable.pruneNoteRefs(database, id, referenced)
                     SaveResult.Saved(id, outcome.revision)
                 }
@@ -372,7 +376,66 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
                 if (done) db.setTodoDone(id, true, now, database)
             }
             syncParentDoneFromChildren(parentId, now, database)
+            bumpRootRevisionAndSnapshot(database, parentId, now)
         }
+
+    /**
+     * 根待办发生聚合变更时：修订号 +1，并留一份**含子项**的完整快照。
+     *
+     * 之前 todo 的 revision 从来没被改过（恒为 1），后果不只是历史缺失：
+     * reminder_jobs 记的是 expected_revision，待办改过之后这个值不变，
+     * 于是"旧任务不能覆盖新提醒"对**待办**根本失效——一条过期的提醒期望
+     * 会被当成仍然有效而照常推送。规范 §5.2 把根待办的修订号定义为
+     * 父子整体的冲突边界，正是为此。
+     */
+    private fun bumpRootRevisionAndSnapshot(
+        database: android.database.sqlite.SQLiteDatabase,
+        rootId: Long,
+        now: Long,
+    ) {
+        val revision = database.rawQuery("SELECT revision FROM todos WHERE id = ?", arrayOf(rootId.toString()))
+            .use { if (it.moveToFirst()) it.getLong(0) else 0L } + 1
+        database.execSQL("UPDATE todos SET revision = ? WHERE id = ?", arrayOf(revision, rootId))
+        TodoVersionsTable.insert(
+            db = database,
+            rootId = rootId,
+            revision = revision,
+            snapshotJson = todoSnapshotJson(database, rootId, revision, now),
+            reason = "save",
+            operationId = "",
+            now = now,
+        )
+    }
+
+    /** 快照存原始存储值（含全部子项），不做有损的 UI 模型往返。 */
+    private fun todoSnapshotJson(
+        database: android.database.sqlite.SQLiteDatabase,
+        rootId: Long,
+        revision: Long,
+        now: Long,
+    ): String = org.json.JSONObject().apply {
+        put("rootId", rootId)
+        put("revision", revision)
+        val children = org.json.JSONArray()
+        database.rawQuery(
+            "SELECT id, title, done, due_at, sort_index FROM todos WHERE parent_id = ? ORDER BY sort_index, id",
+            arrayOf(rootId.toString()),
+        ).use { c ->
+            while (c.moveToNext()) {
+                children.put(
+                    org.json.JSONObject().apply {
+                        put("id", c.getLong(0))
+                        put("title", c.getString(1))
+                        put("done", c.getInt(2) == 1)
+                        put("dueAt", if (c.isNull(3)) org.json.JSONObject.NULL else c.getLong(3))
+                        put("sortIndex", c.getInt(4))
+                    },
+                )
+            }
+        }
+        put("children", children)
+        put("at", now)
+    }.toString()
 
     /** 无子项时保留父待办自己的状态；存在子项时，父项仅在所有子项完成后才完成。 */
     private fun syncParentDoneFromChildren(parentId: Long, now: Long, database: android.database.sqlite.SQLiteDatabase) {
