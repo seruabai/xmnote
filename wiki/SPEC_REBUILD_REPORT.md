@@ -139,7 +139,7 @@ Lint           无 error
 | **H 云能力** | ⏸ **等用户决策** | 需在"不申请网络权限"（README 已公开承诺）与云同步之间二选一 |
 | 性能预算真机复测 | 待办 | 模拟器噪声 ±70%，分辨不了 300ms 量级；需用户真机 |
 | 首页列表分页 | 未做 | 10,000 条时列表 p95 ≈ 650ms；超出 A–G 范围的**功能变更**，需用户确认 |
-| 待办 / 速记侧栏提醒路径 | 部分 | 笔记保存路径已走协调器；待办与 QuickCaptureService 仍直接调 `Reminders` |
+| 待办 / 速记侧栏提醒路径 | 部分 | 见 §9 的逐点清单 |
 | 设备级损坏注入 | 未做 | 现有的是真实文件 + 人为损坏，没到 `am set-debug-app` 那一级 |
 
 ## 8. 给接续者的注意事项
@@ -152,3 +152,49 @@ Lint           无 error
    是图片行原子性的三条腿，改动它们务必跑 `UnicodeGenerativeTest`。
 4. 设备测试会跑 `pm clear` 与建/删库；`SavePerformanceBaselineTest` **必须单独运行**。
 5. 备份包里 `manifest.json` 是**最后**写入的条目——这个性质被崩溃注入用来判定半成品。
+6. 改代码**不要用字符串拼接/整体重写**：本轮有两次把 `NoteRepository` 的括号弄坏
+   （一次少了闭合、一次多了一个），编译报出十几个无关的 Unresolved 才定位到。
+   定点编辑 + 改一处编译一次，成本更低。
+
+## 9. 待办 / 速记侧栏提醒路径收口（唯一剩下的自主工作）
+
+**背景**：协调器目前只覆盖笔记保存路径。仍有 **18 处**直接调用 `Reminders`：
+`NoteViewModel` 16 处、`QuickCaptureService` 2 处。
+
+**顺序不能反**：先登记期望，再换调用点。反过来的话没有期望可推，提醒会直接不响。
+
+### 第 1 步：给待办变更登记期望
+
+在 `NoteRepository` 的这几个方法里，于**同一个事务内**加
+`ReminderJobsTable.upsert(database, Reminders.KIND_TODO, rootId, revision, remindAt, now)`：
+
+| 方法 | 备注 |
+|---|---|
+| `updateTodo` | 编辑到期时间/提醒时间后必须登记 |
+| `setTodoDone` | 已完成/取消完成会改变"还应不应该提醒" |
+| `createTodo` | 新建就带提醒的路径 |
+
+期望里的 `revision` 用 `todos.revision`。注意 `replaceSubs` 已经有
+`bumpRootRevisionAndSnapshot` 在推进根修订号（规范 §5.2），登记时取最新值。
+
+### 第 2 步：分辨"更新"与"删除"两类调用点
+
+**不要机械替换**——这两类的正确处理方式不同：
+
+| 类型 | 调用点 | 正确处理 |
+|---|---|---|
+| **更新**（记录还在） | `NoteViewModel:765/767`（保存待办后 schedule/cancel） | 改为 `reconciler.applyPending()` |
+| **删除**（记录已消失） | `NoteViewModel:665/674/690/701/726/746`（进废纸篓、清空、彻底删除） | **保留直接 `Reminders.cancel`** |
+
+理由：记录已经不存在了，没有任何"期望状态"可以登记；而且全量重算
+（`reconcileAll`）本来就会把 `knownTargets` 里的残留目标取消掉。
+硬把它们改成 `applyPending` 反而会因为查不到目标而绕远路。
+
+`QuickCaptureService:915/919`（速记侧栏新建待办）属**新建**，走第 1 步 + `applyPending`。
+
+### 第 3 步：验证
+
+- 新增设备用例：待办改到期时间 → `reminder_jobs` 出现对应行且 `expected_revision`
+  与 `todos.revision` 一致；再次修改后修订号推进、旧期望被 `applyPending` 判为过期
+- 跑完整设备套件（当前 60 项）
+- 建议在新会话里做：这一步涉及 6 个文件，用已消耗过半的上下文做风险偏高
