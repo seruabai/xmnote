@@ -222,9 +222,17 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
         db.setPinned(id, pinned, System.currentTimeMillis())
     }
 
+    /**
+     * 设置笔记提醒。规范 §9：提醒的期望状态与数据在**同一个事务**里落库，
+     * 平台侧由 ReminderReconciler 按期望对齐（原来是在 ViewModel 里直接 schedule/cancel，
+     * 保存失败时闹钟照样被改了）。
+     */
     suspend fun setReminder(id: Long, remindAt: Long?, repeat: RepeatRule = RepeatRule.NONE, allDay: Boolean = false) =
-        withContext(Dispatchers.IO) {
+        tx.write { database ->
+            val now = System.currentTimeMillis()
             db.setReminder(id, remindAt, repeat.ordinal, allDay)
+            val revision = NoteStore.readRevision(id, database) ?: 0L
+            ReminderJobsTable.upsert(database, Reminders.KIND_NOTE, id, revision, remindAt, now)
         }
 
     suspend fun moveToFolder(id: Long, folderId: Long?) = withContext(Dispatchers.IO) {
@@ -317,16 +325,65 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
     }
 
     suspend fun createTodo(parentId: Long?, title: String, dueAt: Long?, allDay: Boolean, repeat: Int): Long =
-        withContext(Dispatchers.IO) {
-            db.insertTodo(parentId, title.trim(), dueAt, allDay, repeat, sortIndex = 0, now = System.currentTimeMillis())
+        tx.write { database ->
+            val now = System.currentTimeMillis()
+            val id = db.insertTodo(
+                parentId, title.trim(), dueAt, allDay, repeat,
+                sortIndex = 0, now = now, database = database,
+            )
+            registerTodoReminder(database, id, now)
+            id
         }
+
+    /**
+     * 登记待办的提醒期望（规范 §9）：与数据变更在**同一个事务**里落库。
+     *
+     * 写的是**根待办**的修订号——父子整体的冲突边界由根记录承担（规范 §5.2），
+     * 子项跟随父项，不单独排提醒。
+     *
+     * @param clearReminder 为 true 时登记"不要提醒"（待办被勾选完成 / 进废纸篓）。
+     */
+    private fun registerTodoReminder(
+        database: android.database.sqlite.SQLiteDatabase,
+        todoId: Long,
+        now: Long,
+        clearReminder: Boolean = false,
+    ) {
+        val row = database.rawQuery(
+            "SELECT CASE WHEN parent_id IS NULL THEN id ELSE parent_id END, " +
+                "CASE WHEN parent_id IS NULL THEN revision " +
+                "ELSE (SELECT revision FROM todos t2 WHERE t2.id = todos.parent_id) END, " +
+                "CASE WHEN parent_id IS NULL THEN remind_at " +
+                "ELSE (SELECT remind_at FROM todos t2 WHERE t2.id = todos.parent_id) END " +
+                "FROM todos WHERE id = ?",
+            arrayOf(todoId.toString()),
+        ).use { c ->
+            if (c.moveToFirst()) {
+                Triple(c.getLong(0), c.getLong(1), if (c.isNull(2)) null else c.getLong(2))
+            } else {
+                null
+            }
+        } ?: return
+        ReminderJobsTable.upsert(
+            database,
+            Reminders.KIND_TODO,
+            row.first,
+            row.second,
+            if (clearReminder) null else row.third,
+            now,
+        )
+    }
 
     suspend fun quickAddTodo(title: String, dueAt: Long? = null): Long =
         createTodo(null, title, dueAt, allDay = false, repeat = 0)
 
     suspend fun updateTodo(id: Long, title: String, dueAt: Long?, allDay: Boolean, repeat: Int) =
-        withContext(Dispatchers.IO) {
-            db.updateTodo(id, title.trim(), dueAt, allDay, repeat, now = System.currentTimeMillis())
+        tx.write { database ->
+            val now = System.currentTimeMillis()
+            db.updateTodo(id, title.trim(), dueAt, allDay, repeat, now = now)
+            // 改到期时间 = 改了期望的提醒时间，必须登记（规范 §9）。
+            // 注意 registerTodoReminder 是从库里读根记录的当前值，所以要在 update 之后调用。
+            registerTodoReminder(database, id, now)
         }
 
     /**
@@ -343,6 +400,9 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
         } else {
             todo.parentId?.let { syncParentDoneFromChildren(it, now, database) }
         }
+        // 规范 §9：完成状态改变会影响"还应不应该提醒"。
+        // 只有**根待办**被标记完成时才清掉期望——子项勾完不该让父项的提醒消失。
+        registerTodoReminder(database, todo.id, now, clearReminder = done && !todo.isSubtask)
     }
 
     /**

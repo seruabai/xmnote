@@ -911,13 +911,10 @@ class QuickCaptureService : Service() {
             // 清单父项状态由子项推导，不能再用旧 draft 状态把未完成子项重新全部勾上。
             draft.done = cleanSubs.all { it.second }
         }
-        if (draft.dueAt == null) {
-            Reminders.cancel(this, Reminders.KIND_TODO, draft.id)
-        } else {
-            // 取局部快照再调度，避免协程执行期间 draft.dueAt 被界面改回 null 后触发非空断言
-            val due = draft.dueAt
-            Reminders.schedule(this, Reminders.KIND_TODO, draft.id, due!!)
-        }
+        // 规范 §9：期望的提醒状态已经随 updateTodo / setTodoDone 的**事务**落库，
+        // 这里只负责把它推给平台。原先在这里自行判断 schedule/cancel，
+        // 等于把"期望"算在了悬浮层里，与数据落库不同步。
+        ReminderReconciler(repo, AndroidAlarmSink(this)).applyPending()
         DataChanges.notifyChanged()
     }
 

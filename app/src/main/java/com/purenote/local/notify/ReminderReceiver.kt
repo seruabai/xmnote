@@ -44,7 +44,8 @@ class ReminderReceiver : BroadcastReceiver() {
                             val next = note.remindAt?.let { TodoDates.nextOccurrence(it, note.repeat) }
                             if (next != null) {
                                 repo.setReminder(note.id, next, note.repeat, note.allDay)
-                                Reminders.schedule(appContext, Reminders.KIND_NOTE, note.id, next)
+                                // 规范 §9：期望已随 setReminder 的事务落库，这里交给协调器推送
+                                ReminderReconciler(repo, AndroidAlarmSink(appContext)).applyPending()
                             } else {
                                 repo.setReminder(note.id, null)
                             }

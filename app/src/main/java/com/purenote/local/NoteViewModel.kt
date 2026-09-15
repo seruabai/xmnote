@@ -391,7 +391,8 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
             reduceEditor(EditorEvent.Loaded(content = "", revision = 1L))
             if (remindAt != null) {
                 repo.setReminder(id, remindAt, repeat, allDay)
-                Reminders.schedule(getApplication(), Reminders.KIND_NOTE, id, remindAt)
+                // 规范 §9：期望已在 setReminder 的事务里落库，这里只把它推给平台
+                reconciler.applyPending()
             }
             refresh()
             onDone(id)
@@ -599,8 +600,8 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     fun setReminder(reminderTarget: Note, at: Long?) {
         viewModelScope.launch {
             repo.setReminder(reminderTarget.id, at, reminderTarget.repeat, reminderTarget.allDay)
-            if (at == null) Reminders.cancel(getApplication(), Reminders.KIND_NOTE, reminderTarget.id)
-            else Reminders.schedule(getApplication(), Reminders.KIND_NOTE, reminderTarget.id, at)
+            // 规范 §9：at == null 也会落一条"期望无提醒"，由协调器统一取消，不在这里分叉判断
+            reconciler.applyPending()
             refresh()
         }
     }
@@ -619,7 +620,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
             val id = repo.createTodo(null, title, dueAt, allDay, repeat.ordinal)
             val validSubs = subs.filter { it.first.isNotBlank() }
             if (validSubs.isNotEmpty()) repo.replaceSubs(id, validSubs)
-            scheduleTodoAlarm(id, dueAt)
+            applyTodoReminders()
             refresh()
             onDone(id)
         }
@@ -628,7 +629,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     fun updateTodo(id: Long, title: String, dueAt: Long?, allDay: Boolean, repeat: RepeatRule) {
         viewModelScope.launch {
             repo.updateTodo(id, title, dueAt, allDay, repeat.ordinal)
-            scheduleTodoAlarm(id, dueAt)
+            applyTodoReminders()
             refresh()
         }
     }
@@ -654,7 +655,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                 // 重复待办：完成后推进到下一次到期，保持未完成
                 TodoDates.nextOccurrence(todo.dueAt, todo.repeat)?.let { next ->
                     repo.rescheduleRepeat(todo.id, next, todo.allDay)
-                    scheduleTodoAlarm(todo.id, next)
+                    applyTodoReminders()
                     refresh()
                     return@launch
                 }
@@ -664,7 +665,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
             if (markingDone) {
                 Reminders.cancel(getApplication(), Reminders.KIND_TODO, todo.id)
             } else {
-                scheduleTodoAlarm(todo.id, todo.dueAt)
+                applyTodoReminders()
             }
             // 父项状态已由仓库按全部子项统一重算；这里同步父项提醒状态。
             if (todo.isSubtask) {
@@ -673,7 +674,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                         if (parent.done) {
                             Reminders.cancel(getApplication(), Reminders.KIND_TODO, parent.id)
                         } else {
-                            scheduleTodoAlarm(parent.id, parent.dueAt)
+                            applyTodoReminders()
                         }
                     }
                 }
@@ -707,7 +708,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             repo.restoreTodoTree(todo.id)
             repo.getTodo(todo.id)?.let { restored ->
-                if (!restored.done) scheduleTodoAlarm(restored.id, restored.dueAt)
+                if (!restored.done) applyTodoReminders()
             }
             refresh()
         }
@@ -760,12 +761,16 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun scheduleTodoAlarm(id: Long, dueAt: Long?) {
-        if (dueAt != null && dueAt > System.currentTimeMillis()) {
-            Reminders.schedule(getApplication(), Reminders.KIND_TODO, id, dueAt)
-        } else {
-            Reminders.cancel(getApplication(), Reminders.KIND_TODO, id)
-        }
+    /**
+     * 规范 §9：待办的提醒期望已经在仓库的 createTodo / updateTodo / setTodoDone
+     * **事务里**登记好了，这里只负责把它推给平台。
+     *
+     * 原来这里自己判断"时间还没到就 schedule、否则 cancel"——那是把期望直接算在了
+     * ViewModel 里。现在期望以数据库为准，协调器逐个核对修订号，
+     * 过期期望不会覆盖新提醒（"旧任务不能覆盖新提醒"）。
+     */
+    private fun applyTodoReminders() {
+        viewModelScope.launch { reconciler.applyPending() }
     }
 
     // ---- 分类 ----
