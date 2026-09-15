@@ -20,6 +20,21 @@ class PureNoteApp : Application() {
         repository = NoteRepository(this)
         Reminders.ensureChannel(this)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        // 规范 §10：附件发布成功后登记字节级事实（大小 + SHA-256）。
+        // 用回调而不是让 core 直接依赖数据库：core 层依然不认识 SQLite。
+        com.purenote.local.core.ImageStore.onPublished = { published ->
+            scope.launch {
+                runCatching {
+                    repository.recordAttachment(
+                        attachmentId = published.attachmentId,
+                        relativeName = published.fileName,
+                        sizeBytes = published.sizeBytes,
+                        sha256 = published.sha256,
+                    )
+                }
+            }
+        }
         // 补偿开机广播未触发时的提醒重排
         scope.launch {
             // 阶段 A（规范 §2 / §14）：自动物理清理停用。

@@ -27,6 +27,13 @@ object ImageStore {
     const val MAX_DIMENSION = 1600
     private const val JPEG_QUALITY = 88
 
+    /**
+     * 附件发布成功后的回调，由 Application 装配（规范 §10：把文件元数据写入 attachments）。
+     * 默认 no-op，因此 ImageStore 在没有数据库的场景下依然可用。
+     */
+    @Volatile
+    var onPublished: ((AttachmentStore.Published) -> Unit)? = null
+
     sealed interface ImportOutcome {
         data class Ok(val fileName: String) : ImportOutcome
         data class Failed(val detail: String) : ImportOutcome
@@ -135,7 +142,11 @@ object ImageStore {
             onFinally(bitmap)
         }
         return when (val result = store.publishAs(staged, fileName)) {
-            is AttachmentStore.Outcome.Ok -> ImportOutcome.Ok(result.published.fileName)
+            is AttachmentStore.Outcome.Ok -> {
+                // 只有发布成功才登记元数据；失败的分支连文件都不存在
+                runCatching { onPublished?.invoke(result.published) }
+                ImportOutcome.Ok(result.published.fileName)
+            }
             is AttachmentStore.Outcome.Failed -> {
                 staged.delete()
                 ImportOutcome.Failed(result.detail)

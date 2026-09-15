@@ -6,6 +6,7 @@ import com.purenote.local.backup.BackupCodec
 import com.purenote.local.backup.BackupFile
 import com.purenote.local.backup.BackupIo
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.core.NoteMarkup
 import com.purenote.local.notify.ReminderJob
 import com.purenote.local.notify.ReminderStore
 import com.purenote.local.notify.ReminderTarget
@@ -187,6 +188,13 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
                     ReminderJobsTable.upsert(
                         database, Reminders.KIND_NOTE, id, outcome.revision, remindAt, now,
                     )
+                    // 规范 §10：正文引用的提交必须在文件完整发布之后（发布已在阶段 D 保证），
+                    // 这里在同一个事务里把"当前版本引用了哪些附件"记下来。
+                    val referenced = (NoteMarkup.imageNames(encodedBody) + encodedImages.split('\n'))
+                        .filter { it.isNotBlank() }
+                        .toSet()
+                    referenced.forEach { AttachmentsTable.addNoteRef(database, id, it) }
+                    AttachmentsTable.pruneNoteRefs(database, id, referenced)
                     SaveResult.Saved(id, outcome.revision)
                 }
                 is CasOutcome.Conflict -> SaveResult.Conflict(outcome.actualRevision)
@@ -549,6 +557,27 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore {
     }
 
     // ---- 测试用只读探针（不影响生产路径）----
+
+    // ---- 规范 §10：附件元数据 ----
+
+    /**
+     * 登记一个已发布的附件。由 [com.purenote.local.core.ImageStore] 在发布成功后回调。
+     * 记录的是**字节级事实**（大小 + SHA-256），用于日后判断文件是否被外部改动或截断。
+     */
+    suspend fun recordAttachment(
+        attachmentId: String,
+        relativeName: String,
+        sizeBytes: Long,
+        sha256: String,
+        mime: String = "image/jpeg",
+    ) = tx.write { database ->
+        AttachmentsTable.upsert(
+            database, attachmentId, relativeName, sizeBytes, sha256, mime, System.currentTimeMillis(),
+        )
+    }
+
+    internal fun debugAttachmentCount(relativeName: String): Int =
+        AttachmentsTable.countFor(db.readableDatabase, relativeName)
 
     // ---- 规范 §9：提醒协调所需的数据访问 ----
 
