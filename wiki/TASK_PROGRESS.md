@@ -29,4 +29,5 @@
 - T-008 | 侧栏均匀暗化去噪点+把手加灰+侧栏卡片原地编辑+长按多选对标图2 (v1.2.14已发) | opencode | 完成 | notify/QuickCaptureService.kt, ui/TodoPane.kt, ui/TodoCard.kt | 2026-09-06 |
 - T-009 | 自查返工：hideKeyboard空转+暗罩太薄+选中米黄太浅+手柄太淡 (v1.2.15已发) | opencode | 完成 | notify/QuickCaptureService.kt, ui/TodoCard.kt | 2026-09-06 |
 - T-010 | Android16模拟器全量实测+修复8处bug（弹窗闪退/侧栏新建待办/速记持久化/输入回滚/FAB卡死/拖拽闪回/通知id/时间文案）(v1.2.16已发) | ZCode | 完成 | ui/TodoEditSheet.kt, ui/TodoPane.kt, ui/TodoSwipe.kt, ui/TodoCard.kt, notify/QuickCaptureService.kt, notify/ReminderReceiver.kt, notify/ReminderScheduler.kt, MainActivity.kt, ui/SettingsScreen.kt, app/build.gradle.kts | 2026-09-07 |
+- T-017 | 规范实施 A0–G：《PureNote 技术选型、实现规范与验收方案》分阶段落地（分支 `spec/rebuild-a-h`，12 个提交）。**已完成并验收**：单测 164、设备 48、崩溃注入 6 次强杀全绿；设备实测覆盖首页崩溃/升级锁库/图片被毁三处原始故障的修复、v9 迁移、升级接管既有库、自动备份落地。**遗留**：H（云能力）需用户决定是否推翻"不申请网络权限"的产品承诺；性能预算需真机复测（模拟器噪声 ±70%）。详见 wiki/SPEC_REBUILD_REPORT.md | DeepSeek Harness | 完成 | 见 CHANGELOG 同条目 | 2026-09-15 |
 - T-011 | 多选UI对标小米实机（三条杠+浅灰）；把手深灰50%；侧栏点空白保存并收起。**待办：T-006-C 笔记富编辑器批次仍未开工**（工具栏随键盘/录音/行内勾选/图片插光标/H1-H3/时间栏YMD/三点菜单精简） | ZCode | 完成 | ui/TodoCard.kt, notify/QuickCaptureService.kt, app/build.gradle.kts | 2026-09-07 |
