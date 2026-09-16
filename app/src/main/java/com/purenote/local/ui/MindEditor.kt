@@ -4,6 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -47,8 +50,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -65,7 +72,9 @@ import com.purenote.local.feature.mind.MindView
 import com.purenote.local.feature.mind.find
 import com.purenote.local.feature.mind.flattenOutline
 import com.purenote.local.feature.mind.insertChild
+import com.purenote.local.feature.mind.contains
 import com.purenote.local.feature.mind.insertSibling
+import com.purenote.local.feature.mind.move
 import com.purenote.local.feature.mind.remove
 import com.purenote.local.feature.mind.toggleCollapsed
 import com.purenote.local.feature.mind.updateLabel
@@ -137,8 +146,13 @@ fun MindEditor(
             when (mind.view) {
                 MindView.MIND -> MindCanvas(
                     layout = layout,
+                    root = mind.root,
                     selectedId = selectedId,
                     onSelect = { selectedId = it },
+                    onReparent = { nodeId, newParentId ->
+                        onMindChange(mind.copy(root = mind.root.move(nodeId, newParentId)))
+                        selectedId = nodeId
+                    },
                 )
                 MindView.OUTLINE -> MindOutline(
                     mind = mind,
@@ -233,12 +247,17 @@ private fun MindAction(icon: ImageVector, description: String, enabled: Boolean,
 @Composable
 private fun MindCanvas(
     layout: MindLayoutResult,
+    root: MindNode,
     selectedId: String?,
     onSelect: (String?) -> Unit,
+    onReparent: (String, String) -> Unit,
 ) {
     val density = LocalDensity.current
     val contentW = with(density) { layout.width.toDp() }
     val contentH = with(density) { layout.height.toDp() }
+    val haptics = LocalHapticFeedback.current
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dropTargetId by remember { mutableStateOf<String?>(null) }
     Box(
         Modifier
             .fillMaxSize()
@@ -264,24 +283,70 @@ private fun MindCanvas(
                 }
                 layout.nodes.forEach { n ->
                     val isSelected = n.id == selectedId
+                    val isDropTarget = n.id == dropTargetId
+                    val isDragging = n.id == draggingId
                     Box(
                         modifier = Modifier
                             .offset { IntOffset(n.x.roundToInt(), n.y.roundToInt()) }
                             .size(with(density) { n.width.toDp() }, with(density) { n.height.toDp() })
+                            // 长按拖动换父节点：长按前不碰事件，越过 slop 才接管（与正文块拖拽同一套做法）
+                            .pointerInput(n.id) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    val armed = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                                    val moving = root.find(n.id) ?: return@awaitEachGesture
+                                    // 根节点没有父可换
+                                    if (n.id == root.id) return@awaitEachGesture
+                                    draggingId = n.id
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    var moved = false
+                                    val slop = viewConfiguration.touchSlop
+                                    val slopSq = slop * slop
+                                    val start = armed.position
+                                    while (true) {
+                                        val change = awaitPointerEvent(PointerEventPass.Initial)
+                                            .changes.firstOrNull { it.id == armed.id } ?: break
+                                        if (change.changedToUpIgnoreConsumed()) break
+                                        if (!moved) {
+                                            val dx = change.position.x - start.x
+                                            val dy = change.position.y - start.y
+                                            if (dx * dx + dy * dy > slopSq) moved = true
+                                        }
+                                        if (moved) {
+                                            change.consume()
+                                            // 节点局部坐标 → 画布坐标；命中谁就以谁为新父
+                                            val cx = n.x + change.position.x
+                                            val cy = n.y + change.position.y
+                                            dropTargetId = layout.nodes.firstOrNull { other ->
+                                                other.id != n.id &&
+                                                    !moving.contains(other.id) &&   // 自己的子孙不能当父（会成环）
+                                                    cx >= other.x && cx <= other.right &&
+                                                    cy >= other.y && cy <= other.bottom
+                                            }?.id
+                                        }
+                                    }
+                                    if (moved) {
+                                        dropTargetId?.let { target -> onReparent(n.id, target) }
+                                    }
+                                    draggingId = null
+                                    dropTargetId = null
+                                }
+                            }
                             .background(
-                                if (isSelected) {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
+                                when {
+                                    isDropTarget -> MaterialTheme.colorScheme.primaryContainer
+                                    isDragging -> MaterialTheme.colorScheme.surface
+                                    isSelected -> MaterialTheme.colorScheme.primaryContainer
+                                    else -> MaterialTheme.colorScheme.surfaceVariant
                                 },
                                 RoundedCornerShape(9.dp),
                             )
                             .border(
-                                width = if (isSelected) 1.5.dp else 0.dp,
-                                color = if (isSelected) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
+                                width = if (isSelected || isDropTarget) 1.5.dp else 0.dp,
+                                color = when {
+                                    isDropTarget -> MaterialTheme.colorScheme.primary
+                                    isSelected -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.surfaceVariant
                                 },
                                 shape = RoundedCornerShape(9.dp),
                             )

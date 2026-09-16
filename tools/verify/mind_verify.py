@@ -5,9 +5,11 @@
   P0 夹具:一条 MIND 笔记(中心主题 + 两个子节点),卡片显示大纲投影
   P1 打开后导图渲染出全部节点,且几何关系正确(子节点在父节点右侧、兄弟上下不重叠)
   P2 选中子节点 → 加子级 → 库里该节点多出一个子节点
-  P3 折叠该节点 → 库内 collapsed=true,且它的子节点从界面上消失
-  P4 大纲视图列出全部节点(折叠行不展开子节点)
-  P5 首页"新建脑图"入口 → 库里新增一条 kind=2 的笔记
+  P3 长按拖动"子二"到"子一"上 → 库里变成子一的子节点
+  P4 拖到自己的子孙上(会造成环) → 树原样不动
+  P5 折叠该节点 → 库内 collapsed=true,且它的子节点从界面上消失
+  P6 大纲视图列出全部节点(折叠行不展开子节点)
+  P7 首页"新建脑图"入口 → 新建的笔记 kind=2 落库
 串口见 SERIAL(默认 emulator-5554,可用第一个参数覆盖),绝不触碰实机。
 """
 import subprocess, re, time, sys, os, json
@@ -169,7 +171,42 @@ if c2:
 else:
     check('P2 选中后出现节点操作栏', False, '子二节点没找到')
 
-# ---------- P3 折叠子一 ----------
+# ---------- P3 拖动换父：把"子二"拖到"子一"上 ----------
+c2n, c1n = label_node('子二'), label_node('子一')
+if c2n and c1n:
+    sh('shell', 'input', 'draganddrop',
+       str((c2n['x0'] + c2n['x1']) // 2), str((c2n['y0'] + c2n['y1']) // 2),
+       str((c1n['x0'] + c1n['x1']) // 2), str((c1n['y0'] + c1n['y1']) // 2), '3000')
+    time.sleep(2.5)
+    doc = stored_mind() or {}
+    tops = doc.get('root', {}).get('children') or []
+    c1s = [c for c in tops if c['id'] == 'c1']
+    nested = bool(c1s) and any(c['id'] == 'c2' for c in (c1s[0].get('children') or []))
+    check('P3 拖到"子一"上：子二成为它的子节点', nested, str(tops))
+    check('P3 根下不再直接挂着子二', not any(c['id'] == 'c2' for c in tops), str([c['id'] for c in tops]))
+    # 换父后新父应自动展开，否则用户看不到结果（feature 里 move 的既定语义）
+    check('P3 换父后子二仍可见', label_node('子二') is not None,
+          str([n['text'] for n in nodes() if n['text'] in ('子一', '子二', '孙一')]))
+else:
+    check('P3 拖到"子一"上：子二成为它的子节点', False, '拖拽前节点没找到')
+
+# ---------- P4 无效换父：拖到自己的子孙上，树必须原样不动 ----------
+before_tree = json.dumps(stored_mind(), sort_keys=True, ensure_ascii=False)
+g1n, c1n = label_node('孙一'), label_node('子一')
+if g1n and c1n:
+    sh('shell', 'input', 'draganddrop',
+       str((c1n['x0'] + c1n['x1']) // 2), str((c1n['y0'] + c1n['y1']) // 2),
+       str((g1n['x0'] + g1n['x1']) // 2), str((g1n['y0'] + g1n['y1']) // 2), '3000')
+    time.sleep(2.5)
+    after_tree = json.dumps(stored_mind(), sort_keys=True, ensure_ascii=False)
+    check('P4 拖到自己的子孙上不成环、树不变', before_tree == after_tree,
+          'before!=after' if before_tree != after_tree else 'unchanged')
+else:
+    check('P4 拖到自己的子孙上不成环、树不变', False, '节点没找到（折叠/布局原因）')
+
+# ---------- P5 折叠子一 ----------
+# 注意：坐标必须重新取——换父之后布局变了，P1 时抓的节点位置已经作废
+c1 = label_node('子一')
 if c1:
     tap(*center(c1))
     fold = find(nodes(), desc='折叠') or find(nodes(), desc='展开')
@@ -178,30 +215,30 @@ if c1:
         time.sleep(2.0)
         doc = stored_mind() or {}
         c1s = [c for c in (doc.get('root', {}).get('children') or []) if c['id'] == 'c1'][0]
-        check('P3 折叠状态落库', c1s.get('collapsed') is True, str(c1s.get('collapsed')))
-        check('P3 折叠后孙节点从导图消失', label_node('孙一') is None,
-              str([n['text'] for n in nodes() if n['text'] in ('孙一', '子一')]))
+        check('P5 折叠状态落库', c1s.get('collapsed') is True, str(c1s.get('collapsed')))
+        check('P5 折叠后子节点从导图消失', label_node('孙一') is None and label_node('子二') is None,
+              str([n['text'] for n in nodes() if n['text'] in ('孙一', '子一', '子二')]))
     else:
-        check('P3 折叠状态落库', False, '折叠键没找到')
+        check('P5 折叠状态落库', False, '折叠键没找到')
 else:
-    check('P3 折叠状态落库', False, '子一节点没找到')
+    check('P5 折叠状态落库', False, '子一节点没找到')
 
-# ---------- P4 大纲视图 ----------
+# ---------- P6 大纲视图 ----------
 outline = find(nodes(), text='大纲')
 if outline:
     tap(*center(outline))
     time.sleep(1.5)
     have = {n['text'] for n in nodes()}
-    check('P4 大纲列出根与子节点', {'中心主题', '子一', '子二'} <= have, str(sorted(have)))
-    check('P4 折叠的子一不展开孙节点', '孙一' not in have, str(sorted(have)))
+    check('P6 大纲列出根与子节点', {'中心主题', '子一'} <= have, str(sorted(have)))
+    check('P6 折叠的子一不展开孙节点与子二', '孙一' not in have and '子二' not in have, str(sorted(have)))
     back = find(nodes(), text='导图')
     if back:
         tap(*center(back))
         time.sleep(1.0)
 else:
-    check('P4 大纲列出根与子节点', False, '大纲键没找到')
+    check('P6 大纲列出根与子节点', False, '大纲键没找到')
 
-# ---------- P5 首页新建脑图 ----------
+# ---------- P7 首页新建脑图 ----------
 sh('shell', 'input', 'keyevent', '4')      # 返回：编辑器会先落库再退
 time.sleep(2.0)
 sh('shell', 'am', 'force-stop', PKG)

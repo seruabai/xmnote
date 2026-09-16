@@ -128,6 +128,8 @@ import com.purenote.local.core.toggleIndentTail
 import com.purenote.local.data.ChecklistItem
 import com.purenote.local.data.NoteKind
 import com.purenote.local.feature.mind.MindDoc
+import com.purenote.local.feature.mind.charCount
+import com.purenote.local.feature.mind.flattenOutline
 import com.purenote.local.feature.notes.SaveStatus
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.launch
@@ -430,8 +432,12 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     val createdLabel = remember(screen.noteId) {
         DateFormats.yearMonthDayHourMinute(System.currentTimeMillis())
     }
-    // 字数只数用户写的字：行首标记（# / - [ ] / ![]()）不算，块模型里它们本来就不是文本
-    val words = title.length + doc.plainText().length + items.sumOf { it.text.length }
+    // 字数只数用户写的字：行首标记（# / - [ ] / ![]()）不算，块模型里它们本来就不是文本；
+    // 脑图的标题就是根节点，所以只数节点文字，不再另外加 title
+    val words = when (kind) {
+        NoteKind.MIND -> mind.root.charCount()
+        else -> title.length + doc.plainText().length + items.sumOf { it.text.length }
+    }
     // 编辑会话状态机（规范 §8）：待保存 / 保存中 / 保存失败 / 冲突
     val editorState by vm.editorState.collectAsState()
     val typeScale = preferredTextSize.typeScale()
@@ -453,8 +459,13 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     shareNoteText(
                         context,
                         title,
-                        if (kind == NoteKind.TEXT) NoteBody.toMarkup(doc)
-                        else items.joinToString("\n") { "${if (it.done) "☑" else "☐"} ${it.text}" },
+                        when (kind) {
+                            NoteKind.TEXT -> NoteBody.toMarkup(doc)
+                            // 脑图分享成缩进大纲：导图本身是画布，贴到别处只能靠文字层级
+                            NoteKind.MIND -> mind.root.flattenOutline()
+                                .joinToString("\n") { row -> "  ".repeat(row.depth) + row.label }
+                            NoteKind.CHECKLIST -> items.joinToString("\n") { "${if (it.done) "☑" else "☐"} ${it.text}" }
+                        },
                     )
                 }) {
                     Icon(Icons.Outlined.Share, "分享", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(27.dp))
