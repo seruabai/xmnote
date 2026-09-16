@@ -196,6 +196,7 @@ if left and right:
     ltext, rtext, ly, ry = lcard['text'], rcard['text'], lcard['y0'], rcard['y0']
     # 小幅度滑动（300px）：两张卡片都应留在视口里，这样能直接比位移量
     # 慢速滑动，避免变成 fling 把卡片甩出视口（那样就比不到位移了）
+    dump_nodes_pre = ns
     sh('shell', 'input', 'swipe', '810', '1900', '810', '1600', '1000')   # 只在右半屏滑
     time.sleep(1.5)
     ns = dump_nodes()
@@ -204,11 +205,19 @@ if left and right:
     r2 = find(ns, 'text', rtext)
     dl = (l2['y0'] - ly) if l2 else None
     dr = (r2['y0'] - ry) if r2 else None
-    moved_left = dl is not None and dl < -100
-    moved_right = dr is not None and dr < -100
-    check('F4 只滑右半屏，左半屏也跟着滚（单页滚动）', moved_left and moved_right,
-          '%s: %s→%s (Δ%s) | %s: %s→%s (Δ%s)' % (
-              ltext, ly, l2 and l2['y0'], dl, rtext, ry, r2 and r2['y0'], dr))
+    # 断言"两半可见内容都变了"：这是单页滚动的充要表现，且不受注入滑动距离抖动影响。
+    # 旧实现（左右各一个 LazyColumn）里，只滑右半屏时左半屏的内容集合**不会变**——
+    # 正是这条断言要挡住的回归。
+    def side_texts(ns_now, side_left):
+        return {n['text'] for n in ns_now
+                if n['text'] and n['cls'].endswith('TextView') and n['y0'] > 700
+                and ((n['x0'] + n['x1']) // 2 < 540) == side_left}
+    lset2, rset2 = side_texts(ns, True), side_texts(ns, False)
+    lset1, rset1 = side_texts(dump_nodes_pre, True), side_texts(dump_nodes_pre, False)
+    check('F4 只滑右半屏：左右两半可见内容都变了（单页滚动）',
+          lset1 != lset2 and rset1 != rset2,
+          '左变化=%s 右变化=%s | 位移 Δ左=%s Δ右=%s' % (
+              lset1 != lset2, rset1 != rset2, dl, dr))
 
 fails = [n for n, ok in RESULTS if not ok]
 print()

@@ -164,7 +164,7 @@ fun TodoCardRow(
         onRevealChange = onRevealChange,
         onDelete = { vm.deleteTodo(todo) },
         modifier = modifier,
-    ) {
+    ) { slide ->
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -184,7 +184,11 @@ fun TodoCardRow(
                         )
                         .padding(horizontal = 19.dp, vertical = 23.dp),
                 ) {
-                    MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
+                    // 左滑露删除键时勾选栏直接消失：它本来就被卡片拖着走，看着像要被删掉
+                    // （用户 2026-09-17）。收起而不是留白，标题顺势左移，视线跟着删除键走。
+                    if (slide < 0.02f) {
+                        MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
+                    }
                     Column(Modifier.weight(1f).padding(start = 12.dp)) {
                         Text(
                             todo.title.ifBlank { "待办清单" },
@@ -241,6 +245,7 @@ fun TodoCardRow(
                         SubListRow(
                             vm = vm,
                             sub = sub,
+                            slide = slide,
                             onEdit = { vm.openTodoSheet(todo.id, focusSubId = sub.id) },
                         )
                     }
@@ -272,7 +277,7 @@ private fun EqualHandle(modifier: Modifier = Modifier) {
 
 /** 非编辑态的子待办行：子项属于清单内容，删除直接移除不进废纸篓 */
 @Composable
-private fun SubListRow(vm: NoteViewModel, sub: Todo, onEdit: () -> Unit) {
+private fun SubListRow(vm: NoteViewModel, sub: Todo, slide: Float = 0f, onEdit: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -280,7 +285,9 @@ private fun SubListRow(vm: NoteViewModel, sub: Todo, onEdit: () -> Unit) {
             .clickable(onClick = onEdit)
             .padding(start = 45.dp, end = 10.dp),
     ) {
-        MiCheckbox(done = sub.done, size = 15.dp, onClick = { vm.toggleTodo(sub) })
+        if (slide < 0.02f) {
+            MiCheckbox(done = sub.done, size = 15.dp, onClick = { vm.toggleTodo(sub) })
+        }
         Text(
             sub.title,
             style = TextStyle(fontSize = 13.5.sp, lineHeight = 18.sp),

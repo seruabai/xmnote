@@ -43,7 +43,8 @@ fun RevealDeleteRow(
     onRevealChange: (Boolean) -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
+    /** slide = 0（未滑）→ 1（完全露出删除键）：内容据此决定要不要收起勾选栏 */
+    content: @Composable (slide: Float) -> Unit,
 ) {
     val cardShape = RoundedCornerShape(18.dp)
     val revealPx = with(LocalDensity.current) { 78.dp.toPx() }
@@ -99,7 +100,8 @@ fun RevealDeleteRow(
                     )
                 },
         ) {
-            content()
+            // 读 offset.value 而不是快照参数：拖动过程中每帧都要反映最新位移
+            content((-offset.value / revealPx).coerceIn(0f, 1f))
         }
     }
 }

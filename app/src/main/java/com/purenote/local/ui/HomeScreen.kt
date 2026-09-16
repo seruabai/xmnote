@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FactCheck
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatListBulleted
 import androidx.compose.material.icons.outlined.Search
@@ -60,6 +61,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
@@ -233,8 +236,12 @@ fun HomeScreen(vm: NoteViewModel) {
                     }
                 }
             } else {
-                TodoHeader(onSettings = vm::goSettings)
-                TodoPane(vm, modifier = Modifier.weight(1f), onSelectionChange = { todoSelecting = it })
+                TodoPane(
+                    vm,
+                    modifier = Modifier.weight(1f),
+                    onSelectionChange = { todoSelecting = it },
+                    onSettings = vm::goSettings,
+                )
             }
         }
     }
@@ -407,22 +414,62 @@ private fun AddCategoryChip(onClick: () -> Unit) {
     }
 }
 
+/**
+ * 待办页头（2026-09-17 按用户反馈改）：
+ * - 长按进入多选后，"退出多选"的 X 放到**待办大字上方**那一行（原来挤在列表顶上）；
+ * - 同一行的右上角由设置齿轮**换成全选**，退出多选再换回齿轮。
+ */
 @Composable
-private fun TodoHeader(onSettings: () -> Unit) {
+internal fun TodoHeader(
+    onSettings: () -> Unit,
+    selecting: Boolean = false,
+    selectedCount: Int = 0,
+    allSelected: Boolean = false,
+    onExitSelection: () -> Unit = {},
+    onSelectAll: () -> Unit = {},
+) {
     Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
         Row(
-            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         ) {
-            MiSettingsButton(onClick = onSettings)
+            if (selecting) {
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "退出多选",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(28.dp).clickable(onClick = onExitSelection),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            if (selecting) {
+                Icon(
+                    Icons.Outlined.FactCheck,
+                    contentDescription = if (allSelected) "取消全选" else "全选",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(28.dp).clickable(onClick = onSelectAll),
+                )
+            } else {
+                MiSettingsButton(onClick = onSettings)
+            }
         }
-        Text(
-            "待办",
-            fontSize = 34.sp,
-            lineHeight = 41.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
-        )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                "待办",
+                fontSize = 34.sp,
+                lineHeight = 41.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
+            )
+            if (selecting) {
+                Text(
+                    "已选 " + selectedCount + " 项",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 10.dp, bottom = 24.dp),
+                )
+            }
+        }
     }
 }
 
@@ -503,7 +550,12 @@ private fun CategoryChip(label: String, selected: Boolean, onClick: () -> Unit) 
 @Composable
 private fun MiSettingsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val gearTint = MaterialTheme.colorScheme.onSurface
-    Canvas(modifier.size(32.dp).clickable(onClick = onClick)) {
+    // 自绘 Canvas 默认在无障碍树里没有身份：补上描述，读屏与设备验收都能找到它
+    Canvas(
+        modifier.size(32.dp)
+            .semantics { contentDescription = "设置" }
+            .clickable(onClick = onClick),
+    ) {
         val stroke = 2.1.dp.toPx()
         val cx = size.width / 2f
         val cy = size.height / 2f

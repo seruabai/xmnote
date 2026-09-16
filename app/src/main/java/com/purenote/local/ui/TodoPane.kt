@@ -55,7 +55,12 @@ import kotlin.math.roundToInt
 
 /** 待办主页：连续大卡片列表。同一时间最多一张卡片露出删除键，新建/编辑统一走底部弹窗。长按进入多选，左侧手柄拖动排序。 */
 @Composable
-fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange: (Boolean) -> Unit = {}) {
+fun TodoPane(
+    vm: NoteViewModel,
+    modifier: Modifier = Modifier,
+    onSelectionChange: (Boolean) -> Unit = {},
+    onSettings: () -> Unit = {},
+) {
     val todos by vm.todos.collectAsState()
     val sheetId by vm.todoSheetId.collectAsState()
     val expandedLists = remember { mutableStateMapOf<Long, Boolean>() }
@@ -113,42 +118,24 @@ fun TodoPane(vm: NoteViewModel, modifier: Modifier = Modifier, onSelectionChange
     }
 
     Column(modifier.fillMaxSize()) {
-        if (selecting) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-            ) {
-                IconButton(onClick = ::exitSelection) {
-                    Icon(
-                        Icons.Outlined.Close,
-                        "退出多选",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(28.dp),
-                    )
+        // 页头由面板自己渲染：多选状态就在这个作用域里，"X 挪到待办大字上方、全选替换齿轮"
+        // 才不需要把选中集合提升到 HomeScreen（用户 2026-09-17 反馈）
+        val allSelected = displayTodos.isNotEmpty() && selectedIds.size == displayTodos.size
+        TodoHeader(
+            onSettings = onSettings,
+            selecting = selecting,
+            selectedCount = selectedIds.size,
+            allSelected = allSelected,
+            onExitSelection = ::exitSelection,
+            onSelectAll = {
+                if (allSelected) {
+                    selectedIds.clear()
+                } else {
+                    selectedIds.clear()
+                    selectedIds.addAll(displayTodos.map { it.id })
                 }
-                Spacer(Modifier.weight(1f))
-                Text(
-                    "已选择${selectedIds.size}项",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = {
-                    if (selectedIds.size == displayTodos.size) selectedIds.clear()
-                    else {
-                        selectedIds.clear()
-                        selectedIds.addAll(displayTodos.map { it.id })
-                    }
-                }) {
-                    Icon(
-                        Icons.Outlined.FactCheck,
-                        "全选",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(26.dp),
-                    )
-                }
-            }
-        }
+            },
+        )
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (displayTodos.isEmpty()) {
                 Column(
