@@ -16,6 +16,9 @@ import com.purenote.local.core.ChecklistCodec
 import com.purenote.local.core.LegacyBody
 import com.purenote.local.core.NoteBody
 import com.purenote.local.core.RichDoc
+import com.purenote.local.feature.mind.MindCodec
+import com.purenote.local.feature.mind.MindDoc
+import com.purenote.local.feature.mind.flattenOutline
 import com.purenote.local.core.NoteMarkup
 import com.purenote.local.notify.ReminderJob
 import com.purenote.local.notify.ReminderStore
@@ -105,9 +108,13 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
         images: List<String>,
         colorIndex: Int,
         folderId: Long?,
+        mind: MindDoc? = null,
     ): Long = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        db.insertNote(kind, title, encodeBody(kind, doc, items), images.joinToString("\n"), colorIndex, folderId, now)
+        db.insertNote(
+            kind, title, encodeBody(kind, doc, items, mind),
+            images.joinToString("\n"), colorIndex, folderId, now,
+        )
     }
 
     suspend fun saveExisting(
@@ -121,6 +128,7 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
         folderId: Long?,
         pinned: Boolean,
         remindAt: Long?,
+        mind: MindDoc? = null,
         repeat: RepeatRule = RepeatRule.NONE,
         allDay: Boolean = false,
         /**
@@ -144,7 +152,7 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
         tx.write { database ->
             val now = System.currentTimeMillis()
             val current = NoteStore.readRevision(id, database) ?: return@write SaveResult.NotFound
-            val encodedBody = encodeBody(kind, doc, items)
+            val encodedBody = encodeBody(kind, doc, items, mind)
             val encodedImages = images.joinToString("\n")
             val base = expectedRevision ?: current
 
@@ -162,7 +170,7 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
             }
 
             val values = android.content.ContentValues().apply {
-                put("kind", if (kind == NoteKind.CHECKLIST) 1 else 0)
+                put("kind", kind.storedCode())
                 put("title", title)
                 put("body", encodedBody)
                 put("images", encodedImages)
@@ -885,29 +893,46 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
      * 编辑路径收的就是块文档（正文不再经过标记文本往返）；清单笔记的条目仍是旧模型，
      * 由 core/NoteBody 转换。格式判断只有 NoteBody 一处，Repository 不自己嗅探版本。
      */
-    private fun encodeBody(kind: NoteKind, doc: RichDoc, items: List<ChecklistItem>): String =
-        if (kind == NoteKind.CHECKLIST) {
-            NoteBody.encode(LegacyBody.fromChecklist(items))
-        } else {
-            NoteBody.encode(doc)
-        }
+    private fun encodeBody(
+        kind: NoteKind,
+        doc: RichDoc,
+        items: List<ChecklistItem>,
+        mind: MindDoc? = null,
+    ): String = when (kind) {
+        NoteKind.CHECKLIST -> NoteBody.encode(LegacyBody.fromChecklist(items))
+        // 脑图是树，不进块文档闸口：序列化由 MindCodec 负责（读回来也按 kind 分派）
+        NoteKind.MIND -> MindCodec.encode(mind ?: MindDoc())
+        NoteKind.TEXT -> NoteBody.encode(doc)
+    }
 
     private fun Cursor.toNote(): Note {
-        val kind = if (getInt(NotesDb.COL_KIND) == 1) NoteKind.CHECKLIST else NoteKind.TEXT
+        val kind = noteKindOf(getInt(NotesDb.COL_KIND))
         val rawBody = getString(NotesDb.COL_BODY) ?: ""
-        // 按行内版本号解码（迁移未成功的行仍是旧格式），再转回旧界面模型
-        val doc = NoteBody.decode(
-            isChecklist = kind == NoteKind.CHECKLIST,
-            raw = rawBody,
-            formatVersion = getInt(NotesDb.COL_BODY_FORMAT),
-        )
+        // 脑图按 kind 直接走 MindCodec（容错解码，坏数据退化成只有一个根节点的图）
+        val mind = if (kind == NoteKind.MIND) MindCodec.decode(rawBody) else null
+        // 文本/清单按行内版本号解码（迁移未成功的行仍是旧格式）
+        val doc = if (kind == NoteKind.MIND) {
+            RichDoc()
+        } else {
+            NoteBody.decode(
+                isChecklist = kind == NoteKind.CHECKLIST,
+                raw = rawBody,
+                formatVersion = getInt(NotesDb.COL_BODY_FORMAT),
+            )
+        }
         return Note(
             id = getLong(NotesDb.COL_ID),
             uuid = getString(NotesDb.COL_UUID) ?: "",
             kind = kind,
             title = getString(NotesDb.COL_TITLE) ?: "",
             doc = doc,
-            body = if (kind == NoteKind.TEXT) NoteBody.toMarkup(doc) else "",
+            mind = mind,
+            // body 只是给卡片/通知看的投影：脑图投影成大纲文字（根节点 + 逐行子节点）
+            body = when (kind) {
+                NoteKind.TEXT -> NoteBody.toMarkup(doc)
+                NoteKind.MIND -> mind?.root?.flattenOutline()?.joinToString("\n") { it.label }.orEmpty()
+                NoteKind.CHECKLIST -> ""
+            },
             items = if (kind == NoteKind.CHECKLIST) NoteBody.toChecklistItems(doc) else emptyList(),
             images = (getString(NotesDb.COL_IMAGES) ?: "")
                 .split('\n')

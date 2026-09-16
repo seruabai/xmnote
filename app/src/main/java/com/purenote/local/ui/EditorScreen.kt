@@ -99,6 +99,7 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -126,6 +127,7 @@ import com.purenote.local.core.toggleIndentHead
 import com.purenote.local.core.toggleIndentTail
 import com.purenote.local.data.ChecklistItem
 import com.purenote.local.data.NoteKind
+import com.purenote.local.feature.mind.MindDoc
 import com.purenote.local.feature.notes.SaveStatus
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.launch
@@ -149,6 +151,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     var title by remember { mutableStateOf("") }
     // 正文的唯一形态就是块文档：样式/插图都改文档本身，不再经过标记文本往返
     var doc by remember { mutableStateOf(RichDoc()) }
+    // 脑图笔记的正文是树（kind = MIND 时用它，doc 保持空）
+    var mind by remember { mutableStateOf(MindDoc()) }
     val items = remember { mutableStateListOf<ChecklistItem>() }
     val imageNames = remember { mutableStateListOf<String>() }
     var colorIndex by remember { mutableStateOf(0) }
@@ -198,6 +202,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             } else {
                 title = note.title
                 doc = note.doc
+                note.mind?.let { mind = it }
                 items.clear()
                 items.addAll(note.items)
                 imageNames.clear()
@@ -251,17 +256,22 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     fun emptyDraft(): Boolean = when (kind) {
         NoteKind.TEXT -> title.isBlank() && doc.plainText().isBlank() && imageNames.isEmpty()
         NoteKind.CHECKLIST -> title.isBlank() && items.all { it.text.isBlank() } && imageNames.isEmpty()
+        // 脑图：只有根节点且根节点没写东西才算空草稿（子节点存在就说明用户建过）
+        NoteKind.MIND -> mind.root.label.isBlank() && mind.root.children.isEmpty()
     }
 
     fun persist() {
         if (!loaded || emptyDraft()) return
         // 图片唯一事实来源是正文里的嵌入块；历史附件条（旧数据/录音）与之取并集
         val imagesUnion = (imageNames + doc.attachmentNames()).distinct()
+        // 脑图的标题就是根节点文字（小米笔记同此：脑图没有独立标题）
+        val persistTitle = if (kind == NoteKind.MIND) mind.displayTitle else title.trim()
         if (noteId > 0) {
             vm.updateNote(
                 noteId = noteId,
                 kind = kind,
-                title = title.trim(),
+                title = persistTitle,
+                mind = if (kind == NoteKind.MIND) mind else null,
                 doc = doc,
                 items = items.filter { it.text.isNotBlank() },
                 images = imagesUnion,
@@ -276,7 +286,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             creating = true
             vm.createNote(
                 kind = kind,
-                title = title.trim(),
+                title = persistTitle,
+                mind = if (kind == NoteKind.MIND) mind else null,
                 doc = doc,
                 items = items.filter { it.text.isNotBlank() },
                 images = imagesUnion,
@@ -580,30 +591,42 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     trim = LineHeightStyle.Trim.Both,
                 ),
             )
-            BasicTextField(
-                value = title,
-                onValueChange = { title = it.replace("\n", " "); markDirty() },
-                singleLine = true,
-                textStyle = titleTextStyle,
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                decorationBox = { inner ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = (typeScale.editorTitleLineHeightSp + 4f).dp),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        if (title.isEmpty()) {
-                            Text(
-                                "标题",
-                                style = titleTextStyle.copy(color = MaterialTheme.colorScheme.outlineVariant),
-                            )
+            if (kind == NoteKind.MIND) {
+                // 脑图没有独立标题：根节点就是标题，改它请点画布上的根节点
+                Text(
+                    text = mind.displayTitle,
+                    style = titleTextStyle,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().padding(top = 19.dp),
+                )
+            } else {
+                BasicTextField(
+                    value = title,
+                    onValueChange = { title = it.replace("\n", " "); markDirty() },
+                    singleLine = true,
+                    textStyle = titleTextStyle,
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { inner ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = (typeScale.editorTitleLineHeightSp + 4f).dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (title.isEmpty()) {
+                                Text(
+                                    "标题",
+                                    style = titleTextStyle.copy(color = MaterialTheme.colorScheme.outlineVariant),
+                                )
+                            }
+                            inner()
                         }
-                        inner()
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().padding(top = 19.dp),
-            )
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 19.dp),
+                )
+            }
 
             Text(
                 "$createdLabel  |  ${words}字",
@@ -672,6 +695,12 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     items = items,
                     textSize = preferredTextSize,
                     onChangeList = ::markDirty,
+                    modifier = Modifier.weight(1f),
+                )
+                NoteKind.MIND -> MindEditor(
+                    mind = mind,
+                    textSize = preferredTextSize,
+                    onMindChange = { mind = it; markDirty() },
                     modifier = Modifier.weight(1f),
                 )
             }

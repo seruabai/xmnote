@@ -50,6 +50,7 @@ class SaveCoordinator(private val writer: SaveWriter) {
                     kind = command.kind,
                     title = command.title,
                     doc = command.doc,
+                    mind = command.mind,
                     items = command.items,
                     images = command.images,
                     colorIndex = command.colorIndex,

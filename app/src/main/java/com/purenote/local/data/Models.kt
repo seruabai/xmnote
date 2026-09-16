@@ -1,8 +1,22 @@
 package com.purenote.local.data
 
 import com.purenote.local.core.RichDoc
+import com.purenote.local.feature.mind.MindDoc
 
-enum class NoteKind { TEXT, CHECKLIST }
+enum class NoteKind { TEXT, CHECKLIST, MIND }
+
+/** 落库用的 kind 编码（历史库里有 0/1，脑图排在后面；解码见 [noteKindOf]） */
+fun NoteKind.storedCode(): Int = when (this) {
+    NoteKind.TEXT -> 0
+    NoteKind.CHECKLIST -> 1
+    NoteKind.MIND -> 2
+}
+
+fun noteKindOf(code: Int): NoteKind = when (code) {
+    1 -> NoteKind.CHECKLIST
+    2 -> NoteKind.MIND
+    else -> NoteKind.TEXT
+}
 
 data class ChecklistItem(
     val text: String,
@@ -20,6 +34,11 @@ data class Note(
      * 存储层是 v3 JSON（见 core/NoteBody），这里已经解码好，界面不必再碰格式。
      */
     val doc: RichDoc = RichDoc(),
+    /**
+     * 脑图正文（kind = MIND 时使用）。脑图是树而不是块序列，
+     * 塞进 [doc] 只会得到一个装着 JSON 的文本块，所以单独一个字段。
+     */
+    val mind: MindDoc? = null,
     /**
      * 只读投影：块文档转回旧标记文本，供列表卡片/通知等"只看一眼"的地方使用。
      * **不要**拿它回写正文（会丢掉块模型能表达、标记表达不了的内容）。

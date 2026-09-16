@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.Close
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -110,24 +112,40 @@ fun HomeScreen(vm: NoteViewModel) {
                     animationSpec = Motion.pressSpring(),
                     label = "fabPress",
                 )
-                FloatingActionButton(
-                    onClick = {
-                        if (tab == MainTab.NOTES) vm.openEditor(kind = NoteKind.TEXT)
-                        else vm.openTodoSheet(-1L)
-                    },
-                    shape = CircleShape,
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 3.dp),
-                    interactionSource = fabInteraction,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .graphicsLayer {
-                            scaleX = fabScale
-                            scaleY = fabScale
+                Column(horizontalAlignment = Alignment.End) {
+                    // 脑图入口：单独一颗小按钮而不是把主按钮改成菜单——主按钮"一下就是新笔记"
+                    // 是既有肌肉记忆，不该被改成两步
+                    if (tab == MainTab.NOTES) {
+                        SmallFloatingActionButton(
+                            onClick = { vm.openEditor(kind = NoteKind.MIND) },
+                            shape = CircleShape,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 2.dp),
+                            modifier = Modifier.padding(bottom = 12.dp),
+                        ) {
+                            Icon(Icons.Outlined.AccountTree, "新建脑图", modifier = Modifier.size(22.dp))
+                        }
+                    }
+                    FloatingActionButton(
+                        onClick = {
+                            if (tab == MainTab.NOTES) vm.openEditor(kind = NoteKind.TEXT)
+                            else vm.openTodoSheet(-1L)
                         },
-                ) {
-                    Icon(Icons.Outlined.Add, "添加", modifier = Modifier.size(28.dp))
+                        shape = CircleShape,
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 3.dp),
+                        interactionSource = fabInteraction,
+                        modifier = Modifier
+                            .size(56.dp)
+                            .graphicsLayer {
+                                scaleX = fabScale
+                                scaleY = fabScale
+                            },
+                    ) {
+                        Icon(Icons.Outlined.Add, "添加", modifier = Modifier.size(28.dp))
+                    }
                 }
             }
         },

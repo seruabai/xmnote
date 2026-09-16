@@ -4,7 +4,9 @@ import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import com.purenote.local.core.ChecklistCodec
 import com.purenote.local.core.NoteMarkup
+import com.purenote.local.data.NoteKind
 import com.purenote.local.data.NotesDb
+import com.purenote.local.data.storedCode
 import com.purenote.local.data.RepeatRule
 
 /**
@@ -310,15 +312,22 @@ object BackupCodec {
         // 现在库内统一是 v3 块文档，所以不再只做"v1→v2 的补救"，而是把任意来源版本
         // （1/2/3，含历史上漏标版本号的包）统一解码后重新编码成 v3 —— 解码入口是
         // core/NoteBody，纯函数且幂等，重复导入安全：v3 包再导入一次结果完全相同。
-        val doc = com.purenote.local.core.NoteBody.decode(
-            isChecklist = dto.kind == 1,
-            raw = dto.body,
-            formatVersion = dto.bodyFormatVersion,
-        )
+        // 脑图正文是树 JSON，不是块文档：原样写回，绝不能过 NoteBody 的闸口
+        // （按 Markdown 解一次再编码回去，整棵树就变成一行文字了）
+        val encoded = if (dto.kind == NoteKind.MIND.storedCode()) {
+            dto.body
+        } else {
+            val doc = com.purenote.local.core.NoteBody.decode(
+                isChecklist = dto.kind == 1,
+                raw = dto.body,
+                formatVersion = dto.bodyFormatVersion,
+            )
+            com.purenote.local.core.NoteBody.encode(doc)
+        }
         put("uuid", dto.uuid)
         put("kind", dto.kind)
         put("title", dto.title)
-        put("body", com.purenote.local.core.NoteBody.encode(doc))
+        put("body", encoded)
         put("body_format_version", NotesDb.BODY_FORMAT_BLOCKS)
         put("images", dto.images.joinToString("\n"))
         put("color", dto.colorIndex)

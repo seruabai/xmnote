@@ -25,6 +25,7 @@ import com.purenote.local.data.StorageFailure
 import com.purenote.local.data.Todo
 import com.purenote.local.core.RichDoc
 import com.purenote.local.core.TodoDates
+import com.purenote.local.feature.mind.MindDoc
 import com.purenote.local.feature.notes.EditorEvent
 import com.purenote.local.feature.notes.EditorReducer
 import com.purenote.local.feature.notes.EditorState
@@ -410,12 +411,13 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         remindAt: Long?,
         repeat: RepeatRule = RepeatRule.NONE,
         allDay: Boolean = false,
+        mind: MindDoc? = null,
         onDone: (Long) -> Unit,
     ) {
         lastSaveJob = viewModelScope.launch {
             // insertOrThrow：创建失败会抛异常，绝不能把 -1 当成有效 ID 继续用（规范 §7）
             val id = try {
-                repo.createNote(kind, title, doc, items, images, colorIndex, folderId)
+                repo.createNote(kind, title, doc, items, images, colorIndex, folderId, mind)
             } catch (cancellation: kotlinx.coroutines.CancellationException) {
                 throw cancellation
             } catch (t: Throwable) {
@@ -500,6 +502,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         remindAt: Long?,
         repeat: RepeatRule = RepeatRule.NONE,
         allDay: Boolean = false,
+        mind: MindDoc? = null,
     ) {
         val state = _editorState.value
         // 记录已不存在 / 加载失败：不写入，也不要把内容伪装成已保存（规范 §8）
@@ -523,7 +526,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                 storeEpoch = state.storeEpoch,
                 editGeneration = state.editGeneration,
                 expectedRevision = expectedRevision,
-                kind = kind, title = title, doc = doc, items = items, images = images,
+                kind = kind, title = title, doc = doc, mind = mind, items = items, images = images,
                 colorIndex = colorIndex, folderId = folderId, pinned = pinned,
                 remindAt = remindAt, repeat = repeat, allDay = allDay,
             )

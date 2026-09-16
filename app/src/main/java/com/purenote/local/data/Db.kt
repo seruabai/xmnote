@@ -136,6 +136,8 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
             db.rawQuery("SELECT id, kind, body, body_format_version FROM notes", null).use { c ->
                 while (c.moveToNext()) {
                     val id = c.getLong(0)
+                    // 脑图正文是树 JSON，不是标记文本：这里绝不能按 Markdown 升级
+                    if (c.getInt(1) == NoteKind.MIND.storedCode()) continue
                     val isChecklist = c.getInt(1) == 1
                     val raw = c.getString(2) ?: ""
                     val version = c.getInt(3)
@@ -176,7 +178,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
     ): Long {
         val cv = ContentValues().apply {
             put("uuid", newUuid())
-            put("kind", if (kind == NoteKind.CHECKLIST) 1 else 0)
+            put("kind", kind.storedCode())
             put("title", title)
             put("body", encodedBody)
             // 显式写版本号：不能依赖 DDL 默认值，否则"库里是 v3 JSON、标记却是 v2"会被
@@ -208,7 +210,7 @@ class NotesDb(context: Context, name: String = DB_NAME) : SQLiteOpenHelper(
         database: SQLiteDatabase = writableDatabase,
     ): Int {
         val cv = ContentValues().apply {
-            put("kind", if (kind == NoteKind.CHECKLIST) 1 else 0)
+            put("kind", kind.storedCode())
             put("title", title)
             put("body", encodedBody)
             put(COL_BODY_FORMAT, BODY_FORMAT_BLOCKS)

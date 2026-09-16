@@ -3,6 +3,7 @@ package com.purenote.local.feature.notes
 import com.purenote.local.data.ChecklistItem
 import com.purenote.local.core.RichDoc
 import com.purenote.local.data.NoteKind
+import com.purenote.local.feature.mind.MindDoc
 import com.purenote.local.data.RepeatRule
 
 /** 保存状态（规范 §8：界面必须能区分"还没存"与"存失败"） */
@@ -131,6 +132,8 @@ data class SaveCommand(
     val title: String,
     /** 正文的块文档快照（编辑器唯一的读写形态） */
     val doc: RichDoc,
+    /** 脑图正文快照（kind = MIND 时使用） */
+    val mind: MindDoc? = null,
     val items: List<ChecklistItem>,
     val images: List<String>,
     val colorIndex: Int,

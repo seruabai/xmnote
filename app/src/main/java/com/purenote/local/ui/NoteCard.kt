@@ -100,6 +100,8 @@ fun NoteCard(
                 when (note.kind) {
                     NoteKind.TEXT -> TextCardBody(note, textSize)
                     NoteKind.CHECKLIST -> ChecklistCardBody(note, textSize)
+                    // 脑图卡片显示大纲投影（note.body 已是逐行节点文字）
+                    NoteKind.MIND -> TextCardBody(note, textSize)
                 }
 
                 Spacer(Modifier.height(10.dp))
