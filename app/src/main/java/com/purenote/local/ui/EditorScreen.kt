@@ -645,7 +645,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             }
 
             when (kind) {
-                NoteKind.TEXT -> TextNoteBody(
+                // 块渲染版正文：契约与 TextNoteBody 完全一致，出问题可一行换回
+                NoteKind.TEXT -> NoteBlockBody(
                     value = body,
                     textSize = preferredTextSize,
                     onCursor = { bodyCursor = it },
@@ -787,6 +788,7 @@ private fun StyleKey(label: String, onClick: () -> Unit) {
 }
 
 @Composable
+/** 旧实现（单文本框 + 标记变换）：块渲染稳定后删除，保留作为回退参考 */
 private fun TextNoteBody(
     value: String,
     textSize: NoteTextSize,
