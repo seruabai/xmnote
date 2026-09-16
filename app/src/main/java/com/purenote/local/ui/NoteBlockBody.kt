@@ -5,19 +5,27 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -30,39 +38,58 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.purenote.local.NoteTextSize
 import com.purenote.local.core.BlockIds
+import com.purenote.local.core.BlockSpan
 import com.purenote.local.core.BlockType
 import com.purenote.local.core.LegacyBody
 import com.purenote.local.core.RichBlock
 import com.purenote.local.core.RichDoc
 import com.purenote.local.core.TextAlign as BlockAlign
+import com.purenote.local.core.blockIndexAt
+import com.purenote.local.core.blockInsertIndex
+import com.purenote.local.core.blockMoveTarget
 import com.purenote.local.core.indexOf
 import com.purenote.local.core.mergeWithPrevious
+import com.purenote.local.core.move
 import com.purenote.local.core.remove
 import com.purenote.local.core.splitAt
 import com.purenote.local.core.toggleChecked
@@ -70,6 +97,7 @@ import com.purenote.local.core.updateText
 import androidx.compose.runtime.LaunchedEffect as ComposeLaunchedEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /**
  * 笔记正文的**块渲染**版本。
@@ -80,6 +108,9 @@ import kotlinx.coroutines.withContext
  * 这样做的理由：正文的块模型已经落地（core/RichDoc），但如果把编辑器的状态也一起
  * 换成 RichDoc，就要同时重写光标钳制、输入法跟随等一批历史修复——风险与收益不成比例。
  * 这里让块编辑器只负责"呈现与编辑"，对外仍然是"一段 Markdown 文本进、一段文本出"。
+ *
+ * 块级拖拽排序的取法见 core/BlockDrag：长按抬起一块 → 跟着手指走 → 指示线标出落点。
+ * 长按后**不移动就松手**不当作拖拽（不吞事件），文本框自己的长按选择照旧可用。
  */
 @Composable
 fun NoteBlockBody(
@@ -94,6 +125,9 @@ fun NoteBlockBody(
 ) {
     val typeScale = textSize.typeScale()
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
+    val textToolbar = LocalTextToolbar.current
 
     // 外部内容（工具栏/插图/加载笔记）变化时重新解析；内部编辑不回读，避免打断输入
     var doc by remember { mutableStateOf(LegacyBody.fromText(value)) }
@@ -107,6 +141,18 @@ fun NoteBlockBody(
     val states = remember { mutableStateMapOf<String, TextFieldValue>() }
     val requesters = remember { mutableStateMapOf<String, FocusRequester>() }
     val pendingFocus = remember { mutableStateOf<String?>(null) }
+
+    val listState = rememberLazyListState()
+    // 手势协程的寿命比单次重组长，回调必须取最新版本，否则闭包里是首帧的 onChange
+    val emitChange = rememberUpdatedState(onChange)
+
+    // ---- 拖拽排序状态：draggingId 在长按命中时就定下，lifted 到真正拖动才置起 ----
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var lifted by remember { mutableStateOf(false) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var pointerY by remember { mutableFloatStateOf(0f) }
+    // 拖拽结束后要再收一次选区（见下方 LaunchedEffect）
+    val settleSelection = remember { mutableStateOf<String?>(null) }
 
     /** 块在整段正文里的起始偏移：用于把"块内光标"换算成工具栏需要的全局偏移 */
     fun globalOffsetOf(blockId: String, caret: Int): Int {
@@ -131,8 +177,12 @@ fun NoteBlockBody(
         val updated = doc.updateText(blockId, tfv.text)
         doc = updated
         val text = LegacyBody.toText(updated)
-        lastEmitted = text
-        onChange(text)
+        // 文本框把"选区变化"也走 onValueChange 报上来：文字没变就不要往外发，
+        // 否则拖拽/长按选字这种纯光标动作会被编辑器当成一次改动去写库
+        if (text != lastEmitted) {
+            lastEmitted = text
+            onChange(text)
+        }
         onCursor(globalOffsetOf(blockId, tfv.selection.start))
     }
 
@@ -149,6 +199,46 @@ fun NoteBlockBody(
             pendingFocus.value = focus
             states[focus] = TextFieldValue(line, TextRange(caret.coerceIn(0, line.length)))
         }
+    }
+
+    /** 可见块在视口里的纵向范围（LazyColumn 的 item.index 就是块下标） */
+    fun visibleSpans(): List<BlockSpan> = listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
+        if (doc.blocks.getOrNull(info.index) == null) {
+            null
+        } else {
+            BlockSpan(info.index, info.offset.toFloat(), (info.offset + info.size).toFloat())
+        }
+    }
+
+    /** 松手：按指示线所在边界落块；顺序没变就什么都不做（不写库、不产生一次无谓保存） */
+    fun dropDragged() {
+        val id = draggingId ?: return
+        val spans = visibleSpans()
+        val at = if (spans.isEmpty()) -1 else blockInsertIndex(spans, pointerY, doc.blocks.size)
+        val to = blockMoveTarget(doc.indexOf(id), at)
+        if (to != null) {
+            // 只换顺序，块 id 与每块的行内状态都还在，所以不必清 states（清掉反而会丢光标）
+            val moved = doc.move(id, to)
+            doc = moved
+            val text = LegacyBody.toText(moved)
+            lastEmitted = text
+            emitChange.value(text)
+        }
+        draggingId = null
+        lifted = false
+        dragOffsetY = 0f
+    }
+
+    /** 命中块与移动阈值：长按抬手时定位是"按在谁身上"，随后按位移判断是否真的在拖 */
+    fun beginDrag(y: Float) {
+        val hitIndex = blockIndexAt(visibleSpans(), y)
+        val hit = doc.blocks.getOrNull(hitIndex) ?: return
+        if (doc.blocks.size < 2) return
+        draggingId = hit.id
+        lifted = false
+        dragOffsetY = 0f
+        pointerY = y
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
     // 外部请求光标（工具栏改样式后）：把全局偏移落到对应块
@@ -170,60 +260,219 @@ fun NoteBlockBody(
         onCursorConsumed()
     }
 
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        items(doc.blocks, key = { it.id }) { block ->
-            when (block.type) {
-                BlockType.IMAGE -> EmbedImage(
-                    fileName = block.fileId.orEmpty(),
-                    onTap = { onImageTap(block.fileId.orEmpty()) },
-                )
-                BlockType.SOUND -> EmbedSound(fileName = block.fileId.orEmpty())
-                BlockType.LINK -> LinkRow(block = block)
-                else -> BlockRow(
-                    block = block,
-                    typeScale = typeScale,
-                    state = states[block.id] ?: TextFieldValue(block.text),
-                    requester = requesters.getOrPut(block.id) { FocusRequester() },
-                    shouldRequestFocus = pendingFocus.value == block.id,
-                    onFocusHandled = { pendingFocus.value = null },
-                    onTextChange = { tfv -> applyText(block.id, tfv) },
-                    onCursor = { caret -> onCursor(globalOffsetOf(block.id, caret)) },
-                    onCheckedToggle = { commit(doc.toggleChecked(block.id), focus = null) },
-                    onEnter = { caret ->
-                        val newId = BlockIds.newBlockId()
-                        val split = doc.splitAt(block.id, caret, newId)
-                        // 回车续接：勾选/项目符号沿用，有序列表序号 +1
-                        val next = split.blocks.firstOrNull { it.id == newId }
-                        val patched = if (next != null && block.type == BlockType.TODO) {
-                            split.copy(
-                                blocks = split.blocks.map {
-                                    if (it.id == newId) it.copy(type = BlockType.TODO, checked = false) else it
-                                },
-                            )
-                        } else {
-                            split
-                        }
-                        commit(patched, focus = newId, caret = 0)
-                    },
-                    onBackspaceAtStart = {
-                        val prevId = doc.blocks.getOrNull(doc.indexOf(block.id) - 1)?.id
-                        val (merged, seam) = doc.mergeWithPrevious(block.id)
-                        if (merged !== doc && prevId != null) commit(merged, focus = prevId, caret = seam)
-                        0 // 调用方不使用返回值，只需让 lambda 类型明确
-                    },
-                    onEmptyBackspace = {
-                        val removed = doc.remove(block.id)
-                        if (removed.blocks.size != doc.blocks.size) {
-                            val prev = doc.blocks.getOrNull(doc.indexOf(block.id) - 1)
-                            commit(removed, focus = prev?.id, caret = prev?.text?.length ?: 0)
-                        }
-                    },
-                )
+    // 拖拽结束后隔一拍再收一次：文本框在长按选中期间会忽略外部值变化，
+    // 只有等它自己的选择手势彻底结束，收选区与收浮层才会真正生效
+    LaunchedEffect(settleSelection.value) {
+        val id = settleSelection.value ?: return@LaunchedEffect
+        kotlinx.coroutines.delay(120)
+        states[id]?.let { tfv ->
+            if (!tfv.selection.collapsed) {
+                states[id] = tfv.copy(selection = TextRange(tfv.selection.start))
             }
+        }
+        textToolbar.hide()
+        settleSelection.value = null
+    }
+
+    // 拖到列表上下边缘时自动滚动：长文里不这么做就永远拖不到头（对应小米的 Scrollable 插件）
+    LaunchedEffect(draggingId, lifted) {
+        if (draggingId == null || !lifted) return@LaunchedEffect
+        val edge = with(density) { 72.dp.toPx() }
+        val maxStep = with(density) { 14.dp.toPx() }
+        while (true) {
+            withFrameNanos { }
+            val info = listState.layoutInfo
+            val top = info.viewportStartOffset.toFloat()
+            val bottom = info.viewportEndOffset.toFloat()
+            val y = pointerY
+            val step = when {
+                y < top + edge -> -maxStep * ((top + edge - y) / edge).coerceIn(0f, 1f)
+                y > bottom - edge -> maxStep * ((y - (bottom - edge)) / edge).coerceIn(0f, 1f)
+                else -> 0f
+            }
+            if (step != 0f) listState.scrollBy(step)
+        }
+    }
+
+    val spans = visibleSpans()
+    val fromIndex = draggingId?.let { doc.indexOf(it) } ?: -1
+    val insertAt = if (fromIndex >= 0 && spans.isNotEmpty()) {
+        blockInsertIndex(spans, pointerY, doc.blocks.size)
+    } else {
+        -1
+    }
+    // 指示线画在插入边界上；顺序不会变时不画（对应小米 divider 插件里"悬停自己就隐藏"）
+    val indicatorY: Float? = if (
+        fromIndex >= 0 && insertAt >= 0 && spans.isNotEmpty() &&
+        blockMoveTarget(fromIndex, insertAt) != null
+    ) {
+        if (insertAt >= doc.blocks.size) {
+            spans.last().bottom
+        } else {
+            spans.firstOrNull { it.index == insertAt }?.top
+                ?: spans.firstOrNull { it.index == insertAt - 1 }?.bottom
+        }
+    } else {
+        null
+    }
+
+    Box(modifier = modifier) {
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        // 长按之前不碰任何事件：文本框的点击/选择、勾选框、列表滚动全都照常
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val armed = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                        beginDrag(armed.position.y)
+
+                        val slop = viewConfiguration.touchSlop
+                        val slopSq = slop * slop
+                        val start = armed.position
+                        var moved = false
+                        while (true) {
+                            val change = awaitPointerEvent(PointerEventPass.Initial)
+                                .changes.firstOrNull { it.id == armed.id } ?: break
+                            if (change.changedToUpIgnoreConsumed()) break
+                            if (!moved) {
+                                // 累计位移过阈值才算拖动：单次事件的位移可能只有零点几像素
+                                // （慢速滑动会被合并成很小的增量），拿单次增量和 slop 比会永远起不来
+                                val dx = change.position.x - start.x
+                                val dy = change.position.y - start.y
+                                if (dx * dx + dy * dy > slopSq) {
+                                    moved = true
+                                    lifted = true
+                                }
+                            }
+                            if (moved) {
+                                // 在 Initial 阶段吃掉事件：文本框与列表都收不到这次拖动
+                                change.consume()
+                                // 用绝对位置而不是自己累加增量：慢速滑动下累加会丢位移，落点会差一格
+                                pointerY = change.position.y
+                                dragOffsetY = change.position.y - start.y
+                                // 文本框自己的长按选择与块拖拽抢的是同一个手势：拖拽期间持续收回选区，
+                                // 并收掉系统选择浮层（Select all / Autofill），否则拖块时一直挂着选字菜单。
+                                // hide() 每个事件都调：浮层是异步弹出的，只在"收回选区那一次"调用会赶在它弹出来之前
+                                draggingId?.let { id ->
+                                    states[id]?.takeIf { !it.selection.collapsed }?.let { tfv ->
+                                        states[id] = tfv.copy(selection = TextRange(tfv.selection.start))
+                                    }
+                                }
+                                textToolbar.hide()
+                            }
+                        }
+                        if (moved) {
+                            val id = draggingId
+                            dropDragged()
+                            // 文本框在长按选中期间会忽略外部值变化，拖拽途中收选区不生效；
+                            // 手势结束后再收一次，浮层（Select all / Autofill）才会跟着消失
+                            if (id != null) {
+                                states[id]?.let { tfv ->
+                                    if (!tfv.selection.collapsed) {
+                                        states[id] = tfv.copy(selection = TextRange(tfv.selection.start))
+                                    }
+                                }
+                            }
+                            textToolbar.hide()
+                            settleSelection.value = id
+                        } else {
+                            // 纯长按没拖动：不当作拖拽，留给文本框自己的长按选择
+                            draggingId = null
+                            lifted = false
+                            dragOffsetY = 0f
+                        }
+                    }
+                },
+        ) {
+            items(doc.blocks, key = { it.id }) { block ->
+                val dragging = block.id == draggingId
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .zIndex(if (dragging) 1f else 0f)
+                        .graphicsLayer {
+                            if (dragging) {
+                                translationY = dragOffsetY
+                                val s = if (lifted) 1.02f else 1f
+                                scaleX = s
+                                scaleY = s
+                                shadowElevation = if (lifted) 12.dp.toPx() else 0f
+                                shape = RoundedCornerShape(10.dp)
+                                alpha = if (lifted) 0.97f else 1f
+                            }
+                        }
+                        .background(
+                            if (dragging && lifted) MaterialTheme.colorScheme.surface else Color.Transparent,
+                            RoundedCornerShape(10.dp),
+                        ),
+                ) {
+                    when (block.type) {
+                        BlockType.IMAGE -> EmbedImage(
+                            fileName = block.fileId.orEmpty(),
+                            onTap = { onImageTap(block.fileId.orEmpty()) },
+                        )
+                        BlockType.SOUND -> EmbedSound(fileName = block.fileId.orEmpty())
+                        BlockType.LINK -> LinkRow(block = block)
+                        else -> BlockRow(
+                            block = block,
+                            typeScale = typeScale,
+                            state = states[block.id] ?: TextFieldValue(block.text),
+                            requester = requesters.getOrPut(block.id) { FocusRequester() },
+                            shouldRequestFocus = pendingFocus.value == block.id,
+                            onFocusHandled = { pendingFocus.value = null },
+                            onTextChange = { tfv -> applyText(block.id, tfv) },
+                            onCursor = { caret -> onCursor(globalOffsetOf(block.id, caret)) },
+                            onCheckedToggle = { commit(doc.toggleChecked(block.id), focus = null) },
+                            onEnter = { caret ->
+                                val newId = BlockIds.newBlockId()
+                                val split = doc.splitAt(block.id, caret, newId)
+                                // 回车续接：勾选/项目符号沿用，有序列表序号 +1
+                                val next = split.blocks.firstOrNull { it.id == newId }
+                                val patched = if (next != null && block.type == BlockType.TODO) {
+                                    split.copy(
+                                        blocks = split.blocks.map {
+                                            if (it.id == newId) it.copy(type = BlockType.TODO, checked = false) else it
+                                        },
+                                    )
+                                } else {
+                                    split
+                                }
+                                commit(patched, focus = newId, caret = 0)
+                            },
+                            onBackspaceAtStart = {
+                                val prevId = doc.blocks.getOrNull(doc.indexOf(block.id) - 1)?.id
+                                val (merged, seam) = doc.mergeWithPrevious(block.id)
+                                if (merged !== doc && prevId != null) commit(merged, focus = prevId, caret = seam)
+                                0 // 调用方不使用返回值，只需让 lambda 类型明确
+                            },
+                            onEmptyBackspace = {
+                                val removed = doc.remove(block.id)
+                                if (removed.blocks.size != doc.blocks.size) {
+                                    val prev = doc.blocks.getOrNull(doc.indexOf(block.id) - 1)
+                                    commit(removed, focus = prev?.id, caret = prev?.text?.length ?: 0)
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        // 插入指示线：3dp 暖色横条，标出的就是松手后块落到的地方
+        if (indicatorY != null) {
+            val y = indicatorY - with(density) { 1.5.dp.toPx() }
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(0, y.roundToInt()) }
+                    .fillMaxWidth()
+                    .padding(horizontal = 2.dp)
+                    .height(3.dp)
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)),
+            )
         }
     }
 }
