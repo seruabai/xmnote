@@ -49,7 +49,7 @@ class SaveCoordinator(private val writer: SaveWriter) {
                     id = command.noteId,
                     kind = command.kind,
                     title = command.title,
-                    body = command.body,
+                    doc = command.doc,
                     items = command.items,
                     images = command.images,
                     colorIndex = command.colorIndex,

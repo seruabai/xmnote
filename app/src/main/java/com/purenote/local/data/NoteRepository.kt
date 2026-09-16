@@ -13,7 +13,9 @@ import com.purenote.local.sync.CredentialStore
 import com.purenote.local.sync.RemoteTransport
 import com.purenote.local.sync.WebDavConfig
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.core.LegacyBody
 import com.purenote.local.core.NoteBody
+import com.purenote.local.core.RichDoc
 import com.purenote.local.core.NoteMarkup
 import com.purenote.local.notify.ReminderJob
 import com.purenote.local.notify.ReminderStore
@@ -98,21 +100,21 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
     suspend fun createNote(
         kind: NoteKind,
         title: String,
-        body: String,
+        doc: RichDoc,
         items: List<ChecklistItem>,
         images: List<String>,
         colorIndex: Int,
         folderId: Long?,
     ): Long = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        db.insertNote(kind, title, encodeBody(kind, body, items), images.joinToString("\n"), colorIndex, folderId, now)
+        db.insertNote(kind, title, encodeBody(kind, doc, items), images.joinToString("\n"), colorIndex, folderId, now)
     }
 
     suspend fun saveExisting(
         id: Long,
         kind: NoteKind,
         title: String,
-        body: String,
+        doc: RichDoc,
         items: List<ChecklistItem>,
         images: List<String>,
         colorIndex: Int,
@@ -142,7 +144,7 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
         tx.write { database ->
             val now = System.currentTimeMillis()
             val current = NoteStore.readRevision(id, database) ?: return@write SaveResult.NotFound
-            val encodedBody = encodeBody(kind, body, items)
+            val encodedBody = encodeBody(kind, doc, items)
             val encodedImages = images.joinToString("\n")
             val base = expectedRevision ?: current
 
@@ -880,11 +882,15 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
     /**
      * 落库前统一转成 v3 块文档。
      *
-     * 现有编辑器仍是"纯文本 + 标记"模型，所以入口收的是 Markdown 正文/清单条目；
-     * 转换由 core/NoteBody 统一负责，Repository 不再自己判断格式。
+     * 编辑路径收的就是块文档（正文不再经过标记文本往返）；清单笔记的条目仍是旧模型，
+     * 由 core/NoteBody 转换。格式判断只有 NoteBody 一处，Repository 不自己嗅探版本。
      */
-    private fun encodeBody(kind: NoteKind, body: String, items: List<ChecklistItem>): String =
-        NoteBody.encodeFromLegacy(isChecklist = kind == NoteKind.CHECKLIST, body = body, items = items)
+    private fun encodeBody(kind: NoteKind, doc: RichDoc, items: List<ChecklistItem>): String =
+        if (kind == NoteKind.CHECKLIST) {
+            NoteBody.encode(LegacyBody.fromChecklist(items))
+        } else {
+            NoteBody.encode(doc)
+        }
 
     private fun Cursor.toNote(): Note {
         val kind = if (getInt(NotesDb.COL_KIND) == 1) NoteKind.CHECKLIST else NoteKind.TEXT
@@ -900,6 +906,7 @@ class NoteRepository(context: Context, dbName: String? = null) : ReminderStore, 
             uuid = getString(NotesDb.COL_UUID) ?: "",
             kind = kind,
             title = getString(NotesDb.COL_TITLE) ?: "",
+            doc = doc,
             body = if (kind == NoteKind.TEXT) NoteBody.toMarkup(doc) else "",
             items = if (kind == NoteKind.CHECKLIST) NoteBody.toChecklistItems(doc) else emptyList(),
             images = (getString(NotesDb.COL_IMAGES) ?: "")

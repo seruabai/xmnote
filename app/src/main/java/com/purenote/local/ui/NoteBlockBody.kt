@@ -80,13 +80,13 @@ import com.purenote.local.NoteTextSize
 import com.purenote.local.core.BlockIds
 import com.purenote.local.core.BlockSpan
 import com.purenote.local.core.BlockType
-import com.purenote.local.core.LegacyBody
 import com.purenote.local.core.RichBlock
 import com.purenote.local.core.RichDoc
 import com.purenote.local.core.TextAlign as BlockAlign
 import com.purenote.local.core.blockIndexAt
 import com.purenote.local.core.blockInsertIndex
 import com.purenote.local.core.blockMoveTarget
+import com.purenote.local.core.find
 import com.purenote.local.core.indexOf
 import com.purenote.local.core.mergeWithPrevious
 import com.purenote.local.core.move
@@ -99,26 +99,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
+/** 块内光标：块 id + 块内偏移。工具栏据此判断"操作的是哪一块" */
+data class BlockCursor(val blockId: String, val caret: Int = 0)
+
 /**
- * 笔记正文的**块渲染**版本。
+ * 笔记正文的**块渲染**版本，也是编辑器唯一的正文形态。
  *
- * 与 [TextNoteBody] 保持**完全相同的参数契约**，因此可以原地替换：
- * 编辑器其余部分（保存、工具栏、插图、IME 处理）一行都不用改，出问题也能一行换回。
+ * 2.1 时这里的契约还是"一段 Markdown 文本进、一段文本出"，好让编辑器只换一行就能回退；
+ * 工具栏切成"直接操作光标所在块"之后，标记文本那层往返（标记桥）已经没有存在理由，
+ * 于是契约改成**块文档进、块文档出**：样式/插图都改文档本身，不再修改文本内容。
  *
- * 这样做的理由：正文的块模型已经落地（core/RichDoc），但如果把编辑器的状态也一起
- * 换成 RichDoc，就要同时重写光标钳制、输入法跟随等一批历史修复——风险与收益不成比例。
- * 这里让块编辑器只负责"呈现与编辑"，对外仍然是"一段 Markdown 文本进、一段文本出"。
+ * 块下标、插入边界、拖拽落点这些换算都在 core（RichDoc / BlockDrag / BlockEdit）里，
+ * 是纯函数、可单测；这里只负责呈现、输入法与手势。
  *
- * 块级拖拽排序的取法见 core/BlockDrag：长按抬起一块 → 跟着手指走 → 指示线标出落点。
+ * 块级拖拽排序见 core/BlockDrag：长按抬起一块 → 跟着手指走 → 指示线标出落点。
  * 长按后**不移动就松手**不当作拖拽（不吞事件），文本框自己的长按选择照旧可用。
  */
 @Composable
 fun NoteBlockBody(
-    value: String,
+    doc: RichDoc,
     textSize: NoteTextSize,
-    onCursor: (Int) -> Unit,
-    onChange: (String) -> Unit,
-    cursorRequest: Int? = null,
+    onCursor: (BlockCursor) -> Unit,
+    onDocChange: (RichDoc) -> Unit,
+    cursorRequest: BlockCursor? = null,
     onCursorConsumed: () -> Unit = {},
     onImageTap: (String) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -129,13 +132,11 @@ fun NoteBlockBody(
     val haptics = LocalHapticFeedback.current
     val textToolbar = LocalTextToolbar.current
 
-    // 外部内容（工具栏/插图/加载笔记）变化时重新解析；内部编辑不回读，避免打断输入
-    var doc by remember { mutableStateOf(LegacyBody.fromText(value)) }
-    var lastEmitted by remember { mutableStateOf(value) }
-    LaunchedEffect(value) {
-        if (value != lastEmitted) {
-            doc = LegacyBody.fromText(value)
-        }
+    // 编辑以本地文档为准：同一帧里可能连着改两次（输入后立刻回车拆块），等外部回传会用到旧值。
+    // 外部（工具栏/插图/加载笔记）改了文档就采纳；自己发出去的那份回来时相等，不会打断输入
+    var local by remember { mutableStateOf(doc) }
+    LaunchedEffect(doc) {
+        if (doc != local) local = doc
     }
 
     val states = remember { mutableStateMapOf<String, TextFieldValue>() }
@@ -143,8 +144,8 @@ fun NoteBlockBody(
     val pendingFocus = remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
-    // 手势协程的寿命比单次重组长，回调必须取最新版本，否则闭包里是首帧的 onChange
-    val emitChange = rememberUpdatedState(onChange)
+    // 手势协程的寿命比单次重组长，回调必须取最新版本，否则闭包里是首帧的回调
+    val emitDoc = rememberUpdatedState(onDocChange)
 
     // ---- 拖拽排序状态：draggingId 在长按命中时就定下，lifted 到真正拖动才置起 ----
     var draggingId by remember { mutableStateOf<String?>(null) }
@@ -154,43 +155,26 @@ fun NoteBlockBody(
     // 拖拽结束后要再收一次选区（见下方 LaunchedEffect）
     val settleSelection = remember { mutableStateOf<String?>(null) }
 
-    /** 块在整段正文里的起始偏移：用于把"块内光标"换算成工具栏需要的全局偏移 */
-    fun globalOffsetOf(blockId: String, caret: Int): Int {
-        val blocks = doc.blocks
-        var offset = 0
-        for (b in blocks) {
-            val line = LegacyBody.toText(RichDoc(blocks = listOf(b)))
-            if (b.id == blockId) return offset + caret.coerceIn(0, line.length)
-            offset += line.length + 1
-        }
-        return offset
-    }
-
     /**
      * 每次输入都把文本同步进文档。
      *
-     * 关键：不能只更新输入框状态而让 doc 停在旧值——回车拆块是按 doc 里的文本切分的，
+     * 关键：不能只更新输入框状态而让文档停在旧值——回车拆块是按文档里的文本切分的，
      * 文档滞后会让切分点整体错位（实测表现为"回车不换行，文字挤在一起"）。
      */
     fun applyText(blockId: String, tfv: TextFieldValue) {
         states[blockId] = tfv
-        val updated = doc.updateText(blockId, tfv.text)
-        doc = updated
-        val text = LegacyBody.toText(updated)
+        val before = local
+        val updated = before.updateText(blockId, tfv.text)
+        local = updated
         // 文本框把"选区变化"也走 onValueChange 报上来：文字没变就不要往外发，
         // 否则拖拽/长按选字这种纯光标动作会被编辑器当成一次改动去写库
-        if (text != lastEmitted) {
-            lastEmitted = text
-            onChange(text)
-        }
-        onCursor(globalOffsetOf(blockId, tfv.selection.start))
+        if (updated != before) emitDoc.value(updated)
+        onCursor(BlockCursor(blockId, tfv.selection.start))
     }
 
     fun commit(newDoc: RichDoc, focus: String?, caret: Int = 0) {
-        doc = newDoc
-        val text = LegacyBody.toText(newDoc)
-        lastEmitted = text
-        onChange(text)
+        local = newDoc
+        emitDoc.value(newDoc)
         // 已被删除/合并掉的块，输入态要一并清掉，否则下次同 id 复用时是陈旧文本
         val alive = newDoc.blocks.map { it.id }.toSet()
         states.keys.retainAll(alive)
@@ -203,7 +187,7 @@ fun NoteBlockBody(
 
     /** 可见块在视口里的纵向范围（LazyColumn 的 item.index 就是块下标） */
     fun visibleSpans(): List<BlockSpan> = listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
-        if (doc.blocks.getOrNull(info.index) == null) {
+        if (local.blocks.getOrNull(info.index) == null) {
             null
         } else {
             BlockSpan(info.index, info.offset.toFloat(), (info.offset + info.size).toFloat())
@@ -214,15 +198,13 @@ fun NoteBlockBody(
     fun dropDragged() {
         val id = draggingId ?: return
         val spans = visibleSpans()
-        val at = if (spans.isEmpty()) -1 else blockInsertIndex(spans, pointerY, doc.blocks.size)
-        val to = blockMoveTarget(doc.indexOf(id), at)
+        val at = if (spans.isEmpty()) -1 else blockInsertIndex(spans, pointerY, local.blocks.size)
+        val to = blockMoveTarget(local.indexOf(id), at)
         if (to != null) {
             // 只换顺序，块 id 与每块的行内状态都还在，所以不必清 states（清掉反而会丢光标）
-            val moved = doc.move(id, to)
-            doc = moved
-            val text = LegacyBody.toText(moved)
-            lastEmitted = text
-            emitChange.value(text)
+            val moved = local.move(id, to)
+            local = moved
+            emitDoc.value(moved)
         }
         draggingId = null
         lifted = false
@@ -232,8 +214,8 @@ fun NoteBlockBody(
     /** 命中块与移动阈值：长按抬手时定位是"按在谁身上"，随后按位移判断是否真的在拖 */
     fun beginDrag(y: Float) {
         val hitIndex = blockIndexAt(visibleSpans(), y)
-        val hit = doc.blocks.getOrNull(hitIndex) ?: return
-        if (doc.blocks.size < 2) return
+        val hit = local.blocks.getOrNull(hitIndex) ?: return
+        if (local.blocks.size < 2) return
         draggingId = hit.id
         lifted = false
         dragOffsetY = 0f
@@ -241,21 +223,16 @@ fun NoteBlockBody(
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
-    // 外部请求光标（工具栏改样式后）：把全局偏移落到对应块
+    // 外部请求光标（插图后落到新块等）：按块 id 直接落，不再做全局偏移换算
     LaunchedEffect(cursorRequest) {
         val target = cursorRequest ?: return@LaunchedEffect
-        var offset = 0
-        for (b in doc.blocks) {
-            val line = LegacyBody.toText(RichDoc(blocks = listOf(b)))
-            if (target <= offset + line.length) {
-                pendingFocus.value = b.id
-                val caret = (target - offset).coerceIn(0, line.length)
-                states[b.id] = (states[b.id] ?: TextFieldValue(line)).copy(
-                    selection = androidx.compose.ui.text.TextRange(caret),
-                )
-                break
-            }
-            offset += line.length + 1
+        val block = local.find(target.blockId)
+        if (block != null) {
+            pendingFocus.value = block.id
+            val caret = target.caret.coerceIn(0, block.text.length)
+            states[block.id] = (states[block.id] ?: TextFieldValue(block.text)).copy(
+                selection = TextRange(caret),
+            )
         }
         onCursorConsumed()
     }
@@ -295,9 +272,9 @@ fun NoteBlockBody(
     }
 
     val spans = visibleSpans()
-    val fromIndex = draggingId?.let { doc.indexOf(it) } ?: -1
+    val fromIndex = draggingId?.let { local.indexOf(it) } ?: -1
     val insertAt = if (fromIndex >= 0 && spans.isNotEmpty()) {
-        blockInsertIndex(spans, pointerY, doc.blocks.size)
+        blockInsertIndex(spans, pointerY, local.blocks.size)
     } else {
         -1
     }
@@ -306,7 +283,7 @@ fun NoteBlockBody(
         fromIndex >= 0 && insertAt >= 0 && spans.isNotEmpty() &&
         blockMoveTarget(fromIndex, insertAt) != null
     ) {
-        if (insertAt >= doc.blocks.size) {
+        if (insertAt >= local.blocks.size) {
             spans.last().bottom
         } else {
             spans.firstOrNull { it.index == insertAt }?.top
@@ -388,7 +365,7 @@ fun NoteBlockBody(
                     }
                 },
         ) {
-            items(doc.blocks, key = { it.id }) { block ->
+            items(local.blocks, key = { it.id }) { block ->
                 val dragging = block.id == draggingId
                 Box(
                     modifier = Modifier
@@ -425,11 +402,11 @@ fun NoteBlockBody(
                             shouldRequestFocus = pendingFocus.value == block.id,
                             onFocusHandled = { pendingFocus.value = null },
                             onTextChange = { tfv -> applyText(block.id, tfv) },
-                            onCursor = { caret -> onCursor(globalOffsetOf(block.id, caret)) },
-                            onCheckedToggle = { commit(doc.toggleChecked(block.id), focus = null) },
+                            onCursor = { caret -> onCursor(BlockCursor(block.id, caret)) },
+                            onCheckedToggle = { commit(local.toggleChecked(block.id), focus = null) },
                             onEnter = { caret ->
                                 val newId = BlockIds.newBlockId()
-                                val split = doc.splitAt(block.id, caret, newId)
+                                val split = local.splitAt(block.id, caret, newId)
                                 // 回车续接：勾选/项目符号沿用，有序列表序号 +1
                                 val next = split.blocks.firstOrNull { it.id == newId }
                                 val patched = if (next != null && block.type == BlockType.TODO) {
@@ -444,15 +421,15 @@ fun NoteBlockBody(
                                 commit(patched, focus = newId, caret = 0)
                             },
                             onBackspaceAtStart = {
-                                val prevId = doc.blocks.getOrNull(doc.indexOf(block.id) - 1)?.id
-                                val (merged, seam) = doc.mergeWithPrevious(block.id)
-                                if (merged !== doc && prevId != null) commit(merged, focus = prevId, caret = seam)
+                                val prevId = local.blocks.getOrNull(local.indexOf(block.id) - 1)?.id
+                                val (merged, seam) = local.mergeWithPrevious(block.id)
+                                if (merged !== local && prevId != null) commit(merged, focus = prevId, caret = seam)
                                 0 // 调用方不使用返回值，只需让 lambda 类型明确
                             },
                             onEmptyBackspace = {
-                                val removed = doc.remove(block.id)
-                                if (removed.blocks.size != doc.blocks.size) {
-                                    val prev = doc.blocks.getOrNull(doc.indexOf(block.id) - 1)
+                                val removed = local.remove(block.id)
+                                if (removed.blocks.size != local.blocks.size) {
+                                    val prev = local.blocks.getOrNull(local.indexOf(block.id) - 1)
                                     commit(removed, focus = prev?.id, caret = prev?.text?.length ?: 0)
                                 }
                             },

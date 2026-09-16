@@ -1,5 +1,6 @@
 package com.purenote.local.feature.notes
 
+import com.purenote.local.core.RichDoc
 import com.purenote.local.data.NoteKind
 import com.purenote.local.data.SaveResult
 import com.purenote.local.data.StorageFailure
@@ -125,7 +126,7 @@ class SaveCoordinatorTest {
     private fun command(noteId: Long, gen: Long) = SaveCommand(
         noteId = noteId, operationId = "op-${noteId}-${gen}", sessionId = "s", storeEpoch = "e",
         editGeneration = gen, expectedRevision = gen,
-        kind = NoteKind.TEXT, title = "t", body = "b", items = emptyList(), images = emptyList(),
+        kind = NoteKind.TEXT, title = "t", doc = RichDoc(), items = emptyList(), images = emptyList(),
         colorIndex = 0, folderId = null, pinned = false, remindAt = null,
     )
 

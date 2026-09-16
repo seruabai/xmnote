@@ -11,93 +11,120 @@ class BlockEditTest {
         blocks = texts.mapIndexed { i, t -> RichBlock.text("b" + i, t) },
     )
 
-    @Test
-    fun lineStartsAndIndexMapping() {
-        val d = doc("aa", "# bb", "")
-        val starts = d.lineStarts()
-        assertEquals(0, starts[0])
-        assertEquals(3, starts[1])
-        assertEquals(8, starts[2])   // 0 + "aa"(2) + 换行 + "# bb"(4) + 换行
+    private fun image(id: String = "img") = RichBlock(id = id, type = BlockType.IMAGE, fileId = "img.jpg")
 
-        assertEquals(0, d.blockIndexAtOffset(0))
-        assertEquals(0, d.blockIndexAtOffset(2))
-        assertEquals(1, d.blockIndexAtOffset(3))
-        assertEquals(1, d.blockIndexAtOffset(7))
-        assertEquals(2, d.blockIndexAtOffset(9))
-        assertEquals(2, d.blockIndexAtOffset(999))
+    @Test
+    fun embedInsertsAfterTheGivenBlock() {
+        val d = doc("第一行", "第二行", "第三行")
+        val (after, target) = d.insertEmbedAtBlock("b1", image(), "tail")
+        assertEquals(
+            listOf(BlockType.TEXT, BlockType.TEXT, BlockType.IMAGE, BlockType.TEXT),
+            after.blocks.map { it.type },
+        )
+        assertEquals("光标落在第三块", "b2", target)
     }
 
     @Test
-    fun offsetInMapsBackToLineStarts() {
-        val d = doc("aa", "# bb")
-        assertEquals(0, d.offsetIn("b0", 0))
-        assertEquals(2, d.offsetIn("b0", 2))
-        assertEquals(3, d.offsetIn("b1", 0))
-        assertEquals(7, d.offsetIn("b1", 5))    // "# bb" 只有 4 个字符，5 会被夹到块尾
-        assertEquals(7, d.offsetIn("b1", 99))   // 越界夹取
-        assertEquals(0, d.offsetIn("不存在", 3))
+    fun embedAtDocumentEndGetsAnEmptyTextBlockAndCaretMovesThere() {
+        val d = doc("只有一行")
+        val (after, target) = d.insertEmbedAtBlock("b0", image(), "tail")
+        assertEquals(listOf(BlockType.TEXT, BlockType.IMAGE, BlockType.TEXT), after.blocks.map { it.type })
+        assertEquals("tail", target)
+        assertEquals("落点必须是可输入的文本块", BlockType.TEXT, after.blocks.last().type)
+        assertTrue("落点块不能是嵌入块", after.find(target)?.isEditable == true)
     }
 
     @Test
-    fun insertImageAfterTheBlockContainingTheCursor() {
-        // 光标偏移 4 = 第二行行首 → 图片插在"第二行"这一块之后
-        val (newMarkup, _) = insertEmbedMarkup("第一行\n第二行\n第三行", cursor = 4, fileName = "img_a.jpg")
-        assertEquals("第一行\n第二行\n![](img_a.jpg)\n第三行", newMarkup)
-    }
-
-    @Test
-    fun imageAtDocumentEndGetsAnEmptyTextBlockAndCaretMovesThere() {
-        val (newMarkup, caret) = insertEmbedMarkup("只有一行", cursor = 2, fileName = "img_b.jpg")
-        assertEquals("只有一行\n![](img_b.jpg)\n", newMarkup)
-        assertEquals("光标必须落在文末空文本块里才能接着输入", newMarkup.length, caret)
-    }
-
-    @Test
-    fun blankLineBecomesTheImageLineInPlace() {
+    fun blankBlockBecomesTheImageBlockInPlace() {
         // 沿用既有行为：光标在空行上时，空行就地变成图片行，图片上方不会多出一条空段
-        val (newMarkup, _) = insertEmbedMarkup("第一行\n\n第三行", cursor = 4, fileName = "img_x.jpg")
-        assertEquals("第一行\n![](img_x.jpg)\n第三行", newMarkup)
+        val d = doc("第一行", "", "第三行")
+        val (after, _) = d.insertEmbedAtBlock("b1", image(), "tail")
+        assertEquals(
+            listOf(BlockType.TEXT, BlockType.IMAGE, BlockType.TEXT),
+            after.blocks.map { it.type },
+        )
+        assertEquals("第一行", after.blocks[0].text)
+        assertEquals("第三行", after.blocks[2].text)
     }
 
     @Test
     fun audioFileNameBecomesSoundBlock() {
-        val (newMarkup, _) = insertEmbedMarkup("正文", cursor = 0, fileName = "aud_20260916.m4a")
-        val d = LegacyBody.fromText(newMarkup)
-        assertEquals(BlockType.SOUND, d.blocks[1].type)
-        assertEquals("aud_20260916.m4a", d.blocks[1].fileId)
+        val d = doc("正文")
+        val (after, _) = d.insertEmbedAtBlock("b0", embedBlockFor("aud_20260916.m4a", "snd"), "tail")
+        assertEquals(BlockType.SOUND, after.blocks[1].type)
+        assertEquals("aud_20260916.m4a", after.blocks[1].fileId)
+    }
+
+    @Test
+    fun imageFileNameBecomesImageBlock() {
+        val block = embedBlockFor("img_a.jpg", "pic")
+        assertEquals(BlockType.IMAGE, block.type)
+        assertEquals("img_a.jpg", block.fileId)
     }
 
     @Test
     fun consecutiveImagesStackButAlwaysLeaveATypingSpot() {
-        val first = insertEmbedMarkup("正文", cursor = 1, fileName = "img_1.jpg").first
+        val d = doc("正文")
+        val (first, target1) = d.insertEmbedAtBlock("b0", image("i1"), "tail1")
         // 第二张的光标停在第一张后面那个空文本块上 → 该空行被就地占位，两张图相邻
-        val second = insertEmbedMarkup(first, cursor = first.length, fileName = "img_2.jpg").first
+        val (second, _) = first.insertEmbedAtBlock(target1, image("i2"), "tail2")
         assertEquals(
             listOf(BlockType.TEXT, BlockType.IMAGE, BlockType.IMAGE, BlockType.TEXT),
-            LegacyBody.fromText(second).blocks.map { it.type },
+            second.blocks.map { it.type },
         )
         // 末尾永远留着可输入的文本块，否则用户没有落笔处
-        assertEquals(BlockType.TEXT, LegacyBody.fromText(second).blocks.last().type)
+        assertEquals(BlockType.TEXT, second.blocks.last().type)
     }
 
     @Test
     fun caretAlwaysLandsInATextBlockRightAfterTheInsertedImage() {
-        val first = insertEmbedMarkup("正文", cursor = 1, fileName = "img_1.jpg").first
-        // 光标在正文块内 → 新图插在正文之后；其后紧跟的是上一张图（嵌入块），
+        val d = doc("正文")
+        val (first, _) = d.insertEmbedAtBlock("b0", image("i1"), "tail1")
+        // 光标回到正文块内 → 新图插在正文之后；其后紧跟的是上一张图（嵌入块），
         // 于是按规则补一个空文本块，保证"插完图立刻能打字"
-        val second = insertEmbedMarkup(first, cursor = 0, fileName = "img_2.jpg").first
+        val (second, target) = first.insertEmbedAtBlock("b0", image("i2"), "tail2")
         assertEquals(
             listOf(BlockType.TEXT, BlockType.IMAGE, BlockType.TEXT, BlockType.IMAGE, BlockType.TEXT),
-            LegacyBody.fromText(second).blocks.map { it.type },
+            second.blocks.map { it.type },
         )
+        assertEquals(BlockType.TEXT, second.find(target)?.type)
     }
 
     @Test
-    fun insertIntoEmptyDocument() {
-        // 空文档里插图不应先留一个空行
-        val (newMarkup, caret) = insertEmbedMarkup("", cursor = 0, fileName = "img_c.jpg")
-        assertEquals("![](img_c.jpg)\n", newMarkup)
-        assertEquals(newMarkup.length, caret)
+    fun insertIntoEmptyDocumentKeepsNoLeadingBlankBlock() {
+        // 空文档里插图不应先留一个空行：空块就地变成图片块，原来的空块挪到后面当落点
+        val (after, target) = RichDoc().insertEmbedAtBlock(RichDoc.FIRST_BLOCK_ID, image(), "tail")
+        assertEquals(listOf(BlockType.IMAGE, BlockType.TEXT), after.blocks.map { it.type })
+        assertEquals("原空块就是落点", RichDoc.FIRST_BLOCK_ID, target)
+        assertEquals(BlockType.TEXT, after.find(target)?.type)
+    }
+
+    @Test
+    fun unknownAnchorFallsBackToTheFirstBlock() {
+        // 锚点不存在时按首块处理：插在首块之后（与"插在光标所在块之后"同一语义），不抛异常
+        val d = doc("正文")
+        val (after, _) = d.insertEmbedAtBlock("不存在", image(), "tail")
+        assertEquals(listOf(BlockType.TEXT, BlockType.IMAGE, BlockType.TEXT), after.blocks.map { it.type })
+        assertEquals("正文", after.blocks[0].text)
+    }
+
+    @Test
+    fun headingAndTodoBlocksAreNotReplacedInPlace() {
+        // 只有"空的无样式文本块"才允许就地占位；标题块即使文字为空也保留
+        val d = RichDoc(
+            blocks = listOf(
+                RichBlock(id = "b0", headingLevel = 1, fragments = listOf(Fragment(""))),
+                RichBlock.text("b1", "正文"),
+            ),
+        )
+        val (after, target) = d.insertEmbedAtBlock("b0", image(), "tail")
+        // 空标题块不就地占位 → 图片插在它之后，后面已有的正文块就是落点，不必再补
+        assertEquals(
+            listOf(BlockType.TEXT, BlockType.IMAGE, BlockType.TEXT),
+            after.blocks.map { it.type },
+        )
+        assertEquals(1, after.blocks[0].headingLevel)
+        assertEquals("b1", target)
     }
 
     @Test
@@ -118,11 +145,5 @@ class BlockEditTest {
         assertEquals(3, fixed.blocks.size)
         assertEquals("tail", fixed.blocks.last().id)
         assertTrue(fixed.blocks.last().type == BlockType.TEXT)
-    }
-
-    @Test
-    fun insertedEmbedsSurviveMarkupRoundTrip() {
-        val once = insertEmbedMarkup("# 标题\n- [ ] 待办", cursor = 1, fileName = "img_x.jpg").first
-        assertEquals(once, LegacyBody.toText(LegacyBody.fromText(once)))
     }
 }

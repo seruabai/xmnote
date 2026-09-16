@@ -272,6 +272,41 @@ fun RichDoc.setType(blockId: String, type: BlockType): RichDoc {
     )
 }
 
+/**
+ * 行首标签（清单/项目符号/有序列表/引用）的开关，语义与旧 `NoteMarkup.toggleHeadTag` 一致：
+ * 同种 → 取消（只回落到 TEXT），不同种 → 替换，无 → 添加。标题级别与缩进不受影响。
+ *
+ * 这是工具栏从"改标记文本的一行"切到"改光标所在块"之后，标签类的落点。
+ */
+fun RichDoc.toggleHeadTag(blockId: String, type: BlockType, ordered: Boolean = false): RichDoc {
+    val idx = indexOf(blockId)
+    if (idx < 0) return this
+    val old = blocks[idx]
+    if (old.isEmbed) return this
+    // ITEM 分有序（1. 2. 3.）与无序（•）两种形态，靠 number 区分；
+    // 取消判据必须也带上它，否则按 "1." 会把已在的无序列表当成"同种"直接取消
+    val sameForm = old.type == type && (type != BlockType.ITEM || (old.number > 0) == ordered)
+    if (sameForm) return setType(blockId, BlockType.TEXT)
+    if (type !in HEAD_TAGS) return this
+    val number = if (type == BlockType.ITEM && ordered) {
+        // 有序列表接续：上一块也是有序列表就 +1，否则从 1 开始（旧行为）
+        val prev = blocks.getOrNull(idx - 1)
+        if (prev != null && prev.type == BlockType.ITEM && prev.number > 0) prev.number + 1 else 1
+    } else {
+        0
+    }
+    return replaceAt(
+        idx,
+        old.copy(
+            type = type,
+            checked = false,
+            number = number,
+        ),
+    )
+}
+
+private val HEAD_TAGS = setOf(BlockType.TODO, BlockType.ITEM, BlockType.QUOTE)
+
 fun RichDoc.toggleChecked(blockId: String): RichDoc {
     val idx = indexOf(blockId)
     if (idx < 0) return this

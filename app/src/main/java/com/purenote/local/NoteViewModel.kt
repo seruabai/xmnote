@@ -23,6 +23,7 @@ import com.purenote.local.data.SaveResult
 import com.purenote.local.data.SortOrder
 import com.purenote.local.data.StorageFailure
 import com.purenote.local.data.Todo
+import com.purenote.local.core.RichDoc
 import com.purenote.local.core.TodoDates
 import com.purenote.local.feature.notes.EditorEvent
 import com.purenote.local.feature.notes.EditorReducer
@@ -401,7 +402,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
     fun createNote(
         kind: NoteKind,
         title: String,
-        body: String,
+        doc: RichDoc,
         items: List<ChecklistItem>,
         images: List<String>,
         colorIndex: Int,
@@ -414,7 +415,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         lastSaveJob = viewModelScope.launch {
             // insertOrThrow：创建失败会抛异常，绝不能把 -1 当成有效 ID 继续用（规范 §7）
             val id = try {
-                repo.createNote(kind, title, body, items, images, colorIndex, folderId)
+                repo.createNote(kind, title, doc, items, images, colorIndex, folderId)
             } catch (cancellation: kotlinx.coroutines.CancellationException) {
                 throw cancellation
             } catch (t: Throwable) {
@@ -490,7 +491,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
         noteId: Long,
         kind: NoteKind,
         title: String,
-        body: String,
+        doc: RichDoc,
         items: List<ChecklistItem>,
         images: List<String>,
         colorIndex: Int,
@@ -522,7 +523,7 @@ class NoteViewModel(app: Application) : AndroidViewModel(app) {
                 storeEpoch = state.storeEpoch,
                 editGeneration = state.editGeneration,
                 expectedRevision = expectedRevision,
-                kind = kind, title = title, body = body, items = items, images = images,
+                kind = kind, title = title, doc = doc, items = items, images = images,
                 colorIndex = colorIndex, folderId = folderId, pinned = pinned,
                 remindAt = remindAt, repeat = repeat, allDay = allDay,
             )

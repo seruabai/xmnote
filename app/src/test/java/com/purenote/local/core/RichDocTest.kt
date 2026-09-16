@@ -215,6 +215,79 @@ class RichDocTest {
         assertEquals(0 to 0, doc("无待办").checklistProgress())
     }
 
+    // ------------------------------------------------------------ 工具栏的行首标签（块级）
+
+    @Test
+    fun toggleHeadTagAddsThenRemovesOnSecondPress() {
+        val d = doc("甲", "乙")
+        val bullet = d.toggleHeadTag("b1", BlockType.ITEM)
+        assertEquals(BlockType.ITEM, bullet.blocks[1].type)
+        assertEquals(0, bullet.blocks[1].number)          // 无序：number = 0（渲染成 •）
+        assertEquals(d, bullet.toggleHeadTag("b1", BlockType.ITEM))   // 同种再按一次 = 取消
+    }
+
+    @Test
+    fun numberedAndBulletAreDifferentFormsOfTheSameType() {
+        val d = doc("甲")
+        val bullet = d.toggleHeadTag("b0", BlockType.ITEM)
+        // 已经是无序列表时按 "1." 是换成有序，不是取消
+        val numbered = bullet.toggleHeadTag("b0", BlockType.ITEM, ordered = true)
+        assertEquals(BlockType.ITEM, numbered.blocks[0].type)
+        assertEquals(1, numbered.blocks[0].number)
+        assertEquals(d, numbered.toggleHeadTag("b0", BlockType.ITEM, ordered = true))
+    }
+
+    @Test
+    fun toggleHeadTagReplacesADifferentTag() {
+        val d = doc("甲")
+        val todo = d.toggleHeadTag("b0", BlockType.TODO)
+        assertEquals(BlockType.TODO, todo.blocks[0].type)
+        val quote = todo.toggleHeadTag("b0", BlockType.QUOTE)
+        assertEquals(BlockType.QUOTE, quote.blocks[0].type)
+        assertFalse("换成引用后勾选状态必须清掉", quote.blocks[0].checked)
+    }
+
+    @Test
+    fun orderedListContinuesFromThePreviousItem() {
+        val d = doc("一", "二", "三")
+        val first = d.toggleHeadTag("b0", BlockType.ITEM, ordered = true)
+        val second = first.toggleHeadTag("b1", BlockType.ITEM, ordered = true)
+        val third = second.toggleHeadTag("b2", BlockType.ITEM, ordered = true)
+        assertEquals(listOf(1, 2, 3), third.blocks.map { it.number })
+        // 中间取消后再接，序号重新从 1 开始
+        val demoted = third.toggleHeadTag("b1", BlockType.ITEM, ordered = true)
+        assertEquals(listOf(1, 0, 3), demoted.blocks.map { it.number })
+    }
+
+    @Test
+    fun toggleHeadTagKeepsHeadingAndIndent() {
+        val d = RichDoc(
+            blocks = listOf(
+                RichBlock(id = "b0", headingLevel = 2, indentHead = true, fragments = listOf(Fragment("标题"))),
+            ),
+        )
+        val tagged = d.toggleHeadTag("b0", BlockType.TODO)
+        assertEquals(2, tagged.blocks[0].headingLevel)
+        assertTrue(tagged.blocks[0].indentHead)
+        // 取消标签同样不该动标题与缩进
+        val cleared = tagged.toggleHeadTag("b0", BlockType.TODO)
+        assertEquals(BlockType.TEXT, cleared.blocks[0].type)
+        assertEquals(2, cleared.blocks[0].headingLevel)
+        assertTrue(cleared.blocks[0].indentHead)
+    }
+
+    @Test
+    fun toggleHeadTagIgnoresEmbedsAndUnknownBlocks() {
+        val d = RichDoc(
+            blocks = listOf(
+                RichBlock.text("b0", "正文"),
+                RichBlock(id = "b1", type = BlockType.IMAGE, fileId = "a.png"),
+            ),
+        )
+        assertEquals(d, d.toggleHeadTag("b1", BlockType.TODO))
+        assertEquals(d, d.toggleHeadTag("不存在", BlockType.TODO))
+    }
+
     @Test
     fun adjacentFragmentsWithSameStyleAreMerged() {
         val block = RichBlock(

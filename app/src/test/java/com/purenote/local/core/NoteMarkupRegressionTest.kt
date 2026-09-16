@@ -1,6 +1,5 @@
 package com.purenote.local.core
 
-import com.purenote.local.ui.backspaceIntercept
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -152,22 +151,4 @@ class NoteMarkupRegressionTest {
         assertEquals(null, NoteMarkup.imageLineAppendIntercept("abc\n![](a.jpg)", 13))
     }
 
-    @Test
-    fun backspaceRemovesWholeHeadingMarker() {
-        // 修复前：默认退格只删掉 "# " 里的空格 → "#标题"，标题样式静默丢失
-        // 光标位于内容起点（"# " 之后），退格删的是标记末字符
-        assertEquals("标题" to 0, backspaceIntercept("# 标题", 1))
-        assertEquals("标题" to 0, backspaceIntercept("## 标题", 2))
-        assertEquals("标题" to 0, backspaceIntercept("### 标题", 3))
-    }
-
-    @Test
-    fun backspaceOnTagLineStillKeepsHeadingAndRemovesOnlyTheTag() {
-        assertEquals("# x" to 2, backspaceIntercept("# - [ ] x", 7))
-    }
-
-    @Test
-    fun backspaceOnPlainLineIsNotIntercepted() {
-        assertEquals(null, backspaceIntercept("普通文本", 1))
-    }
 }

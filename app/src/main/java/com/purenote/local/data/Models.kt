@@ -1,5 +1,7 @@
 package com.purenote.local.data
 
+import com.purenote.local.core.RichDoc
+
 enum class NoteKind { TEXT, CHECKLIST }
 
 data class ChecklistItem(
@@ -13,6 +15,15 @@ data class Note(
     val uuid: String = "",
     val kind: NoteKind,
     val title: String,
+    /**
+     * 正文的**块文档**，编辑器唯一的读写形态。
+     * 存储层是 v3 JSON（见 core/NoteBody），这里已经解码好，界面不必再碰格式。
+     */
+    val doc: RichDoc = RichDoc(),
+    /**
+     * 只读投影：块文档转回旧标记文本，供列表卡片/通知等"只看一眼"的地方使用。
+     * **不要**拿它回写正文（会丢掉块模型能表达、标记表达不了的内容）。
+     */
     val body: String,
     val items: List<ChecklistItem>,
     val images: List<String>,

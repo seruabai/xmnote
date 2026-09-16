@@ -1,6 +1,7 @@
 package com.purenote.local.feature.notes
 
 import com.purenote.local.data.ChecklistItem
+import com.purenote.local.core.RichDoc
 import com.purenote.local.data.NoteKind
 import com.purenote.local.data.RepeatRule
 
@@ -128,7 +129,8 @@ data class SaveCommand(
     val expectedRevision: Long,
     val kind: NoteKind,
     val title: String,
-    val body: String,
+    /** 正文的块文档快照（编辑器唯一的读写形态） */
+    val doc: RichDoc,
     val items: List<ChecklistItem>,
     val images: List<String>,
     val colorIndex: Int,
