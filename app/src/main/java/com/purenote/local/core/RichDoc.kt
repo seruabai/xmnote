@@ -90,6 +90,15 @@ data class RichBlock(
     /** 光标可落的块：嵌入块不可编辑文本 */
     val isEditable: Boolean get() = !isEmbed
 
+    /**
+     * 可否长按拖拽排序。
+     *
+     * 只允许没有输入框的块（图片/录音/链接卡片）：文本块铺满整行，长按很容易在
+     * "边想边点"时误触发；文本块的长按留给选字，也更符合手机笔记的直觉。
+     */
+    val draggable: Boolean
+        get() = type == BlockType.IMAGE || type == BlockType.SOUND || type == BlockType.LINK
+
     companion object {
         fun text(id: String, content: String = ""): RichBlock =
             RichBlock(id = id, type = BlockType.TEXT, fragments = listOf(Fragment(content)))

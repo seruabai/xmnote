@@ -135,11 +135,14 @@ check('P0 夹具写入 MIND 笔记(kind=2)', (stored_mind() or {}).get('root', {
       str(db("SELECT kind,title FROM notes WHERE uuid='mind-1';")))
 open_home()
 card = None
-for _ in range(5):
+for _ in range(6):
     card = find(nodes(), text='中心主题')
     if card:
         break
     time.sleep(2)
+if card is None:
+    # 诊断：把首页看到的卡片文字打出来，便于判断是"没刷新"还是"卡片文案不同"
+    print('首页可见文字:', sorted({n['text'] for n in nodes() if n['text']})[:20], flush=True)
 check('P0 首页卡片显示脑图', card is not None)
 if not card:
     sys.exit(1)

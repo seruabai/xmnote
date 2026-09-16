@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -40,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -53,7 +55,13 @@ import com.purenote.local.core.TodoDates
 import com.purenote.local.data.Todo
 import kotlinx.coroutines.delay
 
-/** 小米待办同款方角勾选框：未勾为描边方块，勾选后墨色填充 + 纸色对勾 */
+/**
+ * 小米待办同款方角勾选框：未勾为描边方块，勾选后墨色填充 + 纸色对勾。
+ *
+ * 用 [toggleable] 而不是 clickable：这样它在无障碍树里是一个**真正的勾选框**
+ * （有 role=Checkbox 与 checked 状态）。此前只有 clickable，读屏软件念不出
+ * "这是勾选框、勾没勾"，设备验收也定位不到它——清单编辑器与待办卡片都在用这个控件。
+ */
 @Composable
 fun MiCheckbox(done: Boolean, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val fill by animateColorAsState(
@@ -68,7 +76,7 @@ fun MiCheckbox(done: Boolean, size: Dp, onClick: () -> Unit, modifier: Modifier 
         border = BorderStroke(1.6.dp, stroke),
         modifier = modifier
             .size(size)
-            .clickable(onClick = onClick),
+            .toggleable(value = done, role = Role.Checkbox, onValueChange = { onClick() }),
     ) {
         Box(contentAlignment = Alignment.Center) {
             if (done) {

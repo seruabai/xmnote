@@ -113,7 +113,12 @@ data class BlockCursor(val blockId: String, val caret: Int = 0)
  * 是纯函数、可单测；这里只负责呈现、输入法与手势。
  *
  * 块级拖拽排序见 core/BlockDrag：长按抬起一块 → 跟着手指走 → 指示线标出落点。
- * 长按后**不移动就松手**不当作拖拽（不吞事件），文本框自己的长按选择照旧可用。
+ *
+ * **只有没有输入框的块（图片/录音/链接卡片）能拖**：文本块长按不参与拖拽。
+ * 原因（用户 2026-09-17 提出）：文本块几乎铺满整行，长按等长按阈值很容易在
+ * "边想边点屏幕"时误触发拖拽，而文本笔记里排序的收益远小于误触代价；
+ * 文本块的长按回归它本来的用途——选字。附带好处：系统那个
+ * "Select all / Autofill" 浮层再也不会被拖拽带出来了。
  */
 @Composable
 fun NoteBlockBody(
@@ -121,6 +126,8 @@ fun NoteBlockBody(
     textSize: NoteTextSize,
     onCursor: (BlockCursor) -> Unit,
     onDocChange: (RichDoc) -> Unit,
+    /** 正文是否持有焦点：工具栏在 API < 35 上要靠它判断"键盘来了"（见 EditorScreen 注释） */
+    onFocusChange: (Boolean) -> Unit = {},
     cursorRequest: BlockCursor? = null,
     onCursorConsumed: () -> Unit = {},
     onImageTap: (String) -> Unit = {},
@@ -211,11 +218,15 @@ fun NoteBlockBody(
         dragOffsetY = 0f
     }
 
-    /** 命中块与移动阈值：长按抬手时定位是"按在谁身上"，随后按位移判断是否真的在拖 */
+    /**
+     * 命中块与移动阈值：长按抬手时定位是"按在谁身上"，随后按位移判断是否真的在拖。
+     * 文本块直接不参与（见文件头注释）：不吞事件、不给触感反馈，长按留给选字。
+     */
     fun beginDrag(y: Float) {
         val hitIndex = blockIndexAt(visibleSpans(), y)
         val hit = local.blocks.getOrNull(hitIndex) ?: return
         if (local.blocks.size < 2) return
+        if (!hit.draggable) return
         draggingId = hit.id
         lifted = false
         dragOffsetY = 0f
@@ -241,13 +252,20 @@ fun NoteBlockBody(
     // 只有等它自己的选择手势彻底结束，收选区与收浮层才会真正生效
     LaunchedEffect(settleSelection.value) {
         val id = settleSelection.value ?: return@LaunchedEffect
-        kotlinx.coroutines.delay(120)
-        states[id]?.let { tfv ->
-            if (!tfv.selection.collapsed) {
-                states[id] = tfv.copy(selection = TextRange(tfv.selection.start))
+        // 浮层是平台异步弹出来的，收完立刻 hide 有时赶在它弹出来之前（实测会残留）。
+        // 于是连着收一小段时间：只要它冒出来就被按下去。
+        repeat(8) {
+            kotlinx.coroutines.delay(120)
+            states[id]?.let { tfv ->
+                if (!tfv.selection.collapsed) {
+                    states[id] = tfv.copy(selection = TextRange(tfv.selection.start))
+                }
             }
+            // 说明：那个 "Select all / Autofill" 浮层是平台自己的，Compose 的 TextToolbar.hide()
+            // 与 AutofillManager.cancel() 都收不掉它（都试过）；这里只能保证选区被收回、文字不被选中。
+            // 要彻底不弹，只能改成"从左边缘把手拖"这种不碰文本框的方案（待用户定）
+            textToolbar.hide()
         }
-        textToolbar.hide()
         settleSelection.value = null
     }
 
@@ -402,6 +420,7 @@ fun NoteBlockBody(
                             shouldRequestFocus = pendingFocus.value == block.id,
                             onFocusHandled = { pendingFocus.value = null },
                             onTextChange = { tfv -> applyText(block.id, tfv) },
+                            onFocusChange = onFocusChange,
                             onCursor = { caret -> onCursor(BlockCursor(block.id, caret)) },
                             onCheckedToggle = { commit(local.toggleChecked(block.id), focus = null) },
                             onEnter = { caret ->
@@ -463,6 +482,7 @@ private fun BlockRow(
     shouldRequestFocus: Boolean,
     onFocusHandled: () -> Unit,
     onTextChange: (TextFieldValue) -> Unit,
+    onFocusChange: (Boolean) -> Unit,
     onCursor: (Int) -> Unit,
     onCheckedToggle: () -> Unit,
     onEnter: (Int) -> Unit,
@@ -549,7 +569,10 @@ private fun BlockRow(
                     }
                 }
                 .focusRequester(requester)
-                .onFocusChanged { focused -> if (focused.isFocused) onCursor(state.selection.start) },
+                .onFocusChanged { focused ->
+                    onFocusChange(focused.isFocused)
+                    if (focused.isFocused) onCursor(state.selection.start)
+                },
         )
     }
 }

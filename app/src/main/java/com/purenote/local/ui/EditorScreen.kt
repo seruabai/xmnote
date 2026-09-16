@@ -90,6 +90,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalContext
@@ -426,8 +427,14 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     // ---- 手写（第3键）：打开画板，保存为图片插入光标行 ----
     var drawOpen by remember { mutableStateOf(false) }
 
-    // 工具栏随键盘显隐：键盘可见才显示（用户 2026-09-07 要求）
-    val imeVisible = WindowInsets.isImeVisible
+    // 工具栏随键盘显隐（用户 2026-09-07 要求）。
+    //
+    // 但"键盘可见"不能只看 WindowInsets.isImeVisible：API < 35 没有强制边到边，
+    // adjustResize 直接把窗口压小，IME inset 根本不会送到应用（实测 API 33 上
+    // isImeVisible 恒为 false），样式键在 Android 13 这类设备上就永远点不到。
+    // 于是并上"正文/标题拿到焦点"这一路信号——它同样意味着用户正在打字。
+    var bodyFocused by remember { mutableStateOf(false) }
+    val imeVisible = WindowInsets.isImeVisible || bodyFocused
 
     val createdLabel = remember(screen.noteId) {
         DateFormats.yearMonthDayHourMinute(System.currentTimeMillis())
@@ -635,7 +642,10 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                             inner()
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().padding(top = 19.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 19.dp)
+                        .onFocusChanged { bodyFocused = it.isFocused },
                 )
             }
 
@@ -695,6 +705,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 NoteKind.TEXT -> NoteBlockBody(
                     doc = doc,
                     textSize = preferredTextSize,
+                    onFocusChange = { bodyFocused = it },
                     onCursor = { cursorBlock = it.blockId },
                     onDocChange = { doc = it; markDirty() },
                     cursorRequest = cursorRequest,
