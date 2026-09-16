@@ -17,6 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -90,6 +91,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -176,6 +179,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     var cursorBlock by remember { mutableStateOf(RichDoc.FIRST_BLOCK_ID) }
     // 插图/落点请求：由正文组件一次性消费
     var cursorRequest by remember { mutableStateOf<BlockCursor?>(null) }
+    // 清单笔记新增条目后要聚焦过去（-1 = 无）
+    val newItemFocus = remember { mutableStateOf(-1) }
     // 样式面板（H1-3/列表/引用/缩进）与图片预览
     var styleOpen by remember { mutableStateOf(false) }
     var previewImage by remember { mutableStateOf<String?>(null) }
@@ -250,6 +255,13 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
      * 这样图片才真正是"一个块"，块级操作（拖拽排序、整块删除）才有意义。
      */
     fun insertEmbedAsBlock(fileName: String) {
+        // 清单笔记没有正文流（内容由条目派生），插图/录音/手写落到附件条上；
+        // 文本笔记才是"按块插进正文"。
+        if (kind == NoteKind.CHECKLIST) {
+            imageNames.add(fileName)
+            markDirty()
+            return
+        }
         val (next, target) = doc.insertEmbedAtBlock(cursorBlock, embedBlockFor(fileName), BlockIds.newBlockId())
         doc = next
         cursorRequest = BlockCursor(target, 0)
@@ -410,6 +422,13 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
     }
 
     fun applyHeadTag(type: BlockType, ordered: Boolean = false) {
+        // 清单笔记里没有"光标所在块"，勾选键的语义是"再加一条勾选栏"
+        if (kind == NoteKind.CHECKLIST && type == BlockType.TODO) {
+            items.add(ChecklistItem(""))
+            newItemFocus.value = items.lastIndex
+            markDirty()
+            return
+        }
         doc = doc.toggleHeadTag(cursorBlock, type, ordered)
         markDirty()
     }
@@ -507,7 +526,8 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             // 图片菜单打开时也要保活——菜单弹窗夺焦点会使 IME 隐藏，bottomBar 一拆菜单就闪生即死
             // 显隐走滑入滑出动画（跟随键盘升降，Motion 令牌）
             AnimatedVisibility(
-                visible = (imeVisible || recording || imageMenu) && kind == NoteKind.TEXT,
+                // 清单笔记也要能用这五键（用户 2026-09-17：笔记目录内都能用）；脑图有自己的操作栏
+                visible = (imeVisible || recording || imageMenu) && kind != NoteKind.MIND,
                 enter = slideInVertically(Motion.sheetSpring()) { it } + fadeIn(tween(Motion.FADE)),
                 exit = slideOutVertically(tween(Motion.SCREEN_OUT, easing = Motion.EaseIn)) { it } +
                     fadeOut(tween(Motion.SCREEN_OUT)),
@@ -595,8 +615,19 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         }
     },
     ) { padding ->
+        // 规范 §8：必须如实区分"还没存"与"存好了"。
+        // 但它是**悬浮**的：早先放在正文流里，出现/消失会把整篇内容顶一下
+        // （用户 2026-09-17 反馈"点一下勾选框整个内容跟着动一下"）。
+        val statusText = when (editorState.saveStatus) {
+            SaveStatus.SAVING -> "保存中…"
+            SaveStatus.PENDING -> "待保存"
+            SaveStatus.FAILED -> editorState.failure ?: "保存失败"
+            SaveStatus.CONFLICT -> editorState.failure ?: "已在别处被修改"
+            SaveStatus.IDLE -> null
+        }
+        Box(Modifier.padding(padding).fillMaxSize()) {
         Column(
-            Modifier.padding(padding).fillMaxSize().padding(horizontal = 22.dp),
+            Modifier.fillMaxSize().padding(horizontal = 22.dp),
         ) {
             val titleTextStyle = TextStyle(
                 fontSize = typeScale.editorTitleSp.sp,
@@ -656,32 +687,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
             )
 
-            // 规范 §8：必须如实区分"还没存"与"存好了"。
-            // 原实现把 saveExisting 的返回值丢掉，界面无从知道内容有没有落库；
-            // 现在由状态机给出，且旧回执只能标记它自己那一代次。
-            val statusText = when (editorState.saveStatus) {
-                SaveStatus.SAVING -> "保存中…"
-                SaveStatus.PENDING -> "待保存"
-                SaveStatus.FAILED -> editorState.failure ?: "保存失败"
-                SaveStatus.CONFLICT -> editorState.failure ?: "已在别处被修改"
-                SaveStatus.IDLE -> null
-            }
-            if (statusText != null) {
-                Text(
-                    text = statusText,
-                    fontSize = 13.sp,
-                    color = if (editorState.saveStatus == SaveStatus.IDLE) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else if (editorState.saveStatus == SaveStatus.PENDING || editorState.saveStatus == SaveStatus.SAVING) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.error
-                    },
-                    modifier = Modifier.padding(bottom = 22.dp),
-                )
-            } else {
-                Spacer(Modifier.height(14.dp))
-            }
+            Spacer(Modifier.height(14.dp))
 
             if (imageNames.isNotEmpty()) {
                 // 附件条只展示正文流之外的遗留附件；正文 [img:] 行已在文中显示缩略图，录音显示录音条
@@ -717,6 +723,9 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     items = items,
                     textSize = preferredTextSize,
                     onChangeList = ::markDirty,
+                    focusIndex = newItemFocus.value,
+                    onFocusConsumed = { newItemFocus.value = -1 },
+                    onFocusChange = { bodyFocused = it },
                     modifier = Modifier.weight(1f),
                 )
                 NoteKind.MIND -> MindEditor(
@@ -724,6 +733,29 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     textSize = preferredTextSize,
                     onMindChange = { mind = it; markDirty() },
                     modifier = Modifier.weight(1f),
+                )
+            }
+        }
+
+            if (statusText != null) {
+                Text(
+                    text = statusText,
+                    fontSize = 12.sp,
+                    color = if (editorState.saveStatus == SaveStatus.FAILED ||
+                        editorState.saveStatus == SaveStatus.CONFLICT
+                    ) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 4.dp, bottom = 10.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .85f),
+                            RoundedCornerShape(10.dp),
+                        )
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
                 )
             }
         }
@@ -874,11 +906,30 @@ private fun ChecklistEditor(
     items: MutableList<ChecklistItem>,
     textSize: NoteTextSize,
     onChangeList: () -> Unit,
+    focusIndex: Int = -1,
+    onFocusConsumed: () -> Unit = {},
+    /** 条目获得焦点时上报：工具栏在 API<35 上靠这个信号判断"键盘来了" */
+    onFocusChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val typeScale = textSize.typeScale()
+    // 新增/回车拆出来的条目要聚焦过去（外部"勾选"键与回车共用一条通路）
+    var pendingFocus by remember { mutableStateOf(-1) }
+    LaunchedEffect(focusIndex) {
+        if (focusIndex >= 0) {
+            pendingFocus = focusIndex
+            onFocusConsumed()
+        }
+    }
     LazyColumn(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         itemsIndexed(items) { index, item ->
+            val requester = remember(index) { FocusRequester() }
+            LaunchedEffect(pendingFocus, items.size) {
+                if (pendingFocus == index) {
+                    requester.requestFocus()
+                    pendingFocus = -1
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                 MiCheckbox(done = item.done, size = 21.dp, onClick = {
                     items[index] = item.copy(done = !item.done)
@@ -896,7 +947,26 @@ private fun ChecklistEditor(
                 )
                 BasicTextField(
                     value = item.text,
-                    onValueChange = { items[index] = item.copy(text = it); onChangeList() },
+                    onValueChange = { new ->
+                        // 回车 = 开新的一条勾选栏（新条目未勾选、光标跟过去）。
+                        // 早先是把回车当成条目内部换行，界面上就成了"一个勾选框后面两行"——
+                        // 用户 2026-09-17 明确要求改成前者。
+                        val nl = new.indexOf('\n')
+                        when {
+                            nl >= 0 -> {
+                                val head = new.substring(0, nl)
+                                val tail = new.substring(nl + 1)
+                                items[index] = item.copy(text = head)
+                                items.add(index + 1, ChecklistItem(tail))
+                                pendingFocus = index + 1
+                                onChangeList()
+                            }
+                            else -> {
+                                items[index] = item.copy(text = new)
+                                onChangeList()
+                            }
+                        }
+                    },
                     textStyle = itemTextStyle.copy(
                         color = if (item.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                         textDecoration = if (item.done) TextDecoration.LineThrough else null,
@@ -913,7 +983,11 @@ private fun ChecklistEditor(
                             inner()
                         }
                     },
-                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 12.dp)
+                        .focusRequester(requester)
+                        .onFocusChanged { onFocusChange(it.isFocused) },
                 )
                 IconButton(onClick = { items.removeAt(index); onChangeList() }) {
                     Icon(Icons.Outlined.Close, "移除", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(17.dp))

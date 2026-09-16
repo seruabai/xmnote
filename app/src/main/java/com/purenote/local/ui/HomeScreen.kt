@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -536,46 +539,28 @@ private fun NotesMasonry(
     onLongPress: (Note) -> Unit,
     onToggleSelected: (Note) -> Unit,
 ) {
-    // 分列结果只在笔记列表变化时重算；否则多选点选、滚动等每次重组都要重新遍历全部笔记
-    val (left, right) = remember(notes) {
-        val left = mutableListOf<Note>()
-        val right = mutableListOf<Note>()
-        var leftHeight = 0
-        var rightHeight = 0
-        notes.forEach { note ->
-            val estimate = 95 + (note.body.length / 16).coerceAtMost(5) * 18 + if (note.images.isNotEmpty()) 135 else 0
-            if (leftHeight <= rightHeight) {
-                left += note
-                leftHeight += estimate
-            } else {
-                right += note
-                rightHeight += estimate
-            }
-        }
-        left to right
-    }
     val folderNames = remember(folders) { folders.associate { it.id to it.name } }
 
-    // 外缘 16dp(11+5)、列间隙 10dp(5+5),与单列列表模式一致
-    Row(Modifier.fillMaxSize().padding(horizontal = 11.dp)) {
-        listOf(left, right).forEach { columnNotes ->
-            LazyColumn(
-                modifier = Modifier.weight(1f).padding(horizontal = 5.dp),
-                contentPadding = PaddingValues(bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(columnNotes, key = { it.id }) { note ->
-                    NoteCard(
-                        note = note,
-                        folderName = note.folderId?.let(folderNames::get),
-                        textSize = noteTextSize,
-                        selected = note.id in selectedIds,
-                        onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
-                        onLongPress = { onLongPress(note) },
-                        modifier = Modifier.animateItem(),
-                    )
-                }
-            }
+    // 单页滚动：早先是左右各自一个 LazyColumn（瀑布流分列），两半各滚各的——
+    // 用户 2026-09-17 明确要求"下滑一次就是整页一起动"，故换成一张网格。
+    // 代价是同一行的两张卡片等高（瀑布流的高矮错落没了），换来的是滚动只有一个、不会错位。
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(notes, key = { it.id }) { note ->
+            NoteCard(
+                note = note,
+                folderName = note.folderId?.let(folderNames::get),
+                textSize = noteTextSize,
+                selected = note.id in selectedIds,
+                onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
+                onLongPress = { onLongPress(note) },
+                modifier = Modifier.animateItem(),
+            )
         }
     }
 }

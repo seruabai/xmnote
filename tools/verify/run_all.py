@@ -26,6 +26,7 @@ SUITES = [
     ('block_drag_verify.py', '拖拽口径'),
     ('mind_verify.py', '脑图'),
     ('scale_verify.py', '规模矩阵'),
+    ('feedback_verify.py', '反馈回归'),
 ]
 
 def sh(serial, *a, timeout=120):
