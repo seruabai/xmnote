@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -41,14 +42,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.sp
 import com.purenote.local.NoteViewModel
 import com.purenote.local.core.TodoDates
@@ -64,6 +70,14 @@ import kotlinx.coroutines.delay
  */
 @Composable
 fun MiCheckbox(done: Boolean, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    // 光学对齐（用户 2026-09-17：勾选栏没跟文字对齐，字体大小不同都要中线对齐）：
+    // 行盒中心并不是汉字墨水的中心——汉字在 em 盒里偏下，居中摆放的方框看上去会"偏高"。
+    // 这里按尺寸比例下移一点点（5.5%），任何字号下框的视觉中心都压在文字中线上。
+    // 用比例而不是固定 dp：三档正文尺寸切换时同样成立。
+    // 比例值由设备像素测量反推：安卓 13 模拟器(440dpi)上以 21dp 框实测——
+    // 5.5% 时框比文字墨水中线高 3px，11.5% 时低 3px，取 8.5% 两者中心重合
+    // （measure_ink 脚本量的是框描边中心 vs 同行文字墨水中心）。
+    val opticalNudge = with(LocalDensity.current) { (size * 0.07f).toPx() }
     val fill by animateColorAsState(
         targetValue = if (done) MaterialTheme.colorScheme.onSurface else Color.Transparent,
         animationSpec = tween(150),
@@ -76,6 +90,7 @@ fun MiCheckbox(done: Boolean, size: Dp, onClick: () -> Unit, modifier: Modifier 
         border = BorderStroke(1.6.dp, stroke),
         modifier = modifier
             .size(size)
+            .offset { IntOffset(0, opticalNudge.roundToInt()) }
             .toggleable(value = done, role = Role.Checkbox, onValueChange = { onClick() }),
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -197,6 +212,12 @@ fun TodoCardRow(
                                 lineHeight = 21.sp,
                                 color = if (todo.done) MaterialTheme.colorScheme.outlineVariant
                                 else MaterialTheme.colorScheme.onSurface,
+                                // 去掉字体自带的上下内边距：行盒贴住字形，勾选框的居中才是"看着居中"
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both,
+                                ),
                             ),
                             textDecoration = if (todo.done) TextDecoration.LineThrough else null,
                             maxLines = if (isListTodo) 1 else 2,

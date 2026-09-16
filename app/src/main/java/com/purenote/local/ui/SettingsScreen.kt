@@ -76,6 +76,7 @@ fun SettingsScreen(vm: NoteViewModel) {
     var quickEnabled by remember {
         mutableStateOf(QuickCaptureService.running && Settings.canDrawOverlays(context))
     }
+    var hideKeepAlive by remember { mutableStateOf(QuickCaptureService.isNotificationHidden(context)) }
     val backupState by vm.backupState.collectAsState()
     // 预览结果持有 Uri 与解析出的条数，用户确认后才真正导入
     var pendingImport by remember { mutableStateOf<Pair<Uri, BackupFile>?>(null) }
@@ -330,6 +331,28 @@ fun SettingsScreen(vm: NoteViewModel) {
                                     QuickCaptureService.setEnabled(context, false)
                                     quickEnabled = false
                                 }
+                            },
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("隐藏保活通知")
+                            Text(
+                                "侧栏需要常驻通知才能长期存活。开启后会把那条通知从消息栏收掉" +
+                                    "（侧栏照常可用）；部分机型系统不允许撤回，届时仍会显示。",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 3.dp),
+                            )
+                        }
+                        Switch(
+                            checked = hideKeepAlive,
+                            onCheckedChange = { hidden ->
+                                QuickCaptureService.setNotificationHidden(context, hidden)
+                                hideKeepAlive = hidden
                             },
                         )
                     }

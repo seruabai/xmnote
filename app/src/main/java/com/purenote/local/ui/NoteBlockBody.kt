@@ -526,7 +526,11 @@ private fun BlockRow(
                 checked = block.checked,
                 onCheckedChange = { onCheckedToggle() },
                 colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary),
-                modifier = Modifier.size(34.dp),
+                // 与文字中线对齐：汉字墨水中心比行盒中心低，勾选框要按比例下移一点
+                // （与 MiCheckbox 同一套光学修正，见 TodoCard.kt）
+                modifier = Modifier
+                    .size(34.dp)
+                    .offset { IntOffset(0, with(density) { 34.dp.toPx() * 0.07f }.roundToInt()) },
             )
             BlockType.ITEM -> Marker(if (block.number > 0) block.number.toString() + "." else "•")
             BlockType.QUOTE -> Marker("❝")

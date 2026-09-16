@@ -64,6 +64,19 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
+ * 侧栏编辑行的回车行为开关（用户 2026-09-17 反馈"编辑时回车会把输入法收起来"）。
+ *
+ * - true（当前）：多行输入 + `IME_FLAG_NO_ENTER_ACTION`，回车只是一个普通按键，
+ *   由 `setOnKeyListener` 接住去插新行，输入法保持不动；
+ * - false（旧行为）：单行输入 + `IME_ACTION_NEXT`，回车被输入法当成"下一个/完成"，
+ *   键盘随之收起。
+ *
+ * **保留回滚**：两条分支的代码都在 `inlineEditText` 与两个 `setOnEditorActionListener` 里，
+ * 把这个常量改成 false 即回到旧行为。
+ */
+private const val ENTER_KEEPS_KEYBOARD = true
+
+/**
  * 跨应用速记侧栏。右缘窄把手点按或向左滑动后打开全屏虚化面板，
  * 可浏览最近笔记、勾选待办、内联新增待办或跳转到完整笔记编辑器。
  */
@@ -102,6 +115,7 @@ class QuickCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
+        instance = this
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         ensureChannel(this)
         startForegroundCompat()
@@ -112,9 +126,13 @@ class QuickCaptureService : Service() {
 
     override fun onDestroy() {
         running = false
+        instance = null
         removeViews()
         super.onDestroy()
     }
+
+    /** 最近一次构建的保活通知：用户在设置里关掉"隐藏"时要把它挂回去 */
+    private var keepAliveNotification: Notification? = null
 
     private fun startForegroundCompat() {
         val openApp = PendingIntent.getActivity(
@@ -152,6 +170,26 @@ class QuickCaptureService : Service() {
             startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+        keepAliveNotification = notification
+        if (isNotificationHidden(this)) applyNotificationHidden(true)
+    }
+
+    /**
+     * 把前台服务通知从消息栏里收掉（服务本身照常活着）。
+     *
+     * 系统强制"前台服务必须有通知"，但**没有**禁止随后撤回它：先 startForeground 挂上、
+     * 紧接着 cancel 掉，通知栏就干净了。用户 2026-09-17 要求的就是这个（保留保活机制，
+     * 只是别在消息栏里留条目），并且要能在设置里关掉这个行为。
+     *
+     * 兼容性如实说明：部分 OEM（含小米部分机型）会拒绝撤回前台服务通知，届时它会照旧出现。
+     */
+    private fun applyNotificationHidden(hidden: Boolean) {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        if (hidden) {
+            runCatching { nm.cancel(NOTIFICATION_ID) }
+        } else {
+            keepAliveNotification?.let { runCatching { nm.notify(NOTIFICATION_ID, it) } }
         }
     }
 
@@ -668,12 +706,30 @@ class QuickCaptureService : Service() {
             return
         }
         val todo = cachedTodos.firstOrNull { it.id == todoId } ?: return
-        val subs = cachedTodos.filter { it.parentId == todoId }
+        val childRows = cachedTodos.filter { it.parentId == todoId }
             .sortedWith(compareBy<Todo> { it.sortIndex }.thenBy { it.createdAt })
-            .mapTo(mutableListOf()) {
-                OverlaySubDraft(nextOverlayDraftKey(), it.id, it.title, it.done)
-            }
-        if (subs.isEmpty()) subs.add(OverlaySubDraft(nextOverlayDraftKey(), null, "", false))
+            .map { OverlaySubDraft(nextOverlayDraftKey(), it.id, it.title, it.done) }
+            .toMutableList()
+
+        // 用户 2026-09-17：点开一条**单条待办**编辑时，不要把原文当成"待办标题"。
+        // 正确形态是：标题行显示"待办清单"（占位），原文落到**内容行**，再给一行空白让光标落脚。
+        if (childRows.isEmpty()) {
+            val content = OverlaySubDraft(nextOverlayDraftKey(), todo.id, todo.title, todo.done)
+            val blank = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
+            val subs = mutableListOf(content, blank)
+            editingTodoId = todoId
+            editingDraft = OverlayTodoDraft(
+                todo.id, "", todo.done, todo.dueAt, todo.allDay, todo.repeat, subs,
+                titleRevealed = true,
+            )
+            editingFocusSubId = focusSubId
+            rerenderPanel()
+            // 光标落在第三行（内容行下面那行空白）
+            focusEditableTag(blank.key)
+            return
+        }
+
+        val subs = childRows.also { if (it.isEmpty()) it.add(OverlaySubDraft(nextOverlayDraftKey(), null, "", false)) }
         editingTodoId = todoId
         editingDraft = OverlayTodoDraft(
             todo.id, todo.title, todo.done, todo.dueAt, todo.allDay, todo.repeat, subs,
@@ -748,6 +804,10 @@ class QuickCaptureService : Service() {
     }
 
     /** 原地展开的编辑卡（同图1）：标题 + 子行 + 提醒 + 完成，空行保存时丢弃。 */
+    // 说明：下面是"回车不收键盘"的回滚开关。
+    // 旧行为（false）= 单行输入 + IME_ACTION_NEXT，回车被输入法当成"下一个"从而收起键盘（用户反馈的问题）；
+    // 新行为（true）= 多行输入 + 屏蔽回车动作，回车只是普通按键，由 setOnKeyListener 接住换行。
+    // 要回滚：把 true 改成 false 即可，两条分支的代码都留着。
     private fun editableTodoCard(draft: OverlayTodoDraft): View {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -761,16 +821,24 @@ class QuickCaptureService : Service() {
         if (draft.titleRevealed) {
             val titleInput = inlineEditText(draft.title, "待办清单", 18f).apply {
                 tag = TITLE_TAG
-                imeOptions = EditorInfo.IME_ACTION_NEXT
+                if (!ENTER_KEEPS_KEYBOARD) imeOptions = EditorInfo.IME_ACTION_NEXT
                 doAfterTextChanged {
                     draft.title = it?.toString().orEmpty()
                     scheduleInlineEditorSave()
+                }
+                val titleEnter = {
+                    draft.subs.firstOrNull()?.let { focusEditableTag(it.key) }
                 }
                 setOnEditorActionListener { _, actionId, event ->
                     val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
                         (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
                     if (!enter) return@setOnEditorActionListener false
-                    draft.subs.firstOrNull()?.let { focusEditableTag(it.key) }
+                    titleEnter()
+                    true
+                }
+                setOnKeyListener { _, code, ev ->
+                    if (code != KeyEvent.KEYCODE_ENTER || ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                    titleEnter()
                     true
                 }
             }
@@ -783,18 +851,26 @@ class QuickCaptureService : Service() {
             }
             val input = inlineEditText(sub.text, "待办内容", 15.5f).apply {
                 tag = sub.key
-                imeOptions = EditorInfo.IME_ACTION_NEXT
+                if (!ENTER_KEEPS_KEYBOARD) imeOptions = EditorInfo.IME_ACTION_NEXT
                 doAfterTextChanged {
                     sub.text = it?.toString().orEmpty()
                     scheduleInlineEditorSave()
+                }
+                val subEnter = {
+                    // 首次回车同时揭示标题行（用户 2026-09-13：新增先只有内容行）
+                    draft.titleRevealed = true
+                    insertSubRowAfter(draft, sub.key)
                 }
                 setOnEditorActionListener { _, actionId, event ->
                     val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
                         (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
                     if (!enter) return@setOnEditorActionListener false
-                    // 首次回车同时揭示标题行（用户 2026-09-13：新增先只有内容行）
-                    draft.titleRevealed = true
-                    insertSubRowAfter(draft, sub.key)
+                    subEnter()
+                    true
+                }
+                setOnKeyListener { _, code, ev ->
+                    if (code != KeyEvent.KEYCODE_ENTER || ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                    subEnter()
                     true
                 }
             }
@@ -862,8 +938,19 @@ class QuickCaptureService : Service() {
         setHintTextColor(0xFFCBCBCB.toInt())
         setBackgroundColor(Color.TRANSPARENT)
         setPadding(0, 0, 0, 0)
-        isSingleLine = true
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        if (ENTER_KEEPS_KEYBOARD) {
+            // 2026-09-17：单行 + IME_ACTION_NEXT 时，回车会被输入法当成"完成/下一个"从而收起键盘。
+            // 改成多行输入 + 屏蔽回车动作，回车就只是普通按键事件，由 setOnKeyListener 接住换行，键盘不动。
+            // 视觉上仍是一行（maxLines = 1 配合 maxHeight 限制），不影响排版。
+            isSingleLine = false
+            maxLines = 1
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            imeOptions = EditorInfo.IME_FLAG_NO_ENTER_ACTION
+        } else {
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            imeOptions = EditorInfo.IME_ACTION_NEXT
+        }
         // 点哪行光标就落在哪行末尾：聚焦时强制移到末尾，避免落在行首。
         onFocusChangeListener = View.OnFocusChangeListener { v, hasFocus ->
             if (hasFocus) {
@@ -1482,11 +1569,27 @@ class QuickCaptureService : Service() {
     }
 
     companion object {
+        /** 当前存活的实例：设置页切换"隐藏保活通知"时要即时生效 */
+        @Volatile
+        private var instance: QuickCaptureService? = null
+
+        fun isNotificationHidden(context: Context): Boolean =
+            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+                .getBoolean(KEY_HIDE_KEEPALIVE, false)
+
+        /** 设置页调用：隐藏/恢复保活通知，正在运行就立刻生效 */
+        fun setNotificationHidden(context: Context, hidden: Boolean) {
+            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_HIDE_KEEPALIVE, hidden).apply()
+            instance?.applyNotificationHidden(hidden)
+        }
+
         const val CHANNEL_ID = "quick_capture"
         const val NOTIFICATION_ID = 42
 
         private const val PREFERENCES = "quick_capture"
         private const val KEY_ENABLED = "enabled"
+        private const val KEY_HIDE_KEEPALIVE = "hide_keepalive_notification"
         private const val HANDLE_PREFERENCES = "quick_capture_handle"
         private const val HANDLE_Y_FRACTION = "handle_y_fraction"
         private const val DEFAULT_HANDLE_Y_FRACTION = 0.4f
