@@ -94,13 +94,14 @@ object LegacyBody {
      * 用于导出给旧版本、以及升级出问题时的回退手段。注意**行内样式（加粗等）在旧格式里
      * 无法表达，回退时会丢失样式、只保留文字**；LINK 块同理降级为纯文本。
      */
-    fun toText(doc: RichDoc): String = doc.blocks.joinToString("\n") { encodeBlock(it) }
+    fun toText(doc: RichDoc): String = doc.blocks.joinToString("\n") { encodeLine(it) }
 
     /** 块文档 → 清单条目（只取 TODO 块，其余块类型旧格式存不下） */
     fun toChecklist(doc: RichDoc): List<ChecklistItem> =
         doc.blocks.filter { it.type == BlockType.TODO }.map { ChecklistItem(it.text, it.checked) }
 
-    private fun encodeBlock(block: RichBlock): String {
+    /** 单个块 → 一行标记文本。块级运算逐块算偏移时用它，避免反复构造 RichDoc */
+    fun encodeLine(block: RichBlock): String {
         val head = if (block.headingLevel in 1..3) "#".repeat(block.headingLevel) + " " else ""
         val body = when (block.type) {
             BlockType.IMAGE, BlockType.SOUND ->

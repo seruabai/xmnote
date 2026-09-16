@@ -112,6 +112,7 @@ import com.purenote.local.core.AudioRecorder
 import com.purenote.local.core.DateFormats
 import com.purenote.local.core.ImageStore
 import com.purenote.local.core.NoteMarkup
+import com.purenote.local.core.insertEmbedMarkup
 import com.purenote.local.data.ChecklistItem
 import com.purenote.local.data.NoteKind
 import com.purenote.local.feature.notes.SaveStatus
@@ -221,6 +222,19 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         vm.markEditorEdited()
     }
 
+    /**
+     * 把图片/录音作为**块**插入光标所在块之后（光标在空行时就地占位），并把光标移到插入后可输入的位置。
+     *
+     * 取代过去直接拼 "![](file)" 文本行的做法：插入位置按块计算，必要时补出落点。
+     * 这样图片才真正是"一个块"，块级操作（拖拽排序、整块删除）才有意义。
+     */
+    fun insertEmbedAsBlock(fileName: String) {
+        val (newBody, caret) = insertEmbedMarkup(body, bodyCursor, fileName)
+        body = newBody
+        bodyCursorRequest = caret
+        markDirty()
+    }
+
     fun emptyDraft(): Boolean = when (kind) {
         NoteKind.TEXT -> title.isBlank() && body.isBlank() && imageNames.isEmpty()
         NoteKind.CHECKLIST -> title.isBlank() && items.all { it.text.isBlank() } && imageNames.isEmpty()
@@ -301,8 +315,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         if (ok && target != null) {
             // 与相册/手写一致：拍照图作为 [img:] 行插入光标处（正文流内显示缩略图）
             ImageStore.importCaptured(context, target)?.let {
-                body = NoteMarkup.insertImageLineAtCursor(body, bodyCursor, it)
-                markDirty()
+                insertEmbedAsBlock(it)
             }
         }
     }
@@ -316,8 +329,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 val imported = runCatching { ImageStore.importFromUri(context, uri) }.getOrNull()
                 android.os.Handler(context.mainLooper).post {
                     if (imported != null) {
-                        body = NoteMarkup.insertImageLineAtCursor(body, bodyCursor, imported)
-                        markDirty()
+                        insertEmbedAsBlock(imported)
                     } else {
                         android.widget.Toast.makeText(context, "图片导入失败，请换一张试试", android.widget.Toast.LENGTH_SHORT).show()
                     }
@@ -511,8 +523,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                                 EditorToolActive(Icons.Outlined.Stop, "停止录音 ${recordMs / 1000}s") {
                                     recording = false
                                     audioRecorder.stop()?.let { name ->
-                                        body = NoteMarkup.insertImageLineAtCursor(body, bodyCursor, name)
-                                        markDirty()
+                                        insertEmbedAsBlock(name)
                                     }
                                 }
                             } else {
@@ -729,8 +740,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
             onDismiss = { drawOpen = false },
             onSave = { name ->
                 drawOpen = false
-                body = NoteMarkup.insertImageLineAtCursor(body, bodyCursor, name)
-                markDirty()
+                insertEmbedAsBlock(name)
             },
         )
     }

@@ -180,7 +180,6 @@ fun NoteBlockBody(
                 BlockType.IMAGE -> EmbedImage(
                     fileName = block.fileId.orEmpty(),
                     onTap = { onImageTap(block.fileId.orEmpty()) },
-                    onDelete = { commit(doc.remove(block.id), focus = null) },
                 )
                 BlockType.SOUND -> EmbedSound(fileName = block.fileId.orEmpty())
                 BlockType.LINK -> LinkRow(block = block)
@@ -359,7 +358,7 @@ private fun LinkRow(block: RichBlock) {
 
 /** 图片块：自绘加载（不引第三方图片库），带降采样避免大图 OOM */
 @Composable
-private fun EmbedImage(fileName: String, onTap: () -> Unit, onDelete: () -> Unit) {
+private fun EmbedImage(fileName: String, onTap: () -> Unit) {
     val context = LocalContext.current
     val bitmap by produceState<Bitmap?>(initialValue = null, fileName) {
         value = withContext(Dispatchers.IO) {
@@ -404,11 +403,6 @@ private fun EmbedImage(fileName: String, onTap: () -> Unit, onDelete: () -> Unit
                 )
             }
         }
-        Text(
-            text = "长按可删除该图片块（暂未开放）",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0f),
-        )
     }
 }
 
