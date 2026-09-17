@@ -438,7 +438,7 @@ class QuickCaptureService : Service() {
         panelScroll = scroll
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dip(18), dip(58), dip(18), dip(28))
+            setPadding(dip(16), dip(56), dip(16), dip(28))
             // 点空白处：先保存正在编辑的草稿，再直接收起整个侧栏（对标小米笔记图1交互）。
             isClickable = true
             setOnClickListener { exitInlineEditAndDismiss() }
@@ -448,20 +448,20 @@ class QuickCaptureService : Service() {
         root.motionTarget = scroll
 
         content.addView(noteHeader())
-        content.addView(space(18))
+        content.addView(space(16))
         val notesStrip = noteStrip(notes)
         root.excludeHorizontalGesture(notesStrip)
         content.addView(notesStrip)
-        content.addView(space(18))
+        content.addView(space(16))
         content.addView(todoHeader())
-        content.addView(space(17))
+        content.addView(space(16))
 
         val rootTodos = todos.filter { !it.isSubtask }
         if (editingTodoId == NEW_DRAFT_ID) {
             // 新建草稿没有对应的列表项，必须单独渲染在待办区顶部，否则点"+"看不到编辑卡
             editingDraft?.let { draft ->
                 content.addView(editableTodoCard(draft))
-                content.addView(blankSpace(10))
+                content.addView(blankSpace(12))
             }
         }
         if (rootTodos.isEmpty()) {
@@ -473,7 +473,7 @@ class QuickCaptureService : Service() {
                 val children = todos.filter { it.parentId == todo.id }
                     .sortedWith(compareBy<Todo> { it.sortIndex }.thenBy { it.createdAt })
                 content.addView(todoCard(todo, children))
-                content.addView(blankSpace(10))
+                content.addView(blankSpace(12))
             }
         }
         // 列表底部留白：点空白处同样退出编辑退回列表。
@@ -560,15 +560,15 @@ class QuickCaptureService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(plusButton { openNewNote() }, LinearLayout.LayoutParams(dip(38), dip(38)))
+        row.addView(plusButton { openNewNote() }, LinearLayout.LayoutParams(dip(44), dip(44)))
         row.addView(label("笔记 ︿", 18f, Color.WHITE, bold = false).apply {
-            setPadding(dip(13), 0, 0, 0)
+            setPadding(dip(12), 0, 0, 0)
             setOnClickListener { dismissPanel(1f) }
-        }, LinearLayout.LayoutParams(0, dip(38), 1f))
+        }, LinearLayout.LayoutParams(0, dip(44), 1f))
         row.addView(label("▢  摘录", 15f, Color.WHITE, bold = false).apply {
             gravity = Gravity.CENTER
             background = rounded(0x35FFFFFF, 28f)
-        }, LinearLayout.LayoutParams(dip(104), dip(38)))
+        }, LinearLayout.LayoutParams(dip(104), dip(44)))
         return row
     }
 
@@ -577,12 +577,12 @@ class QuickCaptureService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(plusButton { startInlineTodoEditor(null) }, LinearLayout.LayoutParams(dip(38), dip(38)))
+        row.addView(plusButton { startInlineTodoEditor(null) }, LinearLayout.LayoutParams(dip(44), dip(44)))
         row.addView(label("待办", 18f, Color.WHITE, bold = false).apply {
             setPadding(dip(13), 0, 0, dip(0))
             // 标题右侧空白同空白处：保存草稿并收起侧栏。
             setOnClickListener { exitInlineEditAndDismiss() }
-        }, LinearLayout.LayoutParams(0, dip(38), 1f))
+        }, LinearLayout.LayoutParams(0, dip(44), 1f))
         return row
     }
 
@@ -612,13 +612,13 @@ class QuickCaptureService : Service() {
                 }
                 val headline = note.title.ifBlank { note.body.lineSequence().firstOrNull().orEmpty() }.ifBlank { "无标题" }
                 val preview = if (note.title.isBlank()) note.body.lineSequence().drop(1).joinToString("\n") else note.body
-                card.addView(label(headline, 17f, INK_COLOR, bold = false), LinearLayout.LayoutParams.MATCH_PARENT, dip(49))
+                card.addView(label(headline, 17f, INK_COLOR, bold = false), LinearLayout.LayoutParams.MATCH_PARENT, dip(48))
                 card.addView(label(preview.take(90), 14f, WARM_SUB_COLOR, bold = false).apply {
                     maxLines = 3
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-                card.addView(label(formatDate(note.updatedAt), 12f, SUB_INK_COLOR, bold = false), LinearLayout.LayoutParams.MATCH_PARENT, dip(25))
-                val params = LinearLayout.LayoutParams(dip(142), dip(150)).apply {
+                card.addView(label(formatDate(note.updatedAt), 12f, SUB_INK_COLOR, bold = false), LinearLayout.LayoutParams.MATCH_PARENT, dip(24))
+                val params = LinearLayout.LayoutParams(dip(144), dip(152)).apply {
                     if (index > 0) marginStart = dip(10)
                 }
                 row.addView(card, params)
@@ -714,14 +714,14 @@ class QuickCaptureService : Service() {
         }
         row.addView(NativeTodoCheckbox(this, todo.done, 17f).apply {
             setOnClickListener { toggleTodoFromPanel(todo) }
-        }, LinearLayout.LayoutParams(dip(34), dip(54)))
+        }, LinearLayout.LayoutParams(dip(34), dip(56)))
         row.addView(label(todo.title, 15.5f, if (todo.done) DONE_INK_COLOR else WARM_SUB_COLOR, false).apply {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             if (todo.done) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
             setOnClickListener { startInlineTodoEditor(todo.parentId ?: todo.id, todo.id) }
             contentDescription = "编辑子待办：${todo.title}"
-        }, LinearLayout.LayoutParams(0, dip(54), 1f))
+        }, LinearLayout.LayoutParams(0, dip(56), 1f))
         return row
     }
 
@@ -986,8 +986,8 @@ class QuickCaptureService : Service() {
                 scheduleInlineEditorSave()
             }
         }
-        row.addView(check, LinearLayout.LayoutParams(dip(34), dip(54)))
-        row.addView(input, LinearLayout.LayoutParams(0, dip(54), 1f))
+        row.addView(check, LinearLayout.LayoutParams(dip(34), dip(56)))
+        row.addView(input, LinearLayout.LayoutParams(0, dip(56), 1f))
         return row
     }
 
@@ -996,7 +996,7 @@ class QuickCaptureService : Service() {
             orientation = LinearLayout.VERTICAL
             background = rounded(PAPER_COLOR, 17f)
             elevation = dip(1).toFloat()
-            setPadding(dip(21), dip(18), dip(21), dip(12))
+            setPadding(dip(20), dip(20), dip(20), dip(12))
             // 卡片内部点击自己消费，不冒泡到空白退出。
             isClickable = true
         }
@@ -1049,7 +1049,7 @@ class QuickCaptureService : Service() {
         // 对标图一：右下角黄色"完成"，点后保存并退回列表（面板不收起）。
         footer.addView(label("完成", 16f, ACCENT_COLOR, true).apply {
             gravity = Gravity.CENTER
-            setPadding(dip(8), dip(10), dip(8), dip(10))
+            setPadding(dip(8), dip(10), dip(8), dip(12))
             setOnClickListener { exitInlineEdit() }
             contentDescription = "完成并退回列表"
         }, LinearLayout.LayoutParams(dip(72), dip(40)))
