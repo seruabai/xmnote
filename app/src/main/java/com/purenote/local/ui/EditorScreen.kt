@@ -529,8 +529,10 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 // 清单笔记也要能用这五键（用户 2026-09-17：笔记目录内都能用）；脑图有自己的操作栏
                 visible = (imeVisible || recording || imageMenu) && kind != NoteKind.MIND,
                 enter = slideInVertically(Motion.sheetSpring()) { it } + fadeIn(tween(Motion.FADE)),
-                exit = slideOutVertically(tween(Motion.SCREEN_OUT, easing = Motion.EaseIn)) { it } +
-                    fadeOut(tween(Motion.SCREEN_OUT)),
+                // 编辑器退场比一般退场更慢：保存已在退出前 await 落库，但退场太急会让人以为
+                // "没存就跑了"（用户 2026-09-18：退出动画慢一点，给存好内容留出观感时间）
+                exit = slideOutVertically(tween(Motion.EDITOR_OUT, easing = Motion.EaseIn)) { it } +
+                    fadeOut(tween(Motion.EDITOR_OUT)),
             ) {
                 Column(Modifier.imePadding()) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .32f))
@@ -618,12 +620,12 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         // 规范 §8：必须如实区分"还没存"与"存好了"。
         // 但它是**悬浮**的：早先放在正文流里，出现/消失会把整篇内容顶一下
         // （用户 2026-09-17 反馈"点一下勾选框整个内容跟着动一下"）。
+        // 用户 2026-09-17：保存基本是秒存，日常不需要"待保存/保存中"这种提示（看着像进度条）；
+        // 但**失败必须如实告知**（规范 §8），所以只在 FAILED / CONFLICT 时才悬浮提示。
         val statusText = when (editorState.saveStatus) {
-            SaveStatus.SAVING -> "保存中…"
-            SaveStatus.PENDING -> "待保存"
             SaveStatus.FAILED -> editorState.failure ?: "保存失败"
             SaveStatus.CONFLICT -> editorState.failure ?: "已在别处被修改"
-            SaveStatus.IDLE -> null
+            else -> null
         }
         Box(Modifier.padding(padding).fillMaxSize()) {
         Column(
@@ -935,7 +937,11 @@ private fun ChecklistEditor(
             }
             // 顶对齐：多行条目里勾选框必须跟**第一行**对齐，不能跟着整段居中
             //（否则一条长文字看着像另起了一段）。行本身不留上下留白，行高 = 行距。
-            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 0.dp)) {
+            Row(
+                verticalAlignment = Alignment.Top,
+                // 条目出现/消失/换位走位移动画：回车新建勾选栏是"滑进来"，不是"啪"地出现
+                modifier = Modifier.padding(vertical = 0.dp).animateItem(),
+            ) {
                 val checkSize = 21.dp
                 Box(
                     modifier = Modifier.offset {

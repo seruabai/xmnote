@@ -34,6 +34,9 @@ object Motion {
     const val SCREEN_IN = 420
     /** 页面退出：比推入快一档，不抢戏 */
     const val SCREEN_OUT = 320
+    /** 编辑器退场：比一般退场更慢。保存已经在退出前 await 落库，但退场太急会让人以为
+     *  "没存就跑了"（用户 2026-09-18：退出动画慢一点，给存好内容留出观感时间）。 */
+    const val EDITOR_OUT = 420
     /** 弹层（底部面板/预览）升起 */
     const val SHEET = 380
     /** 内容展开/收起（样式面板、工具栏） */
