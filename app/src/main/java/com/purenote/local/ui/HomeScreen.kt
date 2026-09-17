@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -326,7 +327,8 @@ private fun NotesHeader(
 
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            // 胶囊间距 8dp（4dp 网格；原来 10dp 是页面上唯一一处非网格间距）
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
         ) {
             item("all") {
@@ -392,7 +394,8 @@ private fun AddCategoryChip(onClick: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(15.dp),
         color = MaterialTheme.colorScheme.surface,
-        modifier = Modifier.height(42.dp).clickable(onClick = onClick),
+        // 44dp：既是 4dp 网格上的值，也守住 44dp 最小触控标准（与"新建分类"胶囊同高）
+        modifier = Modifier.height(44.dp).clickable(onClick = onClick),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -535,7 +538,8 @@ private fun CategoryChip(label: String, selected: Boolean, onClick: () -> Unit) 
     Surface(
         shape = RoundedCornerShape(15.dp),
         color = if (selected) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surface,
-        modifier = Modifier.height(42.dp).clickable(onClick = onClick),
+        // 44dp：既是 4dp 网格上的值，也守住 44dp 最小触控标准（与"新建分类"胶囊同高）
+        modifier = Modifier.height(44.dp).clickable(onClick = onClick),
     ) {
         Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 14.dp)) {
             Text(
@@ -603,8 +607,10 @@ private fun NotesMasonry(
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        // 间距取 12dp（4dp 网格）；卡片撑满所在行，同一行的两张卡上下缘对齐——
+        // 不撑满时短卡会在行里留缺口，整片网格的下缘是锯齿状的（用户要求的大厂版面不允许）
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(notes, key = { it.id }) { note ->
             NoteCard(
@@ -635,7 +641,7 @@ private fun NotesList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(notes, key = { it.id }) { note ->
             NoteCard(

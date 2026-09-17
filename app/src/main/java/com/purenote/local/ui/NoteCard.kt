@@ -85,7 +85,9 @@ fun NoteCard(
         border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
     ) {
         Box {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
+            // 内外边距全部落在 4dp 网格上：15dp/10dp/7dp/5dp 这类值会让同一列卡片的
+            // 文本基线看着"差半个像素"（用户 2026-09-17 要求按大厂标准重排）
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
                 val visibleImages = note.images.filterNot { it.startsWith("aud:") }
                 if (visibleImages.isNotEmpty()) {
                     AsyncThumb(
@@ -93,7 +95,7 @@ fun NoteCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(140.dp)
-                            .padding(bottom = 10.dp),
+                            .padding(bottom = 12.dp),
                     )
                 }
 
@@ -104,7 +106,10 @@ fun NoteCard(
                     NoteKind.MIND -> TextCardBody(note, textSize)
                 }
 
-                Spacer(Modifier.height(10.dp))
+                // 元信息（日期/分类/图钉）钉在卡片底部：同一行的卡片等高时，
+                // 这些字会落在同一条水平线上，而不是跟着内容长短浮动
+                Spacer(Modifier.weight(1f, fill = true))
+                Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         formatNoteDate(note.updatedAt),
@@ -158,7 +163,7 @@ private fun TextCardBody(note: Note, textSize: NoteTextSize) {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.height(4.dp))
     }
     if (preview.isNotBlank()) {
         Text(
@@ -194,7 +199,7 @@ private fun ChecklistCardBody(note: Note, textSize: NoteTextSize) {
         )
         PinBadge(note.pinned, spaced = true)
     }
-    Spacer(Modifier.height(7.dp))
+    Spacer(Modifier.height(8.dp))
     val pending = note.items.filter { !it.done }.take(4)
     if (pending.isEmpty()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -204,7 +209,7 @@ private fun ChecklistCardBody(note: Note, textSize: NoteTextSize) {
                 tint = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.size(13.dp),
             )
-            Spacer(Modifier.width(7.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 "全部已完成",
                 style = MaterialTheme.typography.bodyMedium.copy(
@@ -217,14 +222,15 @@ private fun ChecklistCardBody(note: Note, textSize: NoteTextSize) {
         }
     } else {
         pending.forEach { item ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 1.dp)) {
+            // 不加逐条微间距：行距交给行高，条目之间才是同一个节奏
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Outlined.RadioButtonUnchecked,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                     modifier = Modifier.size(13.dp),
                 )
-                Spacer(Modifier.width(7.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
                     item.text,
                     style = MaterialTheme.typography.bodyMedium.copy(
