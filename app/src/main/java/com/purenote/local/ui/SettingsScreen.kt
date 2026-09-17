@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -106,14 +107,16 @@ fun SettingsScreen(vm: NoteViewModel) {
                 .padding(padding)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 16.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 25.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 24.dp),
             ) {
-                IconButton(onClick = vm::goHome) {
-                    Icon(Icons.Outlined.ArrowBack, "返回", modifier = Modifier.padding(2.dp))
+                // iOS 的做法：图标的"字形"落在 16dp 正文线上，48dp 触控区向外溢出一截。
+                // 不处理时字形落在 30dp，标题页与内容页就出现两条左缘线。
+                IconButton(onClick = vm::goHome, modifier = Modifier.offset(x = (-12).dp)) {
+                    Icon(Icons.Outlined.ArrowBack, "返回")
                 }
                 Text(
                     "笔记",
@@ -132,7 +135,7 @@ fun SettingsScreen(vm: NoteViewModel) {
                 ArrowRow("最近删除") { vm.goTrash() }
             }
 
-            Spacer(Modifier.height(21.dp))
+            Spacer(Modifier.height(20.dp))
             SettingsSectionTitle("笔记样式")
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -150,7 +153,7 @@ fun SettingsScreen(vm: NoteViewModel) {
                 }
             }
 
-            Spacer(Modifier.height(21.dp))
+            Spacer(Modifier.height(20.dp))
             SettingsSectionTitle("快捷功能")
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -160,7 +163,7 @@ fun SettingsScreen(vm: NoteViewModel) {
                 ArrowRow("速记") { quickDialog = true }
             }
 
-            Spacer(Modifier.height(21.dp))
+            Spacer(Modifier.height(20.dp))
             SettingsSectionTitle("备份与恢复")
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -198,16 +201,16 @@ fun SettingsScreen(vm: NoteViewModel) {
                         },
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                     )
                 }
             }
 
-            Spacer(Modifier.height(21.dp))
+            Spacer(Modifier.height(20.dp))
             SettingsSectionTitle("云同步")
             CloudSyncSection(vm)
 
-            Spacer(Modifier.height(21.dp))
+            Spacer(Modifier.height(20.dp))
             SettingsSectionTitle("提醒")
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -216,7 +219,7 @@ fun SettingsScreen(vm: NoteViewModel) {
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(start = 17.dp, end = 14.dp, top = 15.dp, bottom = 15.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text("强提醒", fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurface)
@@ -231,7 +234,7 @@ fun SettingsScreen(vm: NoteViewModel) {
                 }
             }
 
-            Spacer(Modifier.height(21.dp))
+            Spacer(Modifier.height(20.dp))
             SettingsSectionTitle("其他")
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -266,7 +269,7 @@ fun SettingsScreen(vm: NoteViewModel) {
                     }
                 }
             }
-            Spacer(Modifier.height(30.dp))
+            Spacer(Modifier.height(32.dp))
         }
     }
 
@@ -308,7 +311,7 @@ fun SettingsScreen(vm: NoteViewModel) {
                     Text("开启后，可从屏幕右侧边缘拉出笔记与待办侧栏。")
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                     ) {
                         Text("屏幕边缘速记", modifier = Modifier.weight(1f))
                         Switch(
@@ -336,7 +339,7 @@ fun SettingsScreen(vm: NoteViewModel) {
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text("隐藏保活通知")
@@ -438,7 +441,7 @@ private fun SettingsSectionTitle(text: String) {
         text,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 15.sp,
-        modifier = Modifier.padding(start = 17.dp, bottom = 10.dp),
+        modifier = Modifier.padding(start = 16.dp, bottom = 12.dp),
     )
 }
 
@@ -446,7 +449,7 @@ private fun SettingsSectionTitle(text: String) {
 private fun ChoiceRow(title: String, value: String, onClick: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().height(64.dp).clickable(onClick = onClick).padding(horizontal = 17.dp),
+        modifier = Modifier.fillMaxWidth().height(64.dp).clickable(onClick = onClick).padding(horizontal = 16.dp),
     ) {
         Text(title, fontSize = 17.sp, modifier = Modifier.weight(1f))
         Text(value, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -454,7 +457,7 @@ private fun ChoiceRow(title: String, value: String, onClick: () -> Unit) {
             Icons.Outlined.KeyboardArrowDown,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.padding(start = 5.dp),
+            modifier = Modifier.padding(start = 4.dp),
         )
     }
 }
@@ -470,7 +473,7 @@ private fun ArrowRow(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(if (subtitle == null) 64.dp else 72.dp)
-            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 17.dp),
+            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
             Text(title, fontSize = 17.sp)
@@ -501,7 +504,7 @@ private fun ChoiceDialog(
                 options.forEachIndexed { index, option ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().clickable { onPick(index) }.padding(vertical = 5.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { onPick(index) }.padding(vertical = 4.dp),
                     ) {
                         RadioButton(selected = option.second, onClick = { onPick(index) })
                         Text(option.first, modifier = Modifier.padding(start = 8.dp))
