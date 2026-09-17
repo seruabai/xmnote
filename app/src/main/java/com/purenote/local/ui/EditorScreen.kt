@@ -913,6 +913,7 @@ private fun ChecklistEditor(
     modifier: Modifier = Modifier,
 ) {
     val typeScale = textSize.typeScale()
+    val density = LocalDensity.current
     // 新增/回车拆出来的条目要聚焦过去（外部"勾选"键与回车共用一条通路）
     var pendingFocus by remember { mutableStateOf(-1) }
     LaunchedEffect(focusIndex) {
@@ -921,7 +922,9 @@ private fun ChecklistEditor(
             onFocusConsumed()
         }
     }
-    LazyColumn(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    // 条目之间不加额外间距：段内换行的第二行与回车新建的下一行必须落在同一条节奏上
+    //（用户 2026-09-17：三行长文本的行距和回车的行距不一样）
+    LazyColumn(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         itemsIndexed(items) { index, item ->
             val requester = remember(index) { FocusRequester() }
             LaunchedEffect(pendingFocus, items.size) {
@@ -930,11 +933,23 @@ private fun ChecklistEditor(
                     pendingFocus = -1
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                MiCheckbox(done = item.done, size = 21.dp, onClick = {
-                    items[index] = item.copy(done = !item.done)
-                    onChangeList()
-                })
+            // 顶对齐：多行条目里勾选框必须跟**第一行**对齐，不能跟着整段居中
+            //（否则一条长文字看着像另起了一段）。行本身不留上下留白，行高 = 行距。
+            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 0.dp)) {
+                val checkSize = 21.dp
+                Box(
+                    modifier = Modifier.offset {
+                        // 勾选框中心 = 第一行行盒中心，再补 7% 光学下移（与 MiCheckbox 同一套修正）
+                        val linePx = with(density) { typeScale.checklistLineHeightSp.dp.toPx() }
+                        val boxPx = with(density) { checkSize.toPx() }
+                        IntOffset(0, (linePx / 2f - boxPx / 2f + boxPx * 0.07f).roundToInt())
+                    },
+                ) {
+                    MiCheckbox(done = item.done, size = checkSize, onClick = {
+                        items[index] = item.copy(done = !item.done)
+                        onChangeList()
+                    })
+                }
                 // 字段与占位符共用同一份基础样式(纪律:占位符必须 copy 完整样式,行高来源不同会错位)
                 val itemTextStyle = TextStyle(
                     fontSize = typeScale.checklistSp.sp,
@@ -989,7 +1004,14 @@ private fun ChecklistEditor(
                         .focusRequester(requester)
                         .onFocusChanged { onFocusChange(it.isFocused) },
                 )
-                IconButton(onClick = { items.removeAt(index); onChangeList() }) {
+                // 用 24dp 的自绘点按区代替 IconButton：IconButton 自带 48dp 最小触控尺寸，
+                // 会把每一条清单行顶成 48dp 高，条目间距就再也压不回"一行高"的节奏。
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clickable { items.removeAt(index); onChangeList() },
+                    contentAlignment = Alignment.Center,
+                ) {
                     Icon(Icons.Outlined.Close, "移除", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(17.dp))
                 }
             }

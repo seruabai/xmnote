@@ -315,7 +315,8 @@ fun NoteBlockBody(
         LazyColumn(
             state = listState,
             contentPadding = PaddingValues(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            // 条目之间不加额外间距：间距 = 行高，段内换行与回车新建的行才是同一个节奏
+            verticalArrangement = Arrangement.spacedBy(0.dp),
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
@@ -504,7 +505,9 @@ private fun BlockRow(
     }
     val style = TextStyle(
         fontSize = fontSize,
-        lineHeight = (fontSize.value * 1.45f).sp,
+        // 行高比对齐小米笔记（反编译 noteeditor 的 lineHeight 实测 1.31–1.33）：
+        // 段内换行、回车新建的行共用同一条基线节奏（用户 2026-09-17：三行长文本和回车的行距要一致）。
+        lineHeight = (fontSize.value * 1.33f).sp,
         color = if (block.type == BlockType.QUOTE) {
             MaterialTheme.colorScheme.onSurfaceVariant
         } else {
@@ -519,18 +522,25 @@ private fun BlockRow(
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = if (block.type == BlockType.TODO) Alignment.CenterVertically else Alignment.Top,
+        // 一律顶对齐：多行条目里勾选框必须跟**第一行**对齐，不能跟着整段居中
+        // （否则一条三行的文字看着像另起了一段，用户 2026-09-17 反馈）
+        verticalAlignment = Alignment.Top,
     ) {
         when (block.type) {
             BlockType.TODO -> Checkbox(
                 checked = block.checked,
                 onCheckedChange = { onCheckedToggle() },
                 colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary),
-                // 与文字中线对齐：汉字墨水中心比行盒中心低，勾选框要按比例下移一点
-                // （与 MiCheckbox 同一套光学修正，见 TodoCard.kt）
+                // 勾选框中心落在第一行行盒中心，再补 7% 的光学下移
+                //（汉字墨水中心比行盒中心低，与 MiCheckbox 同一套修正，见 TodoCard.kt）
                 modifier = Modifier
                     .size(34.dp)
-                    .offset { IntOffset(0, with(density) { 34.dp.toPx() * 0.07f }.roundToInt()) },
+                    .offset {
+                        val linePx = with(density) { (fontSize.value * 1.33f).dp.toPx() }
+                        val halfBox = with(density) { 17.dp.toPx() }
+                        val optical = with(density) { 34.dp.toPx() * 0.07f }
+                        IntOffset(0, (linePx / 2f - halfBox + optical).roundToInt())
+                    },
             )
             BlockType.ITEM -> Marker(if (block.number > 0) block.number.toString() + "." else "•")
             BlockType.QUOTE -> Marker("❝")
@@ -560,7 +570,8 @@ private fun BlockRow(
             cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
             modifier = Modifier
                 .weight(1f)
-                .padding(vertical = 6.dp)
+                // 不再给每个块加 6dp 上下留白：条目间距必须等于段内行距，
+                // 否则"自动换行的第二行"和"回车新建的下一行"看起来是两个节奏（用户 2026-09-17）。
                 .focusRequester(requester)
                 .onPreviewKeyEvent { e ->
                     // 段首退格：此时文本没有任何变化，onValueChange 不会触发，只能从按键拦

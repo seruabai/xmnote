@@ -15,6 +15,8 @@
 
 ## 当前进行中的任务（占用检查）
 
+- T-031 | **第六批：侧栏两处"闪" + 待办多选跳动 + 编辑器行距/段落语义**。①通知抢焦点导致输入法收走且不回来 → 在窗口焦点回调里把输入法接回去（强提醒弹出期间 0 次状态变化）。②回车走整窗重挂 → 改就地插行（窗口 id 不变、键盘不掉）。③多选态页头/卡片两套几何导致整列上移 → 钉死页头 32dp、抽出共用 \`TodoCardBody\` 统一边距与槽位（新增 \`todo_selection_verify.py\` 6/6）。④清单行被 48dp IconButton 顶高、勾选框整段居中 → 间距归零、勾选框贴第一行、行高比 1.33（对齐小米笔记反编译实测），条目高 126px→64px、间距 35px→0、长文本仍是同一段。**待确认**：媒体块（图片/录音/链接）拖拽是否也去掉（文本块拖拽已不存在，无死代码） | DeepSeek Harness | 完成 | notify/QuickCaptureService.kt, ui/TodoCard.kt, ui/HomeScreen.kt, ui/EditorScreen.kt, ui/NoteBlockBody.kt, tools/verify/todo_selection_verify.py, wiki/* | 2026-09-17 |
+
 - T-030 | **第五批：点「完成」抽动修复 + 主题换成小米笔记的米黄纸**。①根因 = "窗口重排 + 列表重绘"两次位移叠加（滚动恢复写在 scroll.post{} 里，先画一帧滚动在 0 再跳回）；改成点完成时钉住偏移、在第一次布局（早于绘制）内恢复，并取消防抖中的保存。逐帧验收：修复前 2 次位移（+31/−70px）→ 修复后 0 次。②主题全套色值取自 MIUI 笔记反编译 colors.xml（paper_yellow #FFFAF0 底 + 白卡 #FFFFFF + #FFB21D 强调 + #FFD3/#FFF5EA 容器 + #9D6802 暖棕文字），深浅色、XML 主题（含闪屏）、侧栏悬浮层同步；像素验收全绿。③验收脚本修正把手定位（此前"注入打不开面板"是误判）+ 新增 S4 与 theme_verify.py。**遗留**：④「隐藏保活通知」在 AOSP 13 上被系统重新挂回（撤回调用成功但通知仍在），待真机确认 | DeepSeek Harness | 部分完成 | ui/theme/Theme.kt, notify/QuickCaptureService.kt, res/values*/themes.xml, tools/verify/sidebar_verify.py, tools/verify/theme_verify.py, wiki/* | 2026-09-17 |
 
 - T-012 | 精简开工/发版规则及 CI 修复已完成；actionlint 与 diff 检查通过，已推送 main。用户优先节省 token，APK 补发由 Actions 34243422160 运行，暂不持续轮询；代码文件占用已释放。 | Codex | 完成 | AGENTS.md, .agents/skills/pre-work-check/SKILL.md, .github/workflows/release.yml, wiki/TASK_PROGRESS.md, wiki/DECISIONS.md, wiki/CHANGELOG.md | 2026-09-08 |

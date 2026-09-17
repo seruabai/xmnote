@@ -67,8 +67,9 @@ def sql(q):
     db = db_path()
     return '' if not db else sh('shell', 'run-as %s sqlite3 %s "%s"' % (PKG, db, q)).strip()
 
+# 探针会在标题里留下 xxxxx 之类的尾巴（输入法测试注入的字符），这里按前缀一并收掉
 _todo = sql("select id from todos where parent_id is null "
-            "and (title like '%对齐待办一%' or title like '%xxxxx%' or title='待办清单') limit 1;")
+            "and (title like '%对齐待办一%' or title like '%xxxxx%' or title like '待办清单%') limit 1;")
 if _todo:
     _tid = _todo.split()[0]
     sql('delete from todos where parent_id=%s;' % _tid)

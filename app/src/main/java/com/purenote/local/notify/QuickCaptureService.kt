@@ -110,6 +110,12 @@ class QuickCaptureService : Service() {
     private var editingFocusSubId: Long? = null
     private var inlineSaveRevision = 0L
     private val inlineSaveMutex = Mutex()
+    // 原地编辑期的视图引用：回车只往现有视图树里插一行，**不重挂窗口**。
+    // 重挂会把输入法目标一起换掉（logcat: "Ignoring showSoftInput() as view=... is not served"），
+    // 用户看到的就是"回车闪一下 + 键盘被收起"。
+    private var inlineCard: LinearLayout? = null
+    private var inlineTitleRow: View? = null
+    private val inlineRows = mutableMapOf<Long, View>()
     private var overlayDraftKeyCounter = 0L
     private var registeredBackDispatcher: Any? = null
     private var registeredBackCallback: Any? = null
@@ -398,11 +404,16 @@ class QuickCaptureService : Service() {
         unregisterPanelBackCallback()
         panelScroll = null
         dismissingPanel = false
+        // 旧的面板视图即将被替换，原地编辑的视图引用一起作废（新的编辑卡会重新登记）。
+        inlineCard = null
+        inlineTitleRow = null
+        inlineRows.clear()
 
         val root = EdgeDismissFrame(this).apply {
             isFocusableInTouchMode = true
             onDismiss = { direction -> dismissPanel(direction) }
             isDismissInProgress = { dismissingPanel }
+            onWindowFocus = { focused -> if (focused) resumeEditingIme() }
         }
         // 全屏单张均匀罩面：柔和固定虚化 + 全屏统一暗色，盖住 OEM 虚化的噪点纹路（图4问题）。
         // 罩面固定覆盖全屏；只有内容层位移，拖动过程中不会露出矩形色块边界。
@@ -833,18 +844,69 @@ class QuickCaptureService : Service() {
                 target.requestFocus()
                 runCatching { target.setSelection(target.text.length) }
                 showKeyboard(target)
+                // 兜底：窗口刚挂上时第一次 showSoftInput 可能被系统忽略，隔一拍再补一次。
+                root.postDelayed({ if (target.isFocused) showKeyboard(target) }, 180L)
             }
         }
     }
 
-    /** 回车在下方插入空行并聚焦（面板常驻）。 */
+    /**
+     * 回车在下方插入一行并聚焦。
+     *
+     * **就地插入，不重挂窗口**：重挂会换掉输入法的目标视图（系统会打印
+     * "Ignoring showSoftInput() as view=... is not served"），于是回车变成"闪一下 + 键盘收起"。
+     * 只有拿不到就地插入目标（面板刚被重建）时才退回整窗重绘。
+     */
     private fun insertSubRowAfter(draft: OverlayTodoDraft, afterKey: Long) {
         val idx = draft.subs.indexOfFirst { it.key == afterKey }
         val next = OverlaySubDraft(nextOverlayDraftKey(), null, "", false)
         draft.subs.add(if (idx < 0) draft.subs.size else idx + 1, next)
         scheduleInlineEditorSave()
-        rerenderPanel()
+        val card = inlineCard
+        if (card == null) {
+            rerenderPanel()
+            focusEditableTag(next.key)
+            return
+        }
+        // 新增流程首次回车要同时露出标题行：就地插在最上面，不重绘。
+        if (draft.titleRevealed && inlineTitleRow == null) {
+            val titleRow = inlineTitleRowView(draft)
+            card.addView(
+                titleRow,
+                0,
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(52)),
+            )
+            inlineTitleRow = titleRow
+        }
+        val anchor = inlineRows[afterKey]
+        val row = inlineSubRowView(draft, next)
+        val at = if (anchor != null) {
+            (card.indexOfChild(anchor) + 1).coerceAtMost(card.childCount)
+        } else {
+            // 找不到锚点就插在"提醒 / 完成"那一行之前
+            (card.childCount - 1).coerceAtLeast(0)
+        }
+        card.addView(row, at)
+        inlineRows[next.key] = row
         focusEditableTag(next.key)
+    }
+
+    /**
+     * 编辑中窗口重新拿到焦点时，把输入法接回去。
+     *
+     * 通知横幅、权限弹窗这类系统窗口会短暂抢走焦点，输入法随之收起；它们消失后系统**不会**
+     * 自动把键盘还回来，而我们在别处重挂窗口再调 showSoftInput 又会被忽略
+     * （logcat: "Ignoring showSoftInput() as view=... is not served"）。
+     * 所以在"同一个窗口真的拿到焦点"这一刻补一次，是唯一可靠的时机。
+     * 只在原地编辑态、且焦点确实还在某个输入行上时恢复——用户自己收起的键盘不会被强行拉回。
+     */
+    private fun resumeEditingIme() {
+        val root = panel as? android.view.ViewGroup ?: return
+        if (editingDraft == null) return
+        val focused = root.findFocus() as? EditText ?: return
+        focused.post {
+            if (focused.isFocused) showKeyboard(focused)
+        }
     }
 
     private fun hideKeyboard() {
@@ -858,6 +920,77 @@ class QuickCaptureService : Service() {
     // 旧行为（false）= 单行输入 + IME_ACTION_NEXT，回车被输入法当成"下一个"从而收起键盘（用户反馈的问题）；
     // 新行为（true）= 多行输入 + 屏蔽回车动作，回车只是普通按键，由 setOnKeyListener 接住换行。
     // 要回滚：把 true 改成 false 即可，两条分支的代码都留着。
+    /** 标题行（占位"待办清单"）：回车跳到第一条内容行。 */
+    private fun inlineTitleRowView(draft: OverlayTodoDraft): EditText =
+        inlineEditText(draft.title, "待办清单", 18f).apply {
+            tag = TITLE_TAG
+            if (!ENTER_KEEPS_KEYBOARD) imeOptions = EditorInfo.IME_ACTION_NEXT
+            doAfterTextChanged {
+                draft.title = it?.toString().orEmpty()
+                scheduleInlineEditorSave()
+            }
+            val titleEnter = {
+                draft.subs.firstOrNull()?.let { focusEditableTag(it.key) }
+            }
+            setOnEditorActionListener { _, actionId, event ->
+                val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
+                    (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+                if (!enter) return@setOnEditorActionListener false
+                titleEnter()
+                true
+            }
+            setOnKeyListener { _, code, ev ->
+                if (code != KeyEvent.KEYCODE_ENTER || ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                titleEnter()
+                true
+            }
+        }
+
+    /** 一条内容行（勾选框 + 输入框）：回车在下方再开一行。 */
+    private fun inlineSubRowView(draft: OverlayTodoDraft, sub: OverlaySubDraft): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val input = inlineEditText(sub.text, "待办内容", 15.5f).apply {
+            tag = sub.key
+            if (!ENTER_KEEPS_KEYBOARD) imeOptions = EditorInfo.IME_ACTION_NEXT
+            doAfterTextChanged {
+                sub.text = it?.toString().orEmpty()
+                scheduleInlineEditorSave()
+            }
+            val subEnter = {
+                // 首次回车同时揭示标题行（用户 2026-09-13：新增先只有内容行）
+                draft.titleRevealed = true
+                insertSubRowAfter(draft, sub.key)
+            }
+            setOnEditorActionListener { _, actionId, event ->
+                val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
+                    (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+                if (!enter) return@setOnEditorActionListener false
+                subEnter()
+                true
+            }
+            setOnKeyListener { _, code, ev ->
+                if (code != KeyEvent.KEYCODE_ENTER || ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                subEnter()
+                true
+            }
+        }
+        input.setTextColor(if (sub.done) DONE_INK_COLOR else INK_COLOR)
+        val check = NativeTodoCheckbox(this, sub.done, 18f).apply {
+            setOnClickListener {
+                sub.done = !sub.done
+                setChecked(sub.done)
+                input.setTextColor(if (sub.done) DONE_INK_COLOR else INK_COLOR)
+                scheduleInlineEditorSave()
+            }
+        }
+        row.addView(check, LinearLayout.LayoutParams(dip(34), dip(54)))
+        row.addView(input, LinearLayout.LayoutParams(0, dip(54), 1f))
+        return row
+    }
+
     private fun editableTodoCard(draft: OverlayTodoDraft): View {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -867,75 +1000,19 @@ class QuickCaptureService : Service() {
             // 卡片内部点击自己消费，不冒泡到空白退出。
             isClickable = true
         }
+        inlineCard = card
+        inlineTitleRow = null
+        inlineRows.clear()
         // 新增流程：标题行在内容行回车后才出现（titleRevealed），编辑已有待办始终显示
         if (draft.titleRevealed) {
-            val titleInput = inlineEditText(draft.title, "待办清单", 18f).apply {
-                tag = TITLE_TAG
-                if (!ENTER_KEEPS_KEYBOARD) imeOptions = EditorInfo.IME_ACTION_NEXT
-                doAfterTextChanged {
-                    draft.title = it?.toString().orEmpty()
-                    scheduleInlineEditorSave()
-                }
-                val titleEnter = {
-                    draft.subs.firstOrNull()?.let { focusEditableTag(it.key) }
-                }
-                setOnEditorActionListener { _, actionId, event ->
-                    val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
-                        (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
-                    if (!enter) return@setOnEditorActionListener false
-                    titleEnter()
-                    true
-                }
-                setOnKeyListener { _, code, ev ->
-                    if (code != KeyEvent.KEYCODE_ENTER || ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                    titleEnter()
-                    true
-                }
-            }
+            val titleInput = inlineTitleRowView(draft)
             card.addView(titleInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(52)))
+            inlineTitleRow = titleInput
         }
         draft.subs.forEach { sub ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            val input = inlineEditText(sub.text, "待办内容", 15.5f).apply {
-                tag = sub.key
-                if (!ENTER_KEEPS_KEYBOARD) imeOptions = EditorInfo.IME_ACTION_NEXT
-                doAfterTextChanged {
-                    sub.text = it?.toString().orEmpty()
-                    scheduleInlineEditorSave()
-                }
-                val subEnter = {
-                    // 首次回车同时揭示标题行（用户 2026-09-13：新增先只有内容行）
-                    draft.titleRevealed = true
-                    insertSubRowAfter(draft, sub.key)
-                }
-                setOnEditorActionListener { _, actionId, event ->
-                    val enter = actionId == EditorInfo.IME_ACTION_NEXT ||
-                        (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
-                    if (!enter) return@setOnEditorActionListener false
-                    subEnter()
-                    true
-                }
-                setOnKeyListener { _, code, ev ->
-                    if (code != KeyEvent.KEYCODE_ENTER || ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                    subEnter()
-                    true
-                }
-            }
-            input.setTextColor(if (sub.done) DONE_INK_COLOR else INK_COLOR)
-            val check = NativeTodoCheckbox(this, sub.done, 18f).apply {
-                setOnClickListener {
-                    sub.done = !sub.done
-                    setChecked(sub.done)
-                    input.setTextColor(if (sub.done) DONE_INK_COLOR else INK_COLOR)
-                    scheduleInlineEditorSave()
-                }
-            }
-            row.addView(check, LinearLayout.LayoutParams(dip(34), dip(54)))
-            row.addView(input, LinearLayout.LayoutParams(0, dip(54), 1f))
+            val row = inlineSubRowView(draft, sub)
             card.addView(row)
+            inlineRows[sub.key] = row
         }
 
         val footer = LinearLayout(this).apply {
@@ -1412,6 +1489,13 @@ class QuickCaptureService : Service() {
     private class EdgeDismissFrame(context: Context) : FrameLayout(context) {
         var onDismiss: ((Float) -> Unit)? = null
         var isDismissInProgress: (() -> Boolean)? = null
+        /** 窗口焦点变化（通知横幅/权限弹窗会短暂抢焦点）：拿回焦点时要把输入法接回去。 */
+        var onWindowFocus: ((Boolean) -> Unit)? = null
+
+        override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+            super.onWindowFocusChanged(hasWindowFocus)
+            onWindowFocus?.invoke(hasWindowFocus)
+        }
         var motionTarget: View? = null
         var onMotionProgress: ((progress: Float, strength: Float) -> Unit)? = null
 

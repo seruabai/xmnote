@@ -429,16 +429,19 @@ internal fun TodoHeader(
     onSelectAll: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
+        // 这一行高度在两个状态下必须一模一样：进/出多选时页头一高一矮，下面整个列表就会
+        // 上移/下落一下（用户 2026-09-17 反馈"长按之后整体界面会往上走"）。齿轮 32dp，
+        // 退出/全选图标同样 32dp，行高钉死 32dp。
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 16.dp),
         ) {
             if (selecting) {
                 Icon(
                     Icons.Outlined.Close,
                     contentDescription = "退出多选",
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(28.dp).clickable(onClick = onExitSelection),
+                    modifier = Modifier.size(32.dp).clickable(onClick = onExitSelection),
                 )
             }
             Spacer(Modifier.weight(1f))
@@ -447,7 +450,7 @@ internal fun TodoHeader(
                     Icons.Outlined.FactCheck,
                     contentDescription = if (allSelected) "取消全选" else "全选",
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(28.dp).clickable(onClick = onSelectAll),
+                    modifier = Modifier.size(32.dp).clickable(onClick = onSelectAll),
                 )
             } else {
                 MiSettingsButton(onClick = onSettings)

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -142,27 +143,16 @@ fun TodoCardRow(
                 .fillMaxWidth()
                 .combinedClickable(onClick = onToggleSelect, onLongClick = onToggleSelect),
         ) {
+            // 与常态共用同一套内外边距、同一个正文组件：进出多选时每张卡片的高度与标题
+            // 基线都不许变，否则整列会往上走/往下落一下（用户 2026-09-17 反馈）。
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 20.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 19.dp, vertical = 23.dp),
             ) {
-                EqualHandle(modifier = dragHandle)
-                Text(
-                    todo.title.ifBlank { "待办清单" },
-                    style = TextStyle(fontSize = 16.sp, lineHeight = 21.sp),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp),
-                )
-                if (isListTodo) {
-                    Text(
-                        "$doneCount/${subs.size}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                        modifier = Modifier.padding(end = 10.dp),
-                    )
+                Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+                    EqualHandle(modifier = dragHandle)
                 }
+                TodoCardBody(todo, subs, doneCount, isListTodo, expanded, onExpandToggle)
                 Icon(
                     if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
                     contentDescription = if (selected) "已选中" else "未选中",
@@ -202,60 +192,12 @@ fun TodoCardRow(
                     // 左滑露删除键时勾选栏直接消失：它本来就被卡片拖着走，看着像要被删掉
                     // （用户 2026-09-17）。收起而不是留白，标题顺势左移，视线跟着删除键走。
                     if (slide < 0.02f) {
-                        MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
-                    }
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text(
-                            todo.title.ifBlank { "待办清单" },
-                            style = TextStyle(
-                                fontSize = 16.sp,
-                                lineHeight = 21.sp,
-                                color = if (todo.done) MaterialTheme.colorScheme.outlineVariant
-                                else MaterialTheme.colorScheme.onSurface,
-                                // 去掉字体自带的上下内边距：行盒贴住字形，勾选框的居中才是"看着居中"
-                                platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                lineHeightStyle = LineHeightStyle(
-                                    alignment = LineHeightStyle.Alignment.Center,
-                                    trim = LineHeightStyle.Trim.Both,
-                                ),
-                            ),
-                            textDecoration = if (todo.done) TextDecoration.LineThrough else null,
-                            maxLines = if (isListTodo) 1 else 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        if (todo.dueAt != null) {
-                            DueTimeText(todo = todo)
+                        // 槽位宽度与多选态的三条杠手柄一致：两种状态下标题起点是同一个 x
+                        Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+                            MiCheckbox(done = todo.done, size = 19.dp, onClick = { vm.toggleTodo(todo) })
                         }
                     }
-                    if (isListTodo) {
-                        val arrowRotation by animateFloatAsState(
-                            targetValue = if (expanded) 0f else -90f,
-                            animationSpec = tween(200),
-                            label = "expandArrow",
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clickable(onClick = onExpandToggle)
-                                .padding(start = 8.dp, end = 2.dp, top = 7.dp, bottom = 7.dp),
-                        ) {
-                            Text(
-                                "$doneCount/${subs.size}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                            )
-                            Icon(
-                                Icons.Outlined.KeyboardArrowDown,
-                                contentDescription = if (expanded) "收起清单" else "展开清单",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .padding(start = 4.dp)
-                                    .size(18.dp)
-                                    .rotate(arrowRotation),
-                            )
-                        }
-                    }
+                    TodoCardBody(todo, subs, doneCount, isListTodo, expanded, onExpandToggle)
                 }
                 if (isListTodo && expanded) {
                     subs.forEachIndexed { idx, sub ->
@@ -272,6 +214,71 @@ fun TodoCardRow(
                     }
                 }
             }
+        }
+    }
+}
+
+/** 卡片正文（标题 + 可选到期时间 + 清单展开控件）：多选态与常态共用同一份， */
+/** 进出多选时每张卡片的高度与标题基线都不变，整列不会"往上走"（用户 2026-09-17 反馈）。 */
+@Composable
+private fun RowScope.TodoCardBody(
+    todo: Todo,
+    subs: List<Todo>,
+    doneCount: Int,
+    isListTodo: Boolean,
+    expanded: Boolean,
+    onExpandToggle: () -> Unit,
+) {
+    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+        Text(
+            todo.title.ifBlank { "待办清单" },
+            style = TextStyle(
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
+                color = if (todo.done) MaterialTheme.colorScheme.outlineVariant
+                else MaterialTheme.colorScheme.onSurface,
+                // 去掉字体自带的上下内边距：行盒贴住字形，勾选框的居中才是"看着居中"
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both,
+                ),
+            ),
+            textDecoration = if (todo.done) TextDecoration.LineThrough else null,
+            maxLines = if (isListTodo) 1 else 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(3.dp))
+        if (todo.dueAt != null) {
+            DueTimeText(todo = todo)
+        }
+    }
+    if (isListTodo) {
+        val arrowRotation by animateFloatAsState(
+            targetValue = if (expanded) 0f else -90f,
+            animationSpec = tween(200),
+            label = "expandArrow",
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clickable(onClick = onExpandToggle)
+                .padding(start = 8.dp, end = 2.dp, top = 7.dp, bottom = 7.dp),
+        ) {
+            Text(
+                "$doneCount/" + subs.size,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
+            Icon(
+                Icons.Outlined.KeyboardArrowDown,
+                contentDescription = if (expanded) "收起清单" else "展开清单",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .size(18.dp)
+                    .rotate(arrowRotation),
+            )
         }
     }
 }
