@@ -147,7 +147,7 @@ fun TodoCardRow(
             // 基线都不许变，否则整列会往上走/往下落一下（用户 2026-09-17 反馈）。
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 19.dp, vertical = 23.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
             ) {
                 Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
                     EqualHandle(modifier = dragHandle)
@@ -187,7 +187,7 @@ fun TodoCardRow(
                             },
                             onLongClick = onLongPress,
                         )
-                        .padding(horizontal = 19.dp, vertical = 23.dp),
+                        .padding(horizontal = 20.dp, vertical = 20.dp),
                 ) {
                     // 左滑露删除键时勾选栏直接消失：它本来就被卡片拖着走，看着像要被删掉
                     // （用户 2026-09-17）。收起而不是留白，标题顺势左移，视线跟着删除键走。

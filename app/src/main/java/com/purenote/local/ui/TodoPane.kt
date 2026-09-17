@@ -162,8 +162,10 @@ fun TodoPane(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
+                    // 水平边距必须等于页头那 16dp：14dp 会让卡片比标题多探出 2dp，
+                    // 一屏里出现两条不同的左缘线（大厂排版不允许）。
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        start = 14.dp, end = 14.dp, top = 2.dp, bottom = 110.dp,
+                        start = 16.dp, end = 16.dp, top = 2.dp, bottom = 110.dp,
                     ),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
