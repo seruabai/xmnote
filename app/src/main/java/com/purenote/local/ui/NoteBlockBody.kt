@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +69,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -508,6 +511,14 @@ private fun BlockRow(
         // 行高比对齐小米笔记（反编译 noteeditor 的 lineHeight 实测 1.31–1.33）：
         // 段内换行、回车新建的行共用同一条基线节奏（用户 2026-09-17：三行长文本和回车的行距要一致）。
         lineHeight = (fontSize.value * 1.33f).sp,
+        // 去掉字体自带的上下内边距，并让行盒贴住字形：
+        // ① 行距才是"一行一条基线"而不是自带 padding 撑出来的；② 行盒中心 ≈ 墨水中心，
+        // 勾选框按"第一行行盒中心"对齐时，中文与拉丁字母（如 BBB）看起来都在中线（用户 2026-09-17 反馈）。
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Center,
+            trim = LineHeightStyle.Trim.Both,
+        ),
         color = if (block.type == BlockType.QUOTE) {
             MaterialTheme.colorScheme.onSurfaceVariant
         } else {
@@ -520,11 +531,13 @@ private fun BlockRow(
         },
     )
 
+    // 行数由输入框自己汇报：**单行**直接交给 Compose 居中（不靠任何公式，几何上一定与文字同一中线）；
+    // 只有真的换行了才退回"贴第一行 + 光学修正"。用户 2026-09-17：勾选框必须始终与文字同中线。
+    var lineCount by remember(block.id) { mutableIntStateOf(1) }
+    val singleLine = lineCount <= 1
     Row(
         modifier = Modifier.fillMaxWidth(),
-        // 一律顶对齐：多行条目里勾选框必须跟**第一行**对齐，不能跟着整段居中
-        // （否则一条三行的文字看着像另起了一段，用户 2026-09-17 反馈）
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
     ) {
         when (block.type) {
             BlockType.TODO -> Checkbox(
@@ -536,6 +549,10 @@ private fun BlockRow(
                 modifier = Modifier
                     .size(34.dp)
                     .offset {
+                        // 单行：只做"汉字墨水中心比行盒中心略低"的 7% 光学修正（居中由 Row 保证）
+                        if (singleLine) {
+                            return@offset IntOffset(0, with(density) { 34.dp.toPx() * 0.07f }.roundToInt())
+                        }
                         val linePx = with(density) { (fontSize.value * 1.33f).dp.toPx() }
                         val halfBox = with(density) { 17.dp.toPx() }
                         val optical = with(density) { 34.dp.toPx() * 0.07f }
@@ -567,6 +584,8 @@ private fun BlockRow(
                 }
             },
             textStyle = style,
+            // 行数回流：决定勾选框是"整行居中"还是"贴第一行"
+            onTextLayout = { lineCount = it.lineCount },
             cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
             modifier = Modifier
                 .weight(1f)
