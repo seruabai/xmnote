@@ -15,83 +15,89 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.purenote.local.ThemeMode
 
-// iOS 系统风主题：中性灰白分层、系统蓝点缀、层级靠字重与留白表达。
-// 色值对齐 Apple HIG：浅色 grouped 背景 #F2F2F7 + 白卡，深色纯黑 + #1C1C1E 卡。
-private val IosBlue = Color(0xFF007AFF)           // systemBlue（浅色主色）
-private val IosBlueDark = Color(0xFF0A84FF)       // systemBlue（深色主色）
-private val IosGreen = Color(0xFF34C759)          // systemGreen（第三色，克制使用）
-private val IosRed = Color(0xFFFF3B30)            // systemRed
-private val Label = Color(0xFF000000)             // label
-private val SecondaryLabel = Color(0xFF8E8E93)    // secondaryLabel ≈ systemGray
-private val Separator = Color(0xFFC7C7CC)         // separator
-private val OpaqueSeparator = Color(0xFFE5E5EA)   // opaqueSeparator
+// 小米笔记风主题：米黄纸底 + 白卡 + 米黄点缀，层级靠留白与暖灰分隔。
+// 色值取自 MIUI 笔记（手机版 2.3.2.7）反编译资源 res/values/colors.xml：
+//   paper_yellow = #fffaf0                              —— 米黄纸（笔记纸色 → 本主题的全屏底色）
+//   paper_white  = #ffffff                              —— 白纸卡片
+//   miuix_color_yellow_light_primary_default = #ffb21d  —— 黄色主题的按钮/强调色
+//   link_card_bg_color_yellow_start = #fff0d3、miuix_color_yellow_solid_10 = #fff5ea —— 浅黄容器
+//   黄色主题正文色 = #9d6802                            —— 次要文字/已完成（暖棕）
+private val MiuiYellow = Color(0xFFFFB21D)
+private val MiuiYellowDeep = Color(0xFF9D6802)
+private val MiuiYellowNight = Color(0xFFFFBF0F)
+private val PaperYellow = Color(0xFFFFFAF0)
+private val PaperWhite = Color(0xFFFFFFFF)
+private val Ink = Color(0xFF33291A)
+private val SecondaryInk = Color(0xFF8A7A5E)
+private val Separator = Color(0xFFD9CDB4)
+private val OpaqueSeparator = Color(0xFFEEE5D2)
 
-private val NightLabel = Color(0xFFFFFFFF)
-private val NightSecondaryLabel = Color(0xFF98989F)
-private val NightSeparator = Color(0xFF3A3A3C)
+private val NightInk = Color(0xFFF0E8DA)
+private val NightSecondaryInk = Color(0xFFA79B84)
+private val NightSeparator = Color(0xFF4C4433)
 
 private val LightColors = lightColorScheme(
-    primary = IosBlue,
+    primary = MiuiYellow,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE1EFFF),
-    onPrimaryContainer = Color(0xFF0A4A82),
-    secondary = SecondaryLabel,
+    primaryContainer = Color(0xFFFFF0D3),    // link_card_bg_color_yellow_start
+    onPrimaryContainer = Color(0xFF6B4700),
+    secondary = MiuiYellowDeep,
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE5E5EA),
-    onSecondaryContainer = Color(0xFF1C1C1E),
-    tertiary = IosGreen,
+    secondaryContainer = Color(0xFFFFF5EA),  // miuix_color_yellow_solid_10
+    onSecondaryContainer = Color(0xFF6B4700),
+    tertiary = Color(0xFF4D8A5D),
     onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFD9F4E1),
-    onTertiaryContainer = Color(0xFF0A4F28),
-    background = Color(0xFFF2F2F7),          // systemGroupedBackground
-    onBackground = Label,
-    surface = Color.White,                   // secondarySystemGroupedBackground（卡面/栏面）
-    onSurface = Label,
-    surfaceVariant = Color(0xFFF2F2F7),
-    onSurfaceVariant = SecondaryLabel,
+    tertiaryContainer = Color(0xFFDAF4DA),
+    onTertiaryContainer = Color(0xFF2C4A33),
+    background = PaperYellow,                // paper_yellow：米黄纸底
+    onBackground = Ink,
+    surface = PaperWhite,                    // paper_white：白卡
+    onSurface = Ink,
+    surfaceVariant = Color(0xFFF7EFDF),
+    onSurfaceVariant = SecondaryInk,
     surfaceContainerLowest = Color.White,
-    surfaceContainerLow = Color(0xFFF7F7FA),
-    surfaceContainer = Color(0xFFF2F2F7),
-    surfaceContainerHigh = Color(0xFFE9E9EE),
-    surfaceContainerHighest = Color(0xFFE0E0E5),
+    surfaceContainerLow = Color(0xFFFFFDF7),
+    surfaceContainer = Color(0xFFFDF6E7),
+    surfaceContainerHigh = Color(0xFFF6ECDA),
+    surfaceContainerHighest = Color(0xFFEFE3CC),
     outline = Separator,
     outlineVariant = OpaqueSeparator,
-    error = IosRed,
+    error = Color(0xFFD94F38),               // MIUI 笔记红主题色
     onError = Color.White,
-    errorContainer = Color(0xFFFFE2E0),
-    onErrorContainer = Color(0xFF5C0F0B),
+    errorContainer = Color(0xFFFFE2DC),
+    onErrorContainer = Color(0xFF5C1A10),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = IosBlueDark,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFF103F6E),
-    onPrimaryContainer = Color(0xFF9ECDFF),
-    secondary = NightSecondaryLabel,
-    onSecondary = Color(0xFF1C1C1E),
-    secondaryContainer = Color(0xFF2C2C2E),
-    onSecondaryContainer = Color(0xFFE5E5EA),
-    tertiary = Color(0xFF30D158),
-    onTertiary = Color(0xFF003914),
-    tertiaryContainer = Color(0xFF0E4A22),
-    onTertiaryContainer = Color(0xFFB7F0C6),
-    background = Color.Black,                // systemGroupedBackground（深色）
-    onBackground = NightLabel,
-    surface = Color(0xFF1C1C1E),             // secondarySystemGroupedBackground（深色）
-    onSurface = NightLabel,
-    surfaceVariant = Color(0xFF2C2C2E),
-    onSurfaceVariant = NightSecondaryLabel,
-    surfaceContainerLowest = Color(0xFF0F0F10),
-    surfaceContainerLow = Color(0xFF161618),
-    surfaceContainer = Color(0xFF1C1C1E),
-    surfaceContainerHigh = Color(0xFF2C2C2E),
-    surfaceContainerHighest = Color(0xFF3A3A3C),
+    primary = MiuiYellowNight,               // miuix_color_yellow_dark_level1
+    onPrimary = Color(0xFF3A2A00),
+    primaryContainer = Color(0xFF4A3A12),
+    onPrimaryContainer = Color(0xFFFFE9A8),
+    secondary = Color(0xFFD8C6A2),
+    onSecondary = Color(0xFF33280E),
+    secondaryContainer = Color(0xFF3A3222),
+    onSecondaryContainer = Color(0xFFF0E3C8),
+    tertiary = Color(0xFF9CC79F),
+    onTertiary = Color(0xFF10321C),
+    tertiaryContainer = Color(0xFF2A4A32),
+    onTertiaryContainer = Color(0xFFBEE8C2),
+    background = Color(0xFF17140E),          // 暖黑：米黄纸的深色收口
+    onBackground = NightInk,
+    surface = Color(0xFF211D15),
+    onSurface = NightInk,
+    surfaceVariant = Color(0xFF2C271C),
+    onSurfaceVariant = NightSecondaryInk,
+    surfaceContainerLowest = Color(0xFF100E09),
+    surfaceContainerLow = Color(0xFF1B1811),
+    surfaceContainer = Color(0xFF211D15),
+    surfaceContainerHigh = Color(0xFF2C271C),
+    surfaceContainerHighest = Color(0xFF373023),
     outline = NightSeparator,
-    outlineVariant = Color(0xFF2C2C2E),
-    error = Color(0xFFFF453A),
-    onError = Color(0xFF4A0002),
-    errorContainer = Color(0xFF3A0E0C),
-    onErrorContainer = Color(0xFFFFD9D7),
+    outlineVariant = Color(0xFF332E23),
+    error = Color(0xFFFF6B5E),
+    onError = Color(0xFF4A1008),
+    errorContainer = Color(0xFF3A1712),
+    onErrorContainer = Color(0xFFFFDAD5),
 )
 
 // SF 风字阶：Large Title 34 Bold / Title2 22 Bold / Headline 17 Semibold / Body 17 /

@@ -28,6 +28,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewTreeObserver
 import android.view.VelocityTracker
 import android.view.WindowManager
 import android.view.animation.PathInterpolator
@@ -83,6 +84,7 @@ private const val ENTER_KEEPS_KEYBOARD = true
 class QuickCaptureService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val hideHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private lateinit var wm: WindowManager
     private var handle: View? = null
     private var panel: View? = null
@@ -90,6 +92,9 @@ class QuickCaptureService : Service() {
     private var panelLoading = false
     private var panelScroll: ScrollView? = null
     private var panelScrollY = 0
+    // 点"完成"那一刻钉住的滚动位置。收起键盘会让窗口重排、把焦点行自动滚进可视区，
+    // 若等重绘时才去读 panelScroll，读到的是已经被重排改过的值 —— 用户就会看到列表先跳一下再跳回去。
+    private var pinnedScrollY: Int? = null
     private var dismissingPanel = false
 
     // 跟手拖拽打开：把手左滑时面板实时跟随，松手后按阈值决定展开或退回。
@@ -187,7 +192,20 @@ class QuickCaptureService : Service() {
     private fun applyNotificationHidden(hidden: Boolean) {
         val nm = getSystemService(NotificationManager::class.java) ?: return
         if (hidden) {
-            runCatching { nm.cancel(NOTIFICATION_ID) }
+            // 实测（Android 13 模拟器）：startForeground 之后紧接着 cancel，系统会在几百毫秒内
+            // 把这条前台通知重新挂回来（服务仍在前台态）。所以按几拍重复撤，直到真的没有为止；
+            // 开关关掉时下面的 notify 会把它挂回去。
+            for (delayMs in HIDE_RETRY_DELAYS) {
+                hideHandler.postDelayed({
+                    if (isNotificationHidden(this)) {
+                        val ok = runCatching { nm.cancel(NOTIFICATION_ID) }.isSuccess
+                        android.util.Log.i(
+                            "QuickCapture",
+                            "隐藏保活通知：第 " + delayMs + "ms 拍撤回 id=" + NOTIFICATION_ID + "，调用成功=" + ok,
+                        )
+                    }
+                }, delayMs)
+            }
         } else {
             keepAliveNotification?.let { runCatching { nm.notify(NOTIFICATION_ID, it) } }
         }
@@ -374,7 +392,9 @@ class QuickCaptureService : Service() {
         openOnMount = false
         val previousPanel = panel
         val animateOpening = mountAsTap && previousPanel == null
-        panelScrollY = panelScroll?.scrollY ?: panelScrollY
+        // 重建面板时优先用"进入编辑/点完成那一刻"钉住的位置；没人钉过才读当前滚动。
+        panelScrollY = pinnedScrollY ?: (panelScroll?.scrollY ?: panelScrollY)
+        pinnedScrollY = null
         unregisterPanelBackCallback()
         panelScroll = null
         dismissingPanel = false
@@ -435,7 +455,7 @@ class QuickCaptureService : Service() {
         }
         if (rootTodos.isEmpty()) {
             if (editingTodoId != NEW_DRAFT_ID) {
-                content.addView(cardText("暂无待办", 17f, 0xFF777777.toInt(), 82))
+                content.addView(cardText("暂无待办", 17f, SUB_INK_COLOR, 82))
             }
         } else {
             rootTodos.forEach { todo ->
@@ -474,6 +494,12 @@ class QuickCaptureService : Service() {
             offset = startOffset,
             progress = if (startOffset > 0f) 1f else 0f,
         )
+        // 重建面板（原地编辑 ↔ 列表）时，滚动位置必须在**第一次布局里**就恢复好：
+        // 老写法把恢复放在 scroll.post{}，于是先画出"滚动在 0"的一帧、下一帧才跳回原偏移，
+        // 用户看到的正是"点完成抽动一下"（窗口重排 + 列表重绘，两次位移叠加）。
+        val restoreScrollY = panelScrollY
+        val restoringAfterRebuild = previousPanel != null
+
         panel = root
         wm.addView(root, params)
         panelLoading = false
@@ -482,8 +508,11 @@ class QuickCaptureService : Service() {
             handle = null
         }
         // 新面板先覆盖到窗口上，再移除旧面板，避免勾选待办刷新时露出一帧桌面背景。
-        previousPanel?.takeIf { it !== root }?.let { old ->
-            runCatching { wm.removeView(old) }
+        val dropPreviousPanel = {
+            previousPanel?.takeIf { it !== root }?.let { old ->
+                runCatching { wm.removeView(old) }
+            }
+            Unit
         }
         root.requestFocus()
         if (animateOpening) {
@@ -497,7 +526,18 @@ class QuickCaptureService : Service() {
             // 挂载期间手指可能已经拖出一段距离，立即对齐当前拖拽进度。
             root.setMotionOffset((resources.displayMetrics.widthPixels - dragDistance).coerceAtLeast(0f))
         }
-        scroll.post { scroll.scrollTo(0, panelScrollY) }
+        dropPreviousPanel()
+        if (restoringAfterRebuild) {
+            // 界面树换掉的那一帧就带上正确滚动：布局回调早于绘制，先画错再纠正的跳变就没了。
+            val observer = scroll.viewTreeObserver
+            observer.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+                override fun onGlobalLayout() {
+                    runCatching { observer.removeOnGlobalLayoutListener(this) }
+                    applyPanelScroll(scroll, restoreScrollY)
+                }
+            })
+        }
+        scroll.post { applyPanelScroll(scroll, restoreScrollY) }
         when {
             Build.VERSION.SDK_INT >= 34 -> registerAnimatedPredictiveBack(root)
             Build.VERSION.SDK_INT >= 33 -> registerPredictiveBack(root)
@@ -538,7 +578,7 @@ class QuickCaptureService : Service() {
     private fun plusButton(onClick: () -> Unit): TextView = label("+", 30f, Color.WHITE).apply {
         gravity = Gravity.CENTER
         includeFontPadding = false
-        background = rounded(0xFFFFB800.toInt(), 100f)
+        background = rounded(ACCENT_COLOR, 100f)
         setOnClickListener { onClick() }
     }
 
@@ -549,24 +589,24 @@ class QuickCaptureService : Service() {
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         if (notes.isEmpty()) {
-            row.addView(cardText("还没有笔记", 16f, 0xFF888888.toInt(), 148), LinearLayout.LayoutParams(dip(142), dip(148)))
+            row.addView(cardText("还没有笔记", 16f, SUB_INK_COLOR, 148), LinearLayout.LayoutParams(dip(142), dip(148)))
         } else {
             notes.forEachIndexed { index, note ->
                 val card = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(dip(15), dip(16), dip(15), dip(13))
-                    background = rounded(Color.WHITE, 18f)
+                    background = rounded(PAPER_COLOR, 18f)
                     elevation = dip(1).toFloat()
                     setOnClickListener { openNote(note.id) }
                 }
                 val headline = note.title.ifBlank { note.body.lineSequence().firstOrNull().orEmpty() }.ifBlank { "无标题" }
                 val preview = if (note.title.isBlank()) note.body.lineSequence().drop(1).joinToString("\n") else note.body
-                card.addView(label(headline, 17f, 0xFF171717.toInt(), bold = false), LinearLayout.LayoutParams.MATCH_PARENT, dip(49))
-                card.addView(label(preview.take(90), 14f, 0xFF696969.toInt(), bold = false).apply {
+                card.addView(label(headline, 17f, INK_COLOR, bold = false), LinearLayout.LayoutParams.MATCH_PARENT, dip(49))
+                card.addView(label(preview.take(90), 14f, WARM_SUB_COLOR, bold = false).apply {
                     maxLines = 3
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-                card.addView(label(formatDate(note.updatedAt), 12f, 0xFF999999.toInt(), bold = false), LinearLayout.LayoutParams.MATCH_PARENT, dip(25))
+                card.addView(label(formatDate(note.updatedAt), 12f, SUB_INK_COLOR, bold = false), LinearLayout.LayoutParams.MATCH_PARENT, dip(25))
                 val params = LinearLayout.LayoutParams(dip(142), dip(150)).apply {
                     if (index > 0) marginStart = dip(10)
                 }
@@ -584,7 +624,7 @@ class QuickCaptureService : Service() {
         }
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(Color.WHITE, 17f)
+            background = rounded(PAPER_COLOR, 17f)
             elevation = dip(1).toFloat()
         }
         val header = LinearLayout(this).apply {
@@ -599,7 +639,7 @@ class QuickCaptureService : Service() {
         val title = label(
             todo.title.ifBlank { "待办清单" },
             18f,
-            if (todo.done) 0xFFC4C4C4.toInt() else 0xFF171717.toInt(),
+            if (todo.done) DONE_INK_COLOR else INK_COLOR,
             false,
         ).apply {
             maxLines = 2
@@ -619,10 +659,10 @@ class QuickCaptureService : Service() {
                 isFocusable = true
                 contentDescription = if (todo.id in collapsedTodoIds) "展开子待办" else "收起子待办"
             }
-            expandControl.addView(label("$doneCount/${children.size}", 14f, 0xFF777777.toInt(), false).apply {
+            expandControl.addView(label("$doneCount/${children.size}", 14f, SUB_INK_COLOR, false).apply {
                 gravity = Gravity.CENTER
             }, LinearLayout.LayoutParams(dip(48), dip(76)))
-            val arrow = label(if (todo.id in collapsedTodoIds) "›" else "⌄", 19f, 0xFF888888.toInt(), false).apply {
+            val arrow = label(if (todo.id in collapsedTodoIds) "›" else "⌄", 19f, SUB_INK_COLOR, false).apply {
                 gravity = Gravity.CENTER
             }
             expandControl.addView(arrow, LinearLayout.LayoutParams(dip(29), dip(76)))
@@ -634,7 +674,7 @@ class QuickCaptureService : Service() {
             }
             children.forEach { child ->
                 childrenBox.addView(View(this).apply {
-                    setBackgroundColor(0xFFF0F0F0.toInt())
+                    setBackgroundColor(CHIP_COLOR)
                 }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(1)).apply {
                     marginStart = dip(50)
                 })
@@ -664,7 +704,7 @@ class QuickCaptureService : Service() {
         row.addView(NativeTodoCheckbox(this, todo.done, 17f).apply {
             setOnClickListener { toggleTodoFromPanel(todo) }
         }, LinearLayout.LayoutParams(dip(34), dip(54)))
-        row.addView(label(todo.title, 15.5f, if (todo.done) 0xFFC4C4C4.toInt() else 0xFF555555.toInt(), false).apply {
+        row.addView(label(todo.title, 15.5f, if (todo.done) DONE_INK_COLOR else WARM_SUB_COLOR, false).apply {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             if (todo.done) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
@@ -741,6 +781,11 @@ class QuickCaptureService : Service() {
         focusEditableTag(tag)
     }
 
+    /** 只在真的需要时改滚动，避免和系统中途的自动滚动打架。 */
+    private fun applyPanelScroll(scroll: ScrollView, y: Int) {
+        if (scroll.scrollY != y) scroll.scrollTo(0, y)
+    }
+
     /** 原地编辑增删行/完成后重绘列表（面板常驻，不做进出动画）。 */
     private fun rerenderPanel() {
         if (panel == null) return
@@ -752,6 +797,11 @@ class QuickCaptureService : Service() {
     private fun exitInlineEdit() {
         val draft = editingDraft
         if (editingTodoId == null && draft == null) return
+        // 收键盘会让窗口重排并把焦点行滚进可视区；先把当前偏移钉住，重绘时按它恢复，
+        // 列表就不会"先跳一下再跳回来"（用户 2026-09-17 反馈的"点完成抽动"）。
+        pinnedScrollY = panelScroll?.scrollY ?: panelScrollY
+        // 取消防抖中那次保存：它要等满 350ms 才落库，会把"完成"之后的重绘整体往后推。
+        inlineSaveRevision++
         editingTodoId = null
         editingDraft = null
         editingFocusSubId = null
@@ -811,7 +861,7 @@ class QuickCaptureService : Service() {
     private fun editableTodoCard(draft: OverlayTodoDraft): View {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(Color.WHITE, 17f)
+            background = rounded(PAPER_COLOR, 17f)
             elevation = dip(1).toFloat()
             setPadding(dip(21), dip(18), dip(21), dip(12))
             // 卡片内部点击自己消费，不冒泡到空白退出。
@@ -874,12 +924,12 @@ class QuickCaptureService : Service() {
                     true
                 }
             }
-            input.setTextColor(if (sub.done) 0xFFC4C4C4.toInt() else 0xFF171717.toInt())
+            input.setTextColor(if (sub.done) DONE_INK_COLOR else INK_COLOR)
             val check = NativeTodoCheckbox(this, sub.done, 18f).apply {
                 setOnClickListener {
                     sub.done = !sub.done
                     setChecked(sub.done)
-                    input.setTextColor(if (sub.done) 0xFFC4C4C4.toInt() else 0xFF171717.toInt())
+                    input.setTextColor(if (sub.done) DONE_INK_COLOR else INK_COLOR)
                     scheduleInlineEditorSave()
                 }
             }
@@ -896,11 +946,11 @@ class QuickCaptureService : Service() {
         val reminder = label(
             if (draft.dueAt == null) "◴  设置提醒" else "◴  已设置提醒",
             13.5f,
-            0xFF777777.toInt(),
+            SUB_INK_COLOR,
             false,
         ).apply {
             gravity = Gravity.CENTER
-            background = rounded(0xFFF0F0F0.toInt(), 12f)
+            background = rounded(CHIP_COLOR, 12f)
             setOnClickListener {
                 if (draft.dueAt == null) {
                     draft.dueAt = java.util.Calendar.getInstance().apply {
@@ -920,7 +970,7 @@ class QuickCaptureService : Service() {
         footer.addView(reminder, LinearLayout.LayoutParams(dip(126), dip(40)))
         footer.addView(space(1), LinearLayout.LayoutParams(0, 1, 1f))
         // 对标图一：右下角黄色"完成"，点后保存并退回列表（面板不收起）。
-        footer.addView(label("完成", 16f, 0xFFFFB800.toInt(), true).apply {
+        footer.addView(label("完成", 16f, ACCENT_COLOR, true).apply {
             gravity = Gravity.CENTER
             setPadding(dip(8), dip(10), dip(8), dip(10))
             setOnClickListener { exitInlineEdit() }
@@ -934,8 +984,8 @@ class QuickCaptureService : Service() {
         setText(text)
         this.hint = hint
         setTextSize(sizeSp)
-        setTextColor(0xFF171717.toInt())
-        setHintTextColor(0xFFCBCBCB.toInt())
+        setTextColor(INK_COLOR)
+        setHintTextColor(HINT_INK_COLOR)
         setBackgroundColor(Color.TRANSPARENT)
         setPadding(0, 0, 0, 0)
         if (ENTER_KEEPS_KEYBOARD) {
@@ -1083,6 +1133,7 @@ class QuickCaptureService : Service() {
                         panelParams = null
                         panelScroll = null
                         panelScrollY = 0
+                        pinnedScrollY = null
                         panelLoading = false
                         dismissingPanel = false
                         collapsedTodoIds.clear()
@@ -1193,6 +1244,7 @@ class QuickCaptureService : Service() {
         panelParams = null
         panelScroll = null
         panelScrollY = 0
+        pinnedScrollY = null
         dismissingPanel = false
         editingTodoId = null
         editingDraft = null
@@ -1217,7 +1269,7 @@ class QuickCaptureService : Service() {
     private fun cardText(text: String, sizeSp: Float, color: Int, heightDp: Int): TextView =
         label(text, sizeSp, color, false).apply {
             gravity = Gravity.CENTER
-            background = rounded(Color.WHITE, 18f)
+            background = rounded(PAPER_COLOR, 18f)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dip(heightDp))
         }
 
@@ -1590,6 +1642,8 @@ class QuickCaptureService : Service() {
         private const val PREFERENCES = "quick_capture"
         private const val KEY_ENABLED = "enabled"
         private const val KEY_HIDE_KEEPALIVE = "hide_keepalive_notification"
+        /** 撤回前台通知的重试节拍（毫秒）：系统可能在前几次之后又把通知挂回来 */
+        private val HIDE_RETRY_DELAYS = longArrayOf(0L, 250L, 1000L, 2500L)
         private const val HANDLE_PREFERENCES = "quick_capture_handle"
         private const val HANDLE_Y_FRACTION = "handle_y_fraction"
         private const val DEFAULT_HANDLE_Y_FRACTION = 0.4f
@@ -1612,7 +1666,17 @@ class QuickCaptureService : Service() {
         private const val NEW_DRAFT_ID = -1L
 
         /** 全屏均匀暗罩基线（虚化可用时）：50% 黑，压住 OEM 噪点颗粒。 */
-        private val DIM_VEIL_COLOR: Int = 0x80000000.toInt()
+        // 侧栏配色对齐主题（见 ui/theme/Theme.kt）：米黄纸底 + 米黄点缀，取自 MIUI 笔记 colors.xml
+    // （paper_yellow #fffaf0、yellow_light_primary #ffb21d、yellow_solid_10 #fff5ea）。
+    private const val PAPER_COLOR = 0xFFFFFAF0.toInt()
+    private const val ACCENT_COLOR = 0xFFFFB21D.toInt()
+    private const val CHIP_COLOR = 0xFFFFF5EA.toInt()
+    private const val INK_COLOR = 0xFF33291A.toInt()
+    private const val WARM_SUB_COLOR = 0xFF6E6250.toInt()
+    private const val SUB_INK_COLOR = 0xFF8A7A5E.toInt()
+    private const val DONE_INK_COLOR = 0xFFBFB49E.toInt()
+    private const val HINT_INK_COLOR = 0xFFD8CFB8.toInt()
+    private val DIM_VEIL_COLOR: Int = 0x80000000.toInt()
         /** 系统虚化被关掉时的补偿暗罩：无虚化只能靠更深的均匀压暗藏住底下形状。 */
         private const val DIM_VEIL_NO_BLUR = 0xB3000000.toInt()
 

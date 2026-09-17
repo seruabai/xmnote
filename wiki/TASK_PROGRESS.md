@@ -15,6 +15,8 @@
 
 ## 当前进行中的任务（占用检查）
 
+- T-030 | **第五批：点「完成」抽动修复 + 主题换成小米笔记的米黄纸**。①根因 = "窗口重排 + 列表重绘"两次位移叠加（滚动恢复写在 scroll.post{} 里，先画一帧滚动在 0 再跳回）；改成点完成时钉住偏移、在第一次布局（早于绘制）内恢复，并取消防抖中的保存。逐帧验收：修复前 2 次位移（+31/−70px）→ 修复后 0 次。②主题全套色值取自 MIUI 笔记反编译 colors.xml（paper_yellow #FFFAF0 底 + 白卡 #FFFFFF + #FFB21D 强调 + #FFD3/#FFF5EA 容器 + #9D6802 暖棕文字），深浅色、XML 主题（含闪屏）、侧栏悬浮层同步；像素验收全绿。③验收脚本修正把手定位（此前"注入打不开面板"是误判）+ 新增 S4 与 theme_verify.py。**遗留**：④「隐藏保活通知」在 AOSP 13 上被系统重新挂回（撤回调用成功但通知仍在），待真机确认 | DeepSeek Harness | 部分完成 | ui/theme/Theme.kt, notify/QuickCaptureService.kt, res/values*/themes.xml, tools/verify/sidebar_verify.py, tools/verify/theme_verify.py, wiki/* | 2026-09-17 |
+
 - T-012 | 精简开工/发版规则及 CI 修复已完成；actionlint 与 diff 检查通过，已推送 main。用户优先节省 token，APK 补发由 Actions 34243422160 运行，暂不持续轮询；代码文件占用已释放。 | Codex | 完成 | AGENTS.md, .agents/skills/pre-work-check/SKILL.md, .github/workflows/release.yml, wiki/TASK_PROGRESS.md, wiki/DECISIONS.md, wiki/CHANGELOG.md | 2026-09-08 |
 
 > 开始新任务前先看这里：若有其他 AI 正在处理与你重叠的文件，先停下询问用户。

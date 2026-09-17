@@ -4,7 +4,7 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowBackground">#FF000000</item>
-        <item name="android:windowSplashScreenBackground">#FF000000</item>
+        <item name="android:windowBackground">#FF17140E</item>
+        <item name="android:windowSplashScreenBackground">#FF17140E</item>
     </style>
 </resources>
