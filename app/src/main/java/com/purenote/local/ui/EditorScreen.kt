@@ -475,7 +475,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         topBar = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 9.dp, vertical = 5.dp),
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 7.dp, vertical = 4.dp),
             ) {
                 IconButton(onClick = ::saveAndClose) {
                     Icon(Icons.Outlined.ArrowBack, "返回", modifier = Modifier.size(30.dp))
@@ -543,10 +543,10 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                         // 样式面板：对标参考图——H1-3 调整字号，•/1. 列表，引用，首/尾行缩进，右侧固定关闭
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().height(61.dp),
+                            modifier = Modifier.fillMaxWidth().height(60.dp),
                         ) {
                             LazyRow(
-                                contentPadding = PaddingValues(horizontal = 14.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 modifier = Modifier.weight(1f),
                             ) {
@@ -560,13 +560,13 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                                 item("tail_indent") { StyleKey("尾缩") { toggleTailIndentAtCursor() } }
                             }
                             EditorTool(Icons.Outlined.Close, "收起样式") { styleOpen = false }
-                            Spacer(Modifier.width(10.dp))
+                            Spacer(Modifier.width(12.dp))
                         }
                     } else {
                         Row(
                             horizontalArrangement = Arrangement.SpaceAround,
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().height(61.dp),
+                            modifier = Modifier.fillMaxWidth().height(60.dp),
                         ) {
                             // 第1键：录音。未录开始录（高亮计时），录制中再点结束并作为音频条目插入光标行
                             if (recording) {
@@ -627,7 +627,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
         }
         Box(Modifier.padding(padding).fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize().padding(horizontal = 22.dp),
+            Modifier.fillMaxSize().padding(horizontal = 16.dp),
         ) {
             val titleTextStyle = TextStyle(
                 fontSize = typeScale.editorTitleSp.sp,
@@ -648,7 +648,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().padding(top = 19.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
                 )
             } else {
                 BasicTextField(
@@ -675,7 +675,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 19.dp)
+                        .padding(top = 20.dp)
                         .onFocusChanged { bodyFocused = it.isFocused },
                 )
             }
@@ -687,7 +687,7 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                 modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
             )
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(16.dp))
 
             if (imageNames.isNotEmpty()) {
                 // 附件条只展示正文流之外的遗留附件；正文 [img:] 行已在文中显示缩略图，录音显示录音条
@@ -750,12 +750,12 @@ fun EditorScreen(vm: NoteViewModel, screen: Screen.Editor) {
                     },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 4.dp, bottom = 10.dp)
+                        .padding(end = 4.dp, bottom = 12.dp)
                         .background(
                             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .85f),
                             RoundedCornerShape(10.dp),
                         )
-                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
         }
@@ -877,7 +877,7 @@ private fun StyleKey(label: String, onClick: () -> Unit) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier
             .clickable(onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
     )
 }
 
@@ -1022,10 +1022,10 @@ private fun ChecklistEditor(
                 modifier = Modifier.fillMaxWidth().clickable {
                     items.add(ChecklistItem(""))
                     onChangeList()
-                }.padding(vertical = 11.dp),
+                }.padding(vertical = 12.dp),
             ) {
                 Icon(Icons.Outlined.Add, null, tint = MaterialTheme.colorScheme.primary)
-                Text("添加条目", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 9.dp))
+                Text("添加条目", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 8.dp))
             }
         }
     }
