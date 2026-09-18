@@ -11,6 +11,7 @@
 串口见下方 SERIAL(默认 emulator-5554,可用第一个参数覆盖),绝不触碰实机。
 """
 import subprocess, re, time, sys, os, json
+from editor_tap import tap_text_field
 
 # 串口可覆盖：工具栏的显隐跟随 WindowInsets.isImeVisible，API 33 的 AVD 上 IME 虽在却报不可见
 # （既有行为，与本批改动无关），编辑器/工具栏验收固定在 API 36 的 AVD 上跑
@@ -38,7 +39,7 @@ def nodes():
         if not m:
             continue
         x0, y0, x1, y1 = map(int, m.groups())
-        out.append(dict(text=a('text'), desc=a('desc'), cls=a('class'),
+        out.append(dict(text=a('text'), desc=a('desc'), cls=a('class'), focused=a('focused'),
                         x0=x0, y0=y0, x1=x1, y1=y1, w=x1-x0, h=y1-y0))
     return out
 
@@ -184,8 +185,8 @@ if not b:
     check('P0 找得到 BBB 块节点', False)
     sys.exit(1)
 
-# 光标落在 BBB 上
-tap(*center(b))
+# 光标落在 BBB 上（a11y 坐标比真实文字高约 45px，用 editor_tap 校验后再落光标）
+tap_text_field(sh, ADB, SERIAL, nodes, 'BBB', time.sleep, label='BBB')
 if not open_style_panel():
     check('P0 样式面板打开', False)
     sys.exit(1)

@@ -11,6 +11,7 @@ API 36 的 AVD 上 input text 进不去（注入问题，不是应用问题）�
 只用指定串口，绝不触碰实机。
 """
 import subprocess, re, time, sys, os
+from editor_tap import tap_text_field
 
 SERIAL = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get('ANDROID_SERIAL', 'emulator-5554'))
 ADB = r'C:/Android/sdk/platform-tools/adb.exe'
@@ -33,7 +34,7 @@ def nodes():
         if not m:
             continue
         x0, y0, x1, y1 = map(int, m.groups())
-        out.append(dict(text=a('text'), desc=a('desc'), cls=a('class'), checked=a('checked'),
+        out.append(dict(text=a('text'), desc=a('desc'), cls=a('class'), checked=a('checked'), focused=a('focused'),
                         x0=x0, y0=y0, x1=x1, y1=y1))
     return out
 
@@ -158,7 +159,9 @@ check('P0 三块已渲染且按序', [t for _, t in sorted(ui_rows)] == ['AAA', 
 
 # ---------- P1 打字 ----------
 a = block_node('AAA')
-tap(a['x0'] + 60, (a['y0'] + a['y1']) // 2)
+# a11y 给的坐标在这台机器上比真实文字高约 45px（见 editor_tap.py 的说明）：
+# 直接点会点在文字上方空白处，必须用"输入法是否弹出"校验，不中就往下挪一档
+tap_text_field(sh, ADB, SERIAL, nodes, 'AAA', time.sleep, label='AAA')
 key(123)                       # MOVE_END
 type_text('12')
 time.sleep(2.0)

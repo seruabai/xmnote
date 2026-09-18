@@ -16,6 +16,7 @@
 用法: python scale_verify.py <serial> [--quick]
 """
 import subprocess, re, time, sys, os, json
+from editor_tap import tap_text_field
 
 SERIAL = sys.argv[1] if len(sys.argv) > 1 else 'emulator-5554'
 ADB = r'C:/Android/sdk/platform-tools/adb.exe'
@@ -282,7 +283,8 @@ for (key_label, field) in STYLE_KEYS:
     tn = find(ns, text=target_txt)
     if not tn:
         continue
-    tap(tn['x0'] + 60, (tn['y0'] + tn['y1']) // 2, 1.4)     # 光标落到这一块
+    # 光标落到这一块：a11y 坐标比真实文字高约 45px，用 editor_tap 校验后再落
+    tap_text_field(sh, ADB, SERIAL, nodes, tn['text'], time.sleep, label='光标块')
     before = snapshot()
     st = find(nodes(), desc='样式')
     if st:
