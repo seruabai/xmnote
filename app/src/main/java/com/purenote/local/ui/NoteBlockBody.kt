@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -76,6 +77,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -531,33 +533,24 @@ private fun BlockRow(
         },
     )
 
-    // 行数由输入框自己汇报：**单行**直接交给 Compose 居中（不靠任何公式，几何上一定与文字同一中线）；
-    // 只有真的换行了才退回"贴第一行 + 光学修正"。用户 2026-09-17：勾选框必须始终与文字同中线。
-    var lineCount by remember(block.id) { mutableIntStateOf(1) }
-    val singleLine = lineCount <= 1
+    // 勾选框必须与文字同中线，做法是**让勾选框不改变行高**：
+    // Material 的 Checkbox 默认带 48dp 最小触控尺寸，会把 34dp 的行顶高，正文输入框随之被拉伸、
+    // 文字贴顶，盒子就被算到文字下面去了（'BBB' 那行就是这么偏的）。这里用 CompositionLocal
+    // 关掉那个最小尺寸，勾选框只占一行（与清单编辑器一致），行高由文字决定，中线自然对齐。
+    // 行高/盒子尺寸随字号缩放，所以三档文字大小都成立。
+    val checkSize = 22.dp
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
+        // 勾选框与文字同一中线：MiCheckbox 的布局就是它自己的尺寸，行高由文字行盒决定
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         when (block.type) {
-            BlockType.TODO -> Checkbox(
-                checked = block.checked,
-                onCheckedChange = { onCheckedToggle() },
-                colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary),
-                // 勾选框中心落在第一行行盒中心，再补 7% 的光学下移
-                //（汉字墨水中心比行盒中心低，与 MiCheckbox 同一套修正，见 TodoCard.kt）
-                modifier = Modifier
-                    .size(34.dp)
-                    .offset {
-                        // 单行：只做"汉字墨水中心比行盒中心略低"的 7% 光学修正（居中由 Row 保证）
-                        if (singleLine) {
-                            return@offset IntOffset(0, with(density) { 34.dp.toPx() * 0.07f }.roundToInt())
-                        }
-                        val linePx = with(density) { (fontSize.value * 1.33f).dp.toPx() }
-                        val halfBox = with(density) { 17.dp.toPx() }
-                        val optical = with(density) { 34.dp.toPx() * 0.07f }
-                        IntOffset(0, (linePx / 2f - halfBox + optical).roundToInt())
-                    },
+            // 用自绘的 MiCheckbox（与待办卡片、清单编辑器同一个）：它按尺寸自绘、不带 Material 的
+            // 48dp 最小触控尺寸，行高因此由文字决定，勾选框与文字中线由布局保证（用户 2026-09-18）。
+            BlockType.TODO -> MiCheckbox(
+                done = block.checked,
+                size = checkSize,
+                onClick = { onCheckedToggle() },
             )
             BlockType.ITEM -> Marker(if (block.number > 0) block.number.toString() + "." else "•")
             BlockType.QUOTE -> Marker("❝")
@@ -584,8 +577,6 @@ private fun BlockRow(
                 }
             },
             textStyle = style,
-            // 行数回流：决定勾选框是"整行居中"还是"贴第一行"
-            onTextLayout = { lineCount = it.lineCount },
             cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
             modifier = Modifier
                 .weight(1f)
