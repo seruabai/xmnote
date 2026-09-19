@@ -267,7 +267,9 @@ class QuickCaptureService : Service() {
             contentDescription = "纯记侧栏，左滑展开，上下拖动位置"
             addView(
                 View(this@QuickCaptureService).apply {
-                    background = rounded(HANDLE_COLOR, 12f)
+                    // 拉手不画任何东西：它在浅色界面上会显出一块灰方块（用户 2026-09-19 反馈"太丑"）。
+                    // 22dp 宽的触摸条仍在窗口上，点它或从左缘往左滑照样能拉出侧栏。
+                    background = null
                 },
                 FrameLayout.LayoutParams(
                     dip(HANDLE_VISIBLE_WIDTH_DP),

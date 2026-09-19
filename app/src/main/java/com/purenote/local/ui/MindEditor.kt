@@ -463,14 +463,21 @@ private fun MindOutline(
                     .padding(start = (row.depth * 16).dp, end = 16.dp),
             ) {
                 if (row.hasChildren) {
-                    Icon(
-                        if (row.collapsed) Icons.Outlined.KeyboardArrowRight else Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = if (row.collapsed) "展开" else "折叠",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp).clickable { onToggleCollapse(row.id) },
-                    )
+                    // 折叠键自己占 44dp 的槽位：18dp 图标交给 Compose 自动扩张触控框时会向左探出屏幕
+                    //（审计里行左缘变成 1.1dp），文字也贴得紧（用户 2026-09-19 定：改）
+                    Box(
+                        modifier = Modifier.size(44.dp).clickable { onToggleCollapse(row.id) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (row.collapsed) Icons.Outlined.KeyboardArrowRight else Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = if (row.collapsed) "展开" else "折叠",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 } else {
-                    Spacer(Modifier.width(18.dp))
+                    Spacer(Modifier.width(44.dp))
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(

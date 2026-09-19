@@ -249,7 +249,8 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
                     .imePadding(),
             ) {
                 Surface(
-                    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                    // 圆角与首页多选栏统一成 26dp（用户 2026-09-19 定）
+                shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
                     color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
