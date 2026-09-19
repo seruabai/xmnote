@@ -184,7 +184,25 @@ fun HomeScreen(vm: NoteViewModel) {
             }
         },
     ) { scaffoldPadding ->
-        Column(Modifier.padding(scaffoldPadding).fillMaxSize()) {
+        // 标签切换微动效：换页签时整块内容淡入 + 轻微上浮（用户 2026-09-19：所有过渡都要有微动效）。
+        // 不用 AnimatedContent —— 这块内容在 ColumnScope 里用了 weight(1f)，换成 AnimatedContentScope
+        // 会编译不过（见下面 NotesList 的 Modifier.weight(1f)）；用 Animatable 每换一次页签播一遍。
+        val tabSwap = remember(tab) { androidx.compose.animation.core.Animatable(0f) }
+        androidx.compose.runtime.LaunchedEffect(tabSwap) {
+            tabSwap.animateTo(
+                1f,
+                androidx.compose.animation.core.tween(Motion.TAB, easing = Motion.EaseOut),
+            )
+        }
+        Column(
+            Modifier
+                .padding(scaffoldPadding)
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = 0.4f + 0.6f * tabSwap.value
+                    translationY = (1f - tabSwap.value) * 10.dp.toPx()
+                },
+        ) {
             if (tab == MainTab.NOTES) {
                 NotesHeader(
                     query = filter.query,
