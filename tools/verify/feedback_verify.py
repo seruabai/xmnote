@@ -180,11 +180,18 @@ else:
 sh('shell', 'input', 'keyevent', '4')
 time.sleep(1.5)
 open_app()
-ns = dump_nodes()
 # 只要真正的笔记卡片：页头（大标题/搜索框/分类芯片）都在 y<800，别把它们当成卡片
-cards = [n for n in ns if n['text'] and n['cls'].endswith('TextView') and n['y0'] > 700]
-left = [c for c in cards if (c['x0'] + c['x1']) // 2 < 540]
-right = [c for c in cards if (c['x0'] + c['x1']) // 2 > 540]
+# 刚 open_app 完时宫格可能还没把右列组合出来（LazyVerticalGrid 逐项组合），
+# 所以这里轮询几次再判定 —— 判据本身不放宽，只是别把"还没画完"当成"没有右列"
+left = right = []
+for _try in range(4):
+    ns = dump_nodes()
+    cards = [n for n in ns if n['text'] and n['cls'].endswith('TextView') and n['y0'] > 700]
+    left = [c for c in cards if (c['x0'] + c['x1']) // 2 < 540]
+    right = [c for c in cards if (c['x0'] + c['x1']) // 2 > 540]
+    if left and right:
+        break
+    time.sleep(1.2)
 check('F4 宫格首页有左右两列卡片', bool(left) and bool(right),
       '左 %d 张 右 %d 张' % (len(left), len(right)))
 if left and right:

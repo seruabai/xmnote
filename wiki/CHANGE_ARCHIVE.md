@@ -6,6 +6,58 @@
 
 ---
 
+## v1.2.25（versionCode 28）
+
+- 日期：2026-09-19
+- 摘要：**排版收口第二批（分类页 / 废纸篓 / 脑图 / 待办编辑弹窗）+ 三处用户点名修复 + 笔记列表多选态四条 + 标签切换微动效**
+- 涉及文件：ui/FoldersScreen.kt、ui/TrashScreen.kt、ui/MindEditor.kt、ui/TodoEditSheet.kt、ui/NoteCard.kt、ui/HomeScreen.kt、ui/Motion.kt、notify/QuickCaptureService.kt、tools/verify/*
+
+### 分类页 / 废纸篓
+- [页头]删[TopAppBar + 17sp 左对齐标题]，换[设置页式：top 8 + 48dp 返回键 + bottom 24 = 80dp，返回键 offset(x=-12dp) 让字形落 16.4dp，标题 23sp SemiBold 居中]（首个卡片 y 112.8 → 128.8dp）
+- [分类行]删[内边距 12/10dp、行高 67.8dp、头像 38dp、名称 x 78.5dp、分隔线 start 62dp]，换[16/12dp、72.4dp、36dp、80.4dp、64dp（绝对 80dp，与文字列线齐）]
+- [分类行删除键]删[width(40dp)（48dp 最小触控外溢到 x1=387.8dp，并把重命名挤成 44.2×48dp）]，换[size(48dp)（两键各 48×48dp，收在行内边距里）]
+- [废纸篓分区标题]20.2dp → 32.0dp（＝设置页分区标题列线）
+- [废纸篓列表]删[contentPadding 四周 16dp、项间距 10dp、卡片圆角 14dp]，换[仅 bottom 24dp、12dp（＝首页）、16dp（＝首页 NoteCard）]
+- [废纸篓底部批量条]删[horizontal 24dp + weight(0.15f) + 40dp 按钮]，换[16dp + spacedBy(12dp) + navigationBarsPadding，按钮 48dp]
+- [多选页头]删[全选 40dp TextButton、22sp Bold 标题]，换[heightIn(min=44dp)（实测 57.9×48dp）、17sp SemiBold]，两态页头行高一致（进出多选 back 框都停在 4.6/57.1dp）
+- [空状态]删[圆 80dp / 图标 30dp / 间距 14dp / 文案 15sp、副文案 11sp+outlineVariant]，换[92dp / 32dp / 16dp / 17sp、13sp+outline（最暗像素 #EEE5D2 → #D9CDB4）]
+
+### 脑图（MindEditor）
+- [节点]删[内边距 X 10dp 测量 / 9dp 绘制（不一致）、Y 7dp、层级间距 34dp、兄弟间距 10dp、圆角 9dp]，换[X 12dp（同一常量）、Y 8dp、32dp、12dp、MaterialTheme.shapes.small(10dp)]
+- [节点字号]删[14sp 硬编码（布局却按 18sp 测量，框内约四成空档）]，换[NoteTypeScale.editorBodySp（16/18/21sp 三档）+ 行高 1.4×]
+- [节点操作条]删[间距 16dp、触控＝24dp 图标自身（实测最窄 40.0×48dp）]，换[间距 8dp、五格 weight(1f)、实测 69.7×48dp]
+- [大纲行]删[行高 42.3dp、缩进起始 6dp + 每级 18dp、右内边距 10dp、字号 15sp]，换[heightIn(min=48dp)、起始 0（＝内容列 16dp）+ 每级 16dp、16dp、editorBodySp + 行高 1.4×]
+- [大纲折叠键]删[18dp 图标 + clickable（Compose 自动扩触控框会向左探出屏幕，行左缘变 1.1dp）]，换[显式 44dp 槽位 + 图标 18dp 居中]（用户 2026-09-19 定：改）
+
+### 待办编辑弹窗（TodoEditSheet）
+- [弹层]删[内边距 22/22/20/22、圆角 28dp]，换[四周 16dp（＝编辑器样式面板）、圆角 26dp（＝首页多选栏，用户定）]
+- [字号]删[标题 16sp/22sp、单条行 16sp、清单行 15sp 硬编码]，换[titleMedium / bodyLarge / bodyMedium]；[间距]删[行内 vertical 10dp、标题↔行 6dp、行↔底栏 14dp]，换[12dp、8dp、16dp]
+- [完成键]删[文字 + padding(8,10)]，换[heightIn(44dp)（实测可点 57.9×48dp）]
+- [提醒胶囊]删[高约 26dp、图标 14dp、内缩 11+5dp、12sp、清除键 IconButton 26dp]，换[高 44dp、图标 16dp、内缩 16+8dp、labelLarge(13sp)、清除键 Box 44×44dp]
+
+### 三处用户点名修复
+- [侧栏拉手]删[background = rounded(0x80888888, 12f)]，换[不绘制]（浅色界面上的灰方块）。取证：改前右缘 x=1064/1070/1076 在 y=1000/1100 是 #AFADA8，改后 #E5E1D8/#FFFAF0，拉手灰像素计数 0。22dp 触摸条保留
+- [待办弹窗圆角]28dp → 26dp
+- [大纲折叠键]18dp → 显式 44dp 槽位（同上）
+
+### 笔记列表多选态（用户四条）
+- [进/出多选布局]删[多选态整块换掉页头（搜索框/分类胶囊/大字全没）→ 首卡上跳 457px]，换[页头两状态同构：动作行 height(32dp) 钉死、多选态只换行内图标、标题行保留「笔记」+ 右侧「已选 N 项」]（实测页头大字 y 291→291，前 3 张卡片偏差 0px）
+- [勾选框]删[卡片右上角圆形对勾、未选卡无勾选框]，换[卡片右下角 48dp 勾选框（内层自绘 MiCheckbox 18dp，右/下各内缩 16dp；清空语义后合成单一无障碍节点 desc=选择笔记 + Role.Checkbox）]
+- [置顶图标]从行尾挪到勾选框左侧（x1=x0=398，中心 y 差 1px）；行尾恒定留 22dp 勾选位（只在多选态留位会让左下角那格可用宽度变小，年忽隐忽现）
+- [左下角那一格]删[固定显示笔记日期]，换[NoteStampCell：有提醒 → 提醒日期时间（全天 月日、定时 月日 时:分），无提醒 → 原笔记日期；用 TextMeasurer 量真实可用宽度，降级顺序 带年+图标 → 带年(撤图标) → 省年+图标 → 省年(撤图标)，永不换行/压字距]（窄卡 9月19日 14:37、宽卡 2026年9月19日 14:37）
+
+### 微动效
+- [底部标签切换]删[硬切 if (tab == …)]，换[整块内容淡入 + 上浮 10dp（Animatable + Motion.TAB=260ms）]。不用 AnimatedContent：该块内容在 ColumnScope 里用了 weight(1f)，换 scope 编译不过。取证：animator_duration_scale=10 下连拍，内容对比度 122 → 83 → 213（淡出 → 淡入 → 落定）
+- [Motion.kt]新增 const val TAB = 260
+
+### 测试侧（不改变用户可见行为）
+- 编辑器三个套件（block_edit / block_toolbar / scale）改用墨迹定位取点：uiautomator 报的正文块坐标比实际绘制高约 46px，照它点等于点在空白处；新增 tools/verify/editor_tap.py（墨迹行带定位 + 收键盘 + a11y focused 校验）
+- 规模矩阵 42/42（原 8 项失败全是取点/配对问题：A4 按类名找勾选框会漏、D 的竖直 70px 窗口会配到上一行、C 的列表标记槽 x 与行带被字形空隙拆成两条）
+- run_all.py：收进 note_selection_verify / theme_verify；新增假绿防线（汇总行 0/…、无汇总行、退非 0 却无 FAIL 行一律计失败）；checkbox_align_verify.py 因不自带夹具跑出 0/0 假绿而撤下
+- todo_feedback_verify.py：长按进多选加重试（环境噪声会让发版门误判红）
+
+---
+
 ## v1.2.24（versionCode 27）
 
 - 日期：2026-09-18

@@ -451,14 +451,19 @@ sh('shell', 'am', 'start', '-n', PKG + '/.MainActivity')
 time.sleep(4)
 # 应用还在跑，WAL 检查点/写事务撞上时 sqlite3 会返回空串（不是真的坏库）：
 # 空结果重试几次，拿最后一次非空结果判定
+# 应用在跑时直接查库会因占用返回空串（不是坏库）：把库文件复制到应用私有目录再查副本，
+# 既避开锁、又仍然是对同一份数据做完整性检查（5556 上直接查会稳定返回空）
 integrity = ''
-for _ in range(5):
-    integrity = sql("PRAGMA integrity_check;")
+for _ in range(3):
+    sh('shell', 'run-as', PKG, 'sh', '-c',
+       "'cp %s files/ic_probe.db && sqlite3 files/ic_probe.db \"PRAGMA integrity_check;\"'" % DB)
+    integrity = sh('shell', 'run-as', PKG, 'sqlite3', 'files/ic_probe.db', 'PRAGMA integrity_check;').strip().replace('\r', '')
     if integrity:
         break
     time.sleep(1.2)
 if not integrity:
-    integrity = '(sqlite3 连续 5 次无输出：库被应用占着，非坏库)'
+    integrity = sql("PRAGMA integrity_check;")
+sh('shell', 'run-as', PKG, 'rm', '-f', 'files/ic_probe.db')
 rec('F', 'F1 全部操作后 PRAGMA integrity_check = ok', integrity == 'ok', integrity)
 crash = sh('logcat', '-d', '-b', 'crash')
 fatals = [l for l in crash.splitlines() if 'FATAL' in l]
