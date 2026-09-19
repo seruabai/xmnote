@@ -51,6 +51,32 @@
 - 日志保存在文件中，返回退出码和相关错误摘要；必要时读取错误附近上下文，不固定截断而漏掉原因。
 - 如实报告通过/失败/未运行及原因；完成前检查 diff 与状态，只提交本任务文件。
 
+
+### 4.1 设备验证一律走 adb 直连模拟器（用户 2026-09-20 明确要求）
+
+设备侧的一切验证**只走 adb 直连**：不许用"看截图代替验证"、不许经过任何 GUI 中间层、不许用别的工具代跑。
+每条结论都要能追到具体命令与其输出。
+
+- 抓界面：`adb -s <serial> shell uiautomator dump` → `adb -s <serial> shell cat /sdcard/window_dump.xml`
+- 交互：`adb -s <serial> shell input tap|swipe|keyevent …`
+- 截图取证：`adb -s <serial> exec-out screencap -p > x.png`；像素级判据用 PIL 直接量（如中线偏差、对比度），不靠肉眼
+- 查库：`adb -s <serial> shell run-as com.purenote.local sqlite3 databases/<db> "SQL"` —— **SQL 必须整体作为一个字符串传给设备端 shell**；用参数列表会被设备端 shell 再切分、静默返回空
+- 现成工具（都只认 serial）：`python tools/verify/run_all.py <serial> [脚本名 …]`、`tools/verify/editor_tap.py`、`tools/verify/layout_audit.py <serial> <标签>`
+
+两台常备模拟器 —— **跑之前先冷启动**，用久了会退化（黑屏截图、dump 变空、卡片找不到，全部是设备态不是应用缺陷）：
+
+| serial | AVD | 系统 |
+|---|---|---|
+| `emulator-5554` | `MIUI14_Study` | Android 13 |
+| `emulator-5556` | `PureNote_API_36` | Android 16 |
+
+```powershell
+emulator.exe -avd <AVD> -no-boot-anim -no-audio -gpu swiftshader_indirect -memory 4096 -cores 4   # 约 25 秒进系统
+# 起不来时：清 %USERPROFILE%\.android\avd\<AVD>.avd\**\*.lock → 只杀该 AVD 的 emulator/qemu 进程 → 重启 adb server
+```
+
+**绝不让两台模拟器同时跑重活**：会把应用主线程饿到 ANR（"纯记 isn't responding"），整轮结果作废。
+
 ## 5. 构建入口
 
 JDK 17、Android SDK 36。Windows 用 gradlew.bat；Linux/macOS 用 bash ./gradlew，兼容旧标签缺少执行权限。
