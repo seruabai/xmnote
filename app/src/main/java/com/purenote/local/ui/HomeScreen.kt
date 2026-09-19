@@ -193,13 +193,21 @@ fun HomeScreen(vm: NoteViewModel) {
                     unclassifiedOnly = filter.unclassifiedOnly,
                     selecting = selecting,
                     selectionCount = selectedIds.size,
+                    allSelected = notes.isNotEmpty() && selectedIds.size == notes.size,
                     onQuery = vm::setQuery,
                     onFolder = vm::selectFolder,
                     onUnclassified = vm::selectUnclassified,
                     onFolders = vm::goFolders,
                     onSettings = vm::goSettings,
                     onCreateFolder = vm::createFolder,
-                    onCloseSelection = ::exitSelection,
+                    onExitSelection = ::exitSelection,
+                    onSelectAll = {
+                        if (selectedIds.size == notes.size) selectedIds.clear()
+                        else {
+                            selectedIds.clear()
+                            selectedIds.addAll(notes.map { it.id })
+                        }
+                    },
                 )
                 if (notes.isEmpty()) {
                     EmptyState("还没有笔记", "点击右下角 + 开始记录")
@@ -261,6 +269,12 @@ fun HomeScreen(vm: NoteViewModel) {
     }
 }
 
+/**
+ * 笔记页头：动作行高度在两个状态下**钉死同一个值**（用户 2026-09-19："笔记目录下的长按进入的
+ * 多选界面，布局应该与原本未长按情况下相同"）。改成"多选时把标题/搜索/分类都收起来"会让页头
+ * 矮一大截，长按后整个列表往上跳 —— 待办页头（见本文件 TodoHeader）就是这么修的，这里同口径：
+ * 行高固定 32dp、只换行内图标，标题行/搜索框/分类胶囊在两种状态下原样保留。
+ */
 @Composable
 private fun NotesHeader(
     query: String,
@@ -269,59 +283,74 @@ private fun NotesHeader(
     unclassifiedOnly: Boolean,
     selecting: Boolean,
     selectionCount: Int,
+    allSelected: Boolean,
     onQuery: (String) -> Unit,
     onFolder: (Long?) -> Unit,
     onUnclassified: () -> Unit,
     onFolders: () -> Unit,
     onSettings: () -> Unit,
     onCreateFolder: (String, (Boolean) -> Unit) -> Unit,
-    onCloseSelection: () -> Unit,
+    onExitSelection: () -> Unit,
+    onSelectAll: () -> Unit,
 ) {
     var addFolderOpen by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
     var newFolderError by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxWidth().padding(top = 14.dp)) {
-        if (selecting) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.Close,
-                        "退出多选",
-                        modifier = Modifier.size(28.dp).clickable(onClick = onCloseSelection),
-                    )
-                    Spacer(Modifier.width(20.dp))
-                    Text("已选 $selectionCount 项", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                }
-            return@Column
-        }
-
         Row(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
-            // 48dp 最小触控容器以图标视觉为中心对称扩展,视觉右缘 = 屏宽 - padding,与 16dp 内容栅格对齐
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            // 32dp = 齿轮按钮的原尺寸：常态行高本来就是 32dp，钉死它，多选态换图标才不掉高度。
+            // 视觉右缘 = 屏宽 - 16dp，与 16dp 内容栅格对齐（用户要求的内容左右 16dp）。
+            modifier = Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 16.dp),
         ) {
-            Icon(
-                Icons.Outlined.FolderOpen,
-                contentDescription = "分类",
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(31.dp).clickable(onClick = onFolders),
-            )
-            Spacer(Modifier.width(24.dp))
-            MiSettingsButton(onClick = onSettings)
+            if (selecting) {
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "退出多选",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(32.dp).clickable(onClick = onExitSelection),
+                )
+                // 权重把两个图标推到行的两端：左退出、右全选，中间留白
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    Icons.Outlined.FactCheck,
+                    contentDescription = if (allSelected) "取消全选" else "全选",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(32.dp).clickable(onClick = onSelectAll),
+                )
+            } else {
+                Icon(
+                    Icons.Outlined.FolderOpen,
+                    contentDescription = "分类",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(31.dp).clickable(onClick = onFolders),
+                )
+                Spacer(Modifier.width(24.dp))
+                MiSettingsButton(onClick = onSettings)
+            }
         }
 
-        Text(
-            "笔记",
-            color = MaterialTheme.colorScheme.onBackground,
-            fontSize = 34.sp,
-            lineHeight = 41.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
-        )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                "笔记",
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 34.sp,
+                lineHeight = 41.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
+            )
+            // 已选计数挂在标题右边（和待办页头同一个位置）：它不是新起一行，标题行高度不变
+            if (selecting) {
+                Text(
+                    "已选 $selectionCount 项",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 10.dp, bottom = 24.dp),
+                )
+            }
+        }
 
         SearchPill(query = query, onQuery = onQuery)
 
@@ -618,8 +647,10 @@ private fun NotesMasonry(
                 folderName = note.folderId?.let(folderNames::get),
                 textSize = noteTextSize,
                 selected = note.id in selectedIds,
+                selecting = selecting,
                 onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
                 onLongPress = { onLongPress(note) },
+                onToggleSelect = { onToggleSelected(note) },
                 modifier = Modifier.animateItem(),
             )
         }
@@ -649,8 +680,10 @@ private fun NotesList(
                 folderName = note.folderId?.let(folderNames::get),
                 textSize = noteTextSize,
                 selected = note.id in selectedIds,
+                selecting = selecting,
                 onClick = { if (selecting) onToggleSelected(note) else onOpen(note) },
                 onLongPress = { onLongPress(note) },
+                onToggleSelect = { onToggleSelected(note) },
                 modifier = Modifier.animateItem(),
             )
         }

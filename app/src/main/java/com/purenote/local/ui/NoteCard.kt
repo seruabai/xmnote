@@ -8,6 +8,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,12 +17,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -34,18 +38,36 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.purenote.local.NoteTextSize
 import com.purenote.local.core.ChecklistCodec
+import com.purenote.local.core.DateFormats
 import com.purenote.local.core.NoteMarkup
 import com.purenote.local.core.PreviewBuilder
 import com.purenote.local.data.Note
 import com.purenote.local.data.NoteKind
 
-/** 便签纸卡片：流式正文首行为标题；清单带进度与小圆点；支持多选角标 */
+/**
+ * 便签纸卡片：流式正文首行为标题；清单带进度与小圆点；支持多选勾选框。
+ *
+ * 进出多选**卡片几何不许变**（用户 2026-09-19："笔记目录下的长按进入的多选界面，布局应该与
+ * 原本未长按情况下相同"）：所以多选态新增的东西一个都不参与卡片高度计算 —— 勾选框是叠在
+ * 卡片右下角的一层 Box，行尾只让出一个"宽度"当空位。待办页早先踩过同一个坑（见 ui/TodoCard.kt
+ * 里抽出的 TodoCardBody 与钉死高度的页头动作行），这里是同一个口径。
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun NoteCard(
@@ -56,6 +78,9 @@ fun NoteCard(
     modifier: Modifier = Modifier,
     textSize: NoteTextSize = NoteTextSize.DEFAULT,
     selected: Boolean = false,
+    /** 多选态：右下角显示勾选框，时间栏右端为它让出空位 */
+    selecting: Boolean = false,
+    onToggleSelect: () -> Unit = {},
 ) {
     // 按压缩放反馈：按下 0.97，松手 tween 回弹（抖音式触感，克制的幅度）
     val cardInteraction = remember { MutableInteractionSource() }
@@ -111,36 +136,159 @@ fun NoteCard(
                 Spacer(Modifier.weight(1f, fill = true))
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        formatNoteDate(note.updatedAt),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.weight(1f))
+                    // 左下角那一格：设了提醒就整格换成提醒日期时间，没设才是笔记日期（要求 4/5）
+                    NoteStampCell(note, Modifier.weight(1f))
                     if (!folderName.isNullOrBlank()) {
+                        Spacer(Modifier.width(4.dp))
                         Text(
                             folderName,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            // 给分类名封顶：它再长也不许把左下角那一格挤成零宽（那格是日期/提醒）
+                            modifier = Modifier.widthIn(max = 96.dp),
                         )
                     }
                     // 置顶角标从标题栏右边移到时间栏右边（用户 2026-09-07 要求）
                     PinBadge(note.pinned)
+                    // 行尾永远留着勾选框那一格（只有宽度、不出高度）：进多选时行内元素一个都不挪，
+                    // 左下角那一格的可用宽度也不变 —— 否则时间格里"年"会跟着多选状态忽隐忽现
+                    // （用户 2026-09-19 要求 1"布局应该与原本未长按情况下相同"）。
+                    // 待办页同款做法：见 ui/TodoCard.kt"槽位宽度与多选态的三条杠手柄一致"。
+                    // 置顶图标因此恒定落在勾选框左侧（要求 3）。
+                    Spacer(Modifier.width(SelectionCheckSlot))
                 }
             }
-            if (selected) {
-                Icon(
-                    Icons.Filled.CheckCircle,
-                    contentDescription = "已选中",
-                    tint = MaterialTheme.colorScheme.primary,
+            if (selecting) {
+                // 勾选框钉在卡片右下角（用户 2026-09-19 要求 2："勾选框应该出现在最右下角"）。
+                // 叠在卡片上而不是放进内容 Column：放进去会撑高卡片，进出多选整列都会动。
+                // 命中区 48dp（硬性要求 ≥44dp）：MiCheckbox 是自绘的、不带 Material 的 48dp 最小
+                // 触控尺寸，所以命中区由外层的 toggleable 提供；内层视觉 clearAndSetSemantics 抹掉，
+                // 无障碍树里只留一个真正的勾选框节点（否则会多出一个 18dp 的"无名小框"）。
+                Box(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 8.dp, end = 8.dp)
-                        .size(20.dp),
-                )
+                        .align(Alignment.BottomEnd)
+                        // 48dp：比硬性要求的 44dp 再宽一点，正好是 Material 最小触控尺寸 ——
+                        // 低于 48dp 时 Compose 会把这个节点的无障碍边界向外扩张，
+                        // 报出来的框就会溢出卡片右下角，设备审计量到的就不是真实命中区了。
+                        .size(48.dp)
+                        .toggleable(
+                            value = selected,
+                            role = Role.Checkbox,
+                            onValueChange = { onToggleSelect() },
+                        )
+                        // 一个节点把"是什么、勾没勾、点了干什么"讲全：分开写会变成两个无障碍节点
+                        // （一个是无名复选框、一个是纯文字），读屏要念两遍、审计也找不准。
+                        .clearAndSetSemantics {
+                            contentDescription = "选择笔记"
+                            role = Role.Checkbox
+                            toggleableState = ToggleableState(selected)
+                            onClick { onToggleSelect(); true }
+                        },
+                    contentAlignment = Alignment.BottomEnd,
+                ) {
+                    Box(Modifier.clearAndSetSemantics {}) {
+                        MiCheckbox(
+                            done = selected,
+                            size = 18.dp,
+                            onClick = onToggleSelect,
+                            // 内缩 16dp：勾选框右下缘与内容 16dp 栅格线重合，正好在"最右下角"
+                            modifier = Modifier.padding(end = 16.dp, bottom = 16.dp),
+                        )
+                    }
+                }
             }
+        }
+    }
+}
+
+/** 多选态行尾为勾选框让出的宽度：18dp 勾选框 + 4dp 间距（都是 4dp 网格上的值） */
+private val SelectionCheckSlot = 22.dp
+
+/** 提醒图标连同它前面的间距：12dp 图标 + 4dp 间距，放不下时这一格会先撤图标（见 NoteStampCell） */
+private val ReminderIconSpan = 16.dp
+
+/**
+ * 卡片左下角那一格（用户 2026-09-19 要求 4/5）：
+ * - 设了提醒：整格换成提醒的日期时间，前面的小图标是"这是提醒不是笔记日期"的记号；
+ * - 没设提醒：仍是原来的笔记日期。
+ *
+ * 写不写年、带不带图标，都由这一格**量出来的真实可用宽度**决定（用 TextMeasurer 量同一份
+ * 字体的实际像素宽，而不是按"跨年才显示年"之类的规则猜）。降级顺序：
+ *   带年+图标 → 带年（撤图标）→ 省年+图标 → 省年（撤图标）
+ * 先保文案完整、再保图标；任何一步都不压缩字距、不换行 —— 用户 2026-09-19："如果年塞不进去，
+ * 不强制塞入年份在时间栏"、"不要为了塞年份把字挤掉或换行；宽度够时才带年份"。
+ * 这一格的宽度随分类名长短、宫格/列表模式变化，所以必须实测量宽，不能写死。
+ */
+@Composable
+private fun NoteStampCell(note: Note, modifier: Modifier = Modifier) {
+    val remindAt = note.remindAt
+    BoxWithConstraints(modifier, contentAlignment = Alignment.CenterStart) {
+        val style = MaterialTheme.typography.labelSmall
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val capPx = with(density) { maxWidth.toPx().toInt() }
+        val iconPx = with(density) { ReminderIconSpan.toPx().toInt() }
+        val full = when {
+            remindAt == null -> DateFormats.yearMonthDay(note.updatedAt)
+            note.allDay -> DateFormats.yearMonthDay(remindAt)
+            else -> DateFormats.yearMonthDayHourMinute(remindAt)
+        }
+        val short = when {
+            remindAt == null -> DateFormats.monthDay(note.updatedAt)
+            note.allDay -> DateFormats.monthDay(remindAt)
+            else -> DateFormats.monthDay(remindAt) + " " + DateFormats.hourMinute(remindAt)
+        }
+        val widths = remember(capPx, full, short, style, measurer) {
+            fun w(s: String) = measurer.measure(
+                AnnotatedString(s),
+                style = style,
+                maxLines = 1,
+                softWrap = false,
+            ).size.width
+            w(full) to w(short)
+        }
+        val (wFull, wShort) = widths
+        val hasReminder = remindAt != null
+        val showIcon: Boolean
+        val text: String
+        when {
+            !hasReminder -> {
+                showIcon = false
+                text = if (wFull <= capPx) full else short
+            }
+            wFull + iconPx <= capPx -> {
+                showIcon = true; text = full
+            }
+            wFull <= capPx -> {
+                showIcon = false; text = full
+            }
+            wShort + iconPx <= capPx -> {
+                showIcon = true; text = short
+            }
+            else -> {
+                showIcon = false; text = short
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (showIcon) {
+                Icon(
+                    Icons.Outlined.Schedule,
+                    contentDescription = "提醒",
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.size(12.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text,
+                style = style,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -249,7 +397,7 @@ private fun ChecklistCardBody(note: Note, textSize: NoteTextSize) {
 @Composable
 private fun PinBadge(pinned: Boolean, spaced: Boolean = false) {
     if (pinned) {
-        if (spaced) Spacer(Modifier.width(8.dp)) else Spacer(Modifier.width(6.dp))
+        if (spaced) Spacer(Modifier.width(8.dp)) else Spacer(Modifier.width(4.dp))
         Icon(
             Icons.Outlined.PushPin,
             contentDescription = "已置顶",
