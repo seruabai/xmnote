@@ -449,7 +449,16 @@ REPORT['sections']['E'] = {'visible_before': sorted(n['text'] for n in vis)}
 sh('shell', 'am', 'force-stop', PKG)
 sh('shell', 'am', 'start', '-n', PKG + '/.MainActivity')
 time.sleep(4)
-integrity = sql("PRAGMA integrity_check;")
+# 应用还在跑，WAL 检查点/写事务撞上时 sqlite3 会返回空串（不是真的坏库）：
+# 空结果重试几次，拿最后一次非空结果判定
+integrity = ''
+for _ in range(5):
+    integrity = sql("PRAGMA integrity_check;")
+    if integrity:
+        break
+    time.sleep(1.2)
+if not integrity:
+    integrity = '(sqlite3 连续 5 次无输出：库被应用占着，非坏库)'
 rec('F', 'F1 全部操作后 PRAGMA integrity_check = ok', integrity == 'ok', integrity)
 crash = sh('logcat', '-d', '-b', 'crash')
 fatals = [l for l in crash.splitlines() if 'FATAL' in l]
