@@ -6,6 +6,23 @@
 
 ---
 
+## v1.2.26（versionCode 29）
+
+- 日期：2026-09-20
+- 摘要：**仓库文档与验收工具整理 —— app/ 零改动，APK 行为与 v1.2.25 完全一致**（用户明确要求照发这一版）
+- 涉及文件：`AGENTS.md`、`tools/verify/scale_verify.py`、`tools/verify/feedback_verify.py`、`app/build.gradle.kts`、`wiki/*`
+
+### 规则（AGENTS.md 新增 §4.1）
+- [设备验证]删[各套件/子代理自行其是的取证方式]，换[**一律 adb 直连模拟器**：`adb -s <serial> shell uiautomator dump` 抓界面、`input tap|swipe|keyevent` 交互、`exec-out screencap -p` 截图取证（像素判据用 PIL 直接量，不靠肉眼）、`run-as com.purenote.local sqlite3 <db> "SQL"` 查库（SQL 必须整体作为字符串传给设备端 shell，用参数列表会被再切分、静默返回空）]
+- [常备模拟器]写明：`emulator-5554` = AVD `MIUI14_Study`（Android 13）、`emulator-5556` = AVD `PureNote_API_36`（Android 16）；冷启动 `emulator.exe -avd <AVD> -no-boot-anim -no-audio -gpu swiftshader_indirect -memory 4096 -cores 4`（约 25 秒进系统）；起不来时清 `*.lock` → 只杀该 AVD 的 emulator/qemu → 重启 adb server。**跑全量回归前先冷启动；绝不让两台模拟器并行跑重活**（会把应用饿到 ANR，整轮作废）
+
+### 验收工具
+- [scale_verify F1]删[直接 `PRAGMA integrity_check`]，换[**把库复制到应用私有目录再查副本**（`cp <db> files/ic_probe.db`）]：应用在跑时直接查会因占用返回空串，不是坏库
+- [feedback_verify F4]删[`open_app` 后立刻 dump 判两列]，换[**轮询 4 次**（每次 1.2s）]：`LazyVerticalGrid` 逐项组合，右列"还没画出来"会被误判成"没有右列"（实测 5556 上右列卡片 x≈598 是存在的）。判据本身不放宽
+- 说明：编辑器墨迹取点（`tools/verify/editor_tap.py`）、规模矩阵配对判据、`run_all` 假绿防线等加固已随 v1.2.25 发布，本版只是补齐文档与最后两处套件判据
+
+---
+
 ## v1.2.25（versionCode 28）
 
 - 日期：2026-09-19

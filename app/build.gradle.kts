@@ -11,8 +11,8 @@ android {
         applicationId = "com.purenote.local"
         minSdk = 24
         targetSdk = 36
-        versionCode = 28
-        versionName = "1.2.25"
+        versionCode = 29
+        versionName = "1.2.26"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
