@@ -1,7 +1,6 @@
 package com.purenote.local.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,7 +24,6 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,8 +33,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -45,12 +42,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.purenote.local.NoteViewModel
 import com.purenote.local.data.Folder
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FoldersScreen(vm: NoteViewModel) {
     val folders by vm.folders.collectAsState()
@@ -64,22 +62,24 @@ fun FoldersScreen(vm: NoteViewModel) {
 
     BackHandler { vm.goHome() }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                navigationIcon = {
-                    IconButton(onClick = { vm.goHome() }) {
-                        Icon(Icons.Outlined.ArrowBack, "返回")
-                    }
-                },
-                title = {
-                    Text("管理分类", style = MaterialTheme.typography.titleMedium)
-                },
-            )
-        },
-    ) { padding ->
+    Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+            // 页头照设置页：返回字形落 16dp 正文线(48dp 触控区向左外溢 12dp)，标题 23sp 半粗居中
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 24.dp),
+            ) {
+                IconButton(onClick = { vm.goHome() }, modifier = Modifier.offset(x = (-12).dp)) {
+                    Icon(Icons.Outlined.ArrowBack, "返回")
+                }
+                Text(
+                    "管理分类",
+                    fontSize = 23.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f).padding(end = 48.dp),
+                )
+            }
             LazyColumn(Modifier.weight(1f)) {
                 if (folders.isEmpty()) {
                     item {
@@ -88,22 +88,22 @@ fun FoldersScreen(vm: NoteViewModel) {
                                 Surface(
                                     shape = CircleShape,
                                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    modifier = Modifier.size(80.dp),
+                                    modifier = Modifier.size(92.dp),
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             Icons.Outlined.Folder,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                                            modifier = Modifier.size(30.dp),
+                                            modifier = Modifier.size(32.dp),
                                         )
                                     }
                                 }
-                                Spacer(Modifier.height(14.dp))
+                                Spacer(Modifier.height(16.dp))
                                 Text(
                                     "还没有分类，添加一个吧",
+                                    fontSize = 17.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodyMedium,
                                 )
                             }
                         }
@@ -119,7 +119,7 @@ fun FoldersScreen(vm: NoteViewModel) {
                             folders.forEachIndexed { idx, folder ->
                                 if (idx > 0) {
                                     HorizontalDivider(
-                                        modifier = Modifier.padding(start = 62.dp),
+                                        modifier = Modifier.padding(start = 64.dp),
                                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                                     )
                                 }
@@ -132,19 +132,19 @@ fun FoldersScreen(vm: NoteViewModel) {
                                             nameInput = folder.name
                                             errorText = null
                                         }
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
                                 ) {
                                     Surface(
                                         shape = CircleShape,
                                         color = MaterialTheme.colorScheme.primaryContainer,
-                                        modifier = Modifier.size(38.dp),
+                                        modifier = Modifier.size(36.dp),
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 Icons.Outlined.Folder,
                                                 contentDescription = null,
                                                 tint = MaterialTheme.colorScheme.secondary,
-                                                modifier = Modifier.size(19.dp),
+                                                modifier = Modifier.size(20.dp), // 与行内两个 20dp 图标同档，且落 4dp 网格
                                             )
                                         }
                                     }
@@ -160,11 +160,14 @@ fun FoldersScreen(vm: NoteViewModel) {
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    IconButton(onClick = {
-                                        renameTarget = folder
-                                        nameInput = folder.name
-                                        errorText = null
-                                    }) {
+                                    IconButton(
+                                        onClick = {
+                                            renameTarget = folder
+                                            nameInput = folder.name
+                                            errorText = null
+                                        },
+                                        modifier = Modifier.size(48.dp),
+                                    ) {
                                         Icon(
                                             Icons.Outlined.DriveFileRenameOutline,
                                             "重命名",
@@ -172,7 +175,7 @@ fun FoldersScreen(vm: NoteViewModel) {
                                             modifier = Modifier.size(20.dp),
                                         )
                                     }
-                                    IconButton(onClick = { deleteTarget = folder }, modifier = Modifier.width(40.dp)) {
+                                    IconButton(onClick = { deleteTarget = folder }, modifier = Modifier.size(48.dp)) {
                                         Icon(
                                             Icons.Outlined.DeleteOutline,
                                             "删除",
@@ -226,7 +229,7 @@ fun FoldersScreen(vm: NoteViewModel) {
                 }
             }
             errorText?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 10.dp))
+                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 12.dp))
             }
         }
     }
