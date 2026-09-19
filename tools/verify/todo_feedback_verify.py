@@ -109,12 +109,18 @@ time.sleep(1.2)
 # ---- T2 长按进多选 ----
 ns = nodes()
 row = find(ns, 'text', TITLES[0])
-sh('shell', 'input', 'swipe', str((row['x0'] + row['x1']) // 2), str((row['y0'] + row['y1']) // 2),
-   str((row['x0'] + row['x1']) // 2 + 6), str((row['y0'] + row['y1']) // 2), '900')
-time.sleep(1.8)
-ns3 = nodes()
-exit_btn = find(ns3, 'desc', '退出多选')
-select_all = find(ns3, 'desc', '全选') or find(ns3, 'desc', '取消全选')
+# 长按进多选在这台机器上偶发不中（机器忙时输入被吞）：同一次会话里复现过一次 3/7、
+# 紧接着重跑就 10/10。所以点两次 + 拉长等待，别让环境噪声把发版门判红。
+for _attempt in range(2):
+    sh('shell', 'input', 'swipe', str((row['x0'] + row['x1']) // 2), str((row['y0'] + row['y1']) // 2),
+       str((row['x0'] + row['x1']) // 2 + 6), str((row['y0'] + row['y1']) // 2), '900')
+    time.sleep(2.2)
+    ns3 = nodes()
+    exit_btn = find(ns3, 'desc', '退出多选')
+    select_all = find(ns3, 'desc', '全选') or find(ns3, 'desc', '取消全选')
+    if exit_btn is not None or select_all is not None:
+        break
+    row = find(nodes(), 'text', TITLES[0]) or row
 title = find(ns3, 'text', '待办')
 gear = find(ns3, 'desc', '设置')
 check('T2 长按进入多选（出现退出键与全选）', exit_btn is not None and select_all is not None,
