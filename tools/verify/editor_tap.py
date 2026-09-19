@@ -52,7 +52,14 @@ def ink_bands(adb, serial, x_from=40, x_to=1040, y_from=250, y_to=2200,
             inside = False
     if inside:
         bands.append((start, min(y_to, im.size[1]) - 1))
-    return bands
+    # 同一行可能被拆成两条带（字形之间出现 1~2px 空行），不合并会让"第几行"整体错位一位
+    merged = []
+    for b in bands:
+        if merged and b[0] - merged[-1][1] <= 4:
+            merged[-1] = (merged[-1][0], b[1])
+        else:
+            merged.append(b)
+    return merged
 
 
 def target_focused(nodes_fn, text):
@@ -84,19 +91,46 @@ def target_y(adb, serial, nodes_fn, text, fallback_dy=46):
 
 
 def tap_text_field(sh, adb, serial, nodes_fn, text, sleep, label=''):
-    """点正文里的某个块，点到它真的拿到输入焦点为止。"""
-    x = (block_rows(nodes_fn)[0]['x0'] + 40) if block_rows(nodes_fn) else 540
+    """点正文里的某个块，点到它真的拿到输入焦点为止。
+
+    x 取**目标块自己的**左边界 +40：列表块、有序/无序列表块和引用块的文字起点不一样
+    （列表/引用前面有 28dp 标记槽），拿第一块的 x 去点别的块会点到标记槽上，点不中。
+    """
+    def target_x(nodes_fn, text):
+        rows = block_rows(nodes_fn)
+        row = next((n for n in rows if n.get('text') == text), None)
+        return (row['x0'] + 40) if row else 540
+
     for attempt in range(3):
         hide_ime(sh)
-        y = target_y(adb, serial, nodes_fn, text)
-        if y is None:
+        ns_now = nodes_fn()
+        x = target_x(lambda: ns_now, text)
+        row = next((n for n in block_rows(lambda: ns_now) if n.get('text') == text), None)
+        if row is None:
             print('   [tap_text_field] 找不到 %s 这一块' % text, flush=True)
             return None
-        sh('shell', 'input', 'tap', str(int(x)), str(int(y)))
-        sleep(1.2)
-        if target_focused(nodes_fn, text):
-            return y
-        print('   [tap_text_field] %s 第 %d 次点 y=%d 没中，重取坐标再来'
-              % (label or text, attempt + 1, y), flush=True)
-    print('   [tap_text_field] %s 三次都没拿到焦点' % (label or text), flush=True)
+        # 候选 y：先试墨迹行带算出来的真实位置，再试 a11y 中心往下挪的各档。
+        # 两个来源都可能出错（行带条数对不上时映射会整体错位；a11y 则整体偏高 ~46px），
+        # 所以都列出来逐个试，靠 focused 校验挑中正确的那个。
+        cands = []
+        band_y = target_y(adb, serial, lambda: ns_now, text)
+        if band_y:
+            cands.append(band_y)
+        center = (row['y0'] + row['y1']) // 2
+        cands += [center + dy for dy in (0, 18, 36, 54, 72, 90)]
+        tried = []
+        for y in cands:
+            if any(abs(y - t) <= 3 for t in tried):
+                continue
+            tried.append(y)
+            sh('shell', 'input', 'tap', str(int(x)), str(int(y)))
+            sleep(1.2)
+            if target_focused(nodes_fn, text):
+                if len(tried) > 1:
+                    print('   [tap_text_field] %s 第 %d 个候选 y=%d 命中'
+                          % (label or text, len(tried), y), flush=True)
+                return y
+        print('   [tap_text_field] %s 第 %d 轮 %d 个候选都没拿到焦点'
+              % (label or text, attempt + 1, len(tried)), flush=True)
+    print('   [tap_text_field] %s 都没拿到焦点' % (label or text), flush=True)
     return None

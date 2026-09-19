@@ -199,7 +199,9 @@ rec('A', 'A1 全部 15 块都渲染出来（逐屏滚动收集）', len(rows) ==
 rec('A', 'A2 界面顺序与正文顺序一致', order_ok, '%s' % [r[1] for r in rows])
 # 逐屏收集时 y 只在同一屏内可比，因此按"收集顺序即滚动顺序"间接验证，见 A2
 REPORT['sections']['A_y'] = [r[0] for r in rows]
-boxes = [n['checked'] for n in ns if 'CheckBox' in n['cls']]
+# 按语义找勾选框，不按类名：同一个 MiCheckbox 在不同行上被报成 CheckBox / View 两种类名
+# （实测待办乙那条只报 class=View 但 checkable=true & checked=true），按类名过滤会漏掉它
+boxes = [n['checked'] for n in ns if n.get('checkable') == 'true']
 rec('A', 'A4 两个待办各有一个勾选框，且已完成的那个是勾上的', sorted(boxes) == ['false', 'true'], '%s' % boxes)
 
 # ============================================================ B 文本块不可拖（新口径）
@@ -355,10 +357,15 @@ for idx in (0, 3, 7, 9):
     target = find(ns, text=ITEM_TEXTS[idx])
     if not target:
         continue
-    # 勾选框：优先按 checkable 语义找，其次按同行的 CheckBox 类名找
-    boxes = [n for n in ns if n.get('checkable') == 'true' and abs(n['y0'] - target['y0']) < 70]
+    # 勾选框：优先按 checkable 语义找，其次按同行的 CheckBox 类名找。
+    # 用"和这一行在竖直方向真的重叠"来配对：行高 64px，若按 |Δy| < 70 配对，
+    # 上一行的勾选框会被算成这一行的（实测就是这么勾错了行），所以改成重叠面积取最大
+    def overlap(b, t):
+        return min(b['y1'], t['y1']) - max(b['y0'], t['y0'])
+    boxes = [n for n in ns if n.get('checkable') == 'true' and overlap(n, target) > 0]
     if not boxes:
-        boxes = [n for n in ns if 'CheckBox' in n['cls'] and abs(n['y0'] - target['y0']) < 70]
+        boxes = [n for n in ns if 'CheckBox' in n['cls'] and overlap(n, target) > 0]
+    boxes.sort(key=lambda b: -overlap(b, target))
     if not boxes:
         rec('D', 'D 第 %d 条找到勾选框' % (idx + 1), False,
             '节点样本: %s' % [(n['cls'].split('.')[-1], n['text'][:6], n.get('checkable')) for n in ns[:6]])
