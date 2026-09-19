@@ -7,3 +7,5 @@ build/
 /captures
 .externalNativeBuild
 .cxx
+.kotlin/
+tools/verify/__pycache__/

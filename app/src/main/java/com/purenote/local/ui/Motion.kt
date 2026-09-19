@@ -46,6 +46,8 @@ object Motion {
     /** 淡入淡出基线 */
     const val FADE = 240
 
+    // 底部标签切换：笔记 ⇄ 待办。做成交叉淡入淡出即可，别用位移（列表滚动位置会显得在跳）
+    const val TAB = 260
     // ---- 缓动 ----
     /** iOS 式减速：快出缓停，用于元素入场 */
     val EaseOut = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)

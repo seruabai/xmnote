@@ -26,6 +26,8 @@ SUITES = [
     ('block_drag_verify.py', '拖拽口径'),
     ('mind_verify.py', '脑图'),
     ('scale_verify.py', '规模矩阵'),
+    ('note_selection_verify.py', '笔记多选态'),
+    ('theme_verify.py', '主题配色'),
     ('feedback_verify.py', '笔记反馈回归'),
     ('todo_feedback_verify.py', '待办反馈回归'),
 ]
@@ -74,6 +76,15 @@ def main():
         tail = [l for l in out.splitlines() if l.startswith(('PASS', 'FAIL', 'SKIP'))]
         summary = next((l for l in out.splitlines() if l.startswith('== 汇总')), '(无汇总行)')
         print(summary, flush=True)
+        # 假绿防线：脚本崩了、被前置条件挡住、或者一条都没量（如 "0/0"），
+        # 都会在报告里长得像"全绿"。这类结果必须显式计为失败，否则发版证据是假的
+        # （checkbox_align_verify 就因为不自带夹具，跑出过 0/0 的假绿）。
+        hollow = (summary == '(无汇总行)' or summary.startswith('== 汇总: 0/')
+                  or '0 项检查' in summary)
+        if hollow:
+            tail.append('FAIL %s 没有产生任何检查项（脚本没跑起来/前置条件不满足）' % script)
+        elif r.returncode != 0 and not any(l.startswith('FAIL') for l in tail):
+            tail.append('FAIL %s 退出码 %d 但没有 FAIL 行（脚本自身崩了？）' % (script, r.returncode))
         for l in tail:
             if l.startswith('FAIL'):
                 print('   ', l, flush=True)
