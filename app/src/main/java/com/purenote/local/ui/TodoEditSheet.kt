@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -24,7 +25,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,13 +47,11 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.purenote.local.NoteViewModel
@@ -267,7 +265,8 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .verticalScroll(rememberScrollState())
-                                .padding(start = 22.dp, end = 22.dp, top = 20.dp, bottom = 22.dp),
+                                // 圆角 28dp 与纸色面板（AlertDialog 默认）同档；内边距 16dp 与编辑器样式面板一致
+                                .padding(horizontal = 16.dp, vertical = 16.dp),
                         ) {
                             if (listMode) {
                                 SheetTitleField(
@@ -276,7 +275,7 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
                                     onNext = { pendingFocusKey = rows.firstOrNull()?.key },
                                     focusRequester = titleFocus,
                                 )
-                                Spacer(Modifier.height(6.dp))
+                                Spacer(Modifier.height(8.dp))
                             }
                             rows.forEachIndexed { idx, row ->
                                 SheetItemRow(
@@ -295,7 +294,7 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
                                     onNext = { enterFromRow(idx) },
                                 )
                             }
-                            Spacer(Modifier.height(14.dp))
+                            Spacer(Modifier.height(16.dp))
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth(),
@@ -312,15 +311,21 @@ fun TodoEditSheet(vm: NoteViewModel, todoId: Long, onClose: () -> Unit) {
                                     },
                                 )
                                 Spacer(Modifier.weight(1f))
-                                Text(
-                                    "完成",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
+                                // 触控目标 ≥44dp：文字外面套一层等高盒子，点哪都能关
+                                Box(
+                                    contentAlignment = Alignment.Center,
                                     modifier = Modifier
+                                        .heightIn(min = 44.dp)
                                         .clickable { saveAndClose() }
-                                        .padding(horizontal = 8.dp, vertical = 10.dp),
-                                )
+                                        .padding(horizontal = 12.dp),
+                                ) {
+                                    Text(
+                                        "完成",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                             }
                         }
                     }
@@ -378,7 +383,7 @@ private fun SheetTitleField(
                 onValueChange(it.text)
             }
         },
-        textStyle = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, color = MaterialTheme.colorScheme.onSurface),
+        textStyle = MaterialTheme.typography.titleMedium.copy(color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -389,9 +394,7 @@ private fun SheetTitleField(
                     // 占位符必须复用字段完整样式(纪律:行高来源不同会首行错位)
                     Text(
                         "待办清单",
-                        style = TextStyle(
-                            fontSize = 16.sp,
-                            lineHeight = 22.sp,
+                        style = MaterialTheme.typography.titleMedium.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                         ),
                     )
@@ -417,7 +420,8 @@ private fun SheetItemRow(
     onToggle: () -> Unit,
     onNext: () -> Unit,
 ) {
-    val fontSize = if (singleStyle) 16.sp else 15.sp
+    // 单条模式就是这条待办本身，用正文档；清单模式降一档（与首页卡片正文同源）
+    val fieldStyle = if (singleStyle) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium
     var tfv by remember(row.key) { mutableStateOf(TextFieldValue(row.text, TextRange(row.text.length))) }
     // 同 SheetTitleField：只在 row.text 是"外部"变更时同步，避免重组把输入中的文本回滚。
     var lastEmitted by remember(row.key) { mutableStateOf(row.text) }
@@ -443,9 +447,7 @@ private fun SheetItemRow(
                     onTextChange(it.text)
                 }
             },
-            textStyle = TextStyle(
-                fontSize = fontSize,
-                lineHeight = 22.sp,
+            textStyle = fieldStyle.copy(
                 color = if (row.done) MaterialTheme.colorScheme.outlineVariant
                 else MaterialTheme.colorScheme.onSurface,
                 textDecoration = if (row.done) TextDecoration.LineThrough else null,
@@ -457,15 +459,8 @@ private fun SheetItemRow(
             decorationBox = { inner ->
                 Box {
                     if (tfv.text.isEmpty()) {
-                        // 占位符复用字段完整样式(含 22sp 行高)
-                        Text(
-                            "待办内容",
-                            style = TextStyle(
-                                fontSize = fontSize,
-                                lineHeight = 22.sp,
-                                color = MaterialTheme.colorScheme.outlineVariant,
-                            ),
-                        )
+                        // 占位符复用字段完整样式(行高来源不同会首行错位)
+                        Text("待办内容", style = fieldStyle.copy(color = MaterialTheme.colorScheme.outlineVariant))
                     }
                     inner()
                 }
@@ -473,7 +468,7 @@ private fun SheetItemRow(
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 12.dp)
-                .padding(vertical = 10.dp)
+                .padding(vertical = 12.dp)
                 .focusRequester(focusRequester)
                 .onFocusChanged { if (it.isFocused) tfv = tfv.copy(selection = TextRange(tfv.text.length)) },
         )
@@ -489,40 +484,49 @@ private fun SheetReminderPill(
     onPick: () -> Unit,
     onClear: () -> Unit,
 ) {
+    // 整颗胶囊就是一个按钮：≥44dp 高（与右侧"完成"同高），内部留白落 4dp 网格
     Surface(
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.heightIn(min = 44.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.clickable(onClick = onPick).padding(start = 11.dp),
+            modifier = Modifier
+                .clickable(onClick = onPick)
+                .heightIn(min = 44.dp)
+                .padding(start = 16.dp),
         ) {
             Icon(
                 Icons.Outlined.Schedule,
                 contentDescription = null,
                 tint = if (dueAt != null) MaterialTheme.colorScheme.secondary
                 else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(14.dp),
+                modifier = Modifier.size(16.dp),
             )
-            Spacer(Modifier.width(5.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 dueAt?.let { TodoDates.formatDue(it, allDay, repeat) } ?: "设置提醒",
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelLarge,
                 color = if (dueAt != null) MaterialTheme.colorScheme.secondary
                 else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
             )
             if (dueAt != null) {
-                IconButton(onClick = onClear, modifier = Modifier.size(26.dp)) {
+                // 清除键用 Box 而不是 IconButton：后者的 48dp 最小触控尺寸会把 44dp 的胶囊顶高
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(44.dp).clickable(onClick = onClear),
+                ) {
                     Icon(
                         Icons.Outlined.Close,
                         contentDescription = "取消提醒时间",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(13.dp),
+                        modifier = Modifier.size(16.dp),
                     )
                 }
             } else {
-                Spacer(Modifier.width(11.dp))
+                Spacer(Modifier.width(16.dp))
             }
         }
     }

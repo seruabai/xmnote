@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -57,6 +58,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -80,6 +82,13 @@ import com.purenote.local.feature.mind.toggleCollapsed
 import com.purenote.local.feature.mind.updateLabel
 import kotlin.math.roundToInt
 
+/** 节点文字行高倍数：MindLayout 的测量与画出来的文字共用同一个值 */
+private const val NODE_LINE_HEIGHT = 1.4f
+
+/** 节点气泡内边距：布局测量与文字绘制必须用同一个值，否则盒子会出现"字小框大"的空档 */
+private val MindNodePadX = 12.dp
+private val MindNodePadY = 8.dp
+
 /**
  * 脑图编辑器（导图 + 大纲两种视图）。
  *
@@ -102,15 +111,19 @@ fun MindEditor(
     var selectedId by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<String?>(null) }
 
+    // 节点字号走 NoteTypeScale（与编辑器正文同一个来源），布局测量与文字绘制共用，
+    // 盒子因此正好裹住文字：外圈留白全部落在 4dp 网格上（12/8/32/12）
+    val labelSp = typeScale.editorBodySp
+    val labelLineSp = labelSp * NODE_LINE_HEIGHT
     val config = remember(typeScale, density) {
         val fontPx = with(density) { typeScale.editorBodySp.sp.toPx() }
         MindLayoutConfig(
             fontSize = fontPx,
-            lineHeight = fontPx * 1.4f,
-            paddingX = with(density) { 10.dp.toPx() },
-            paddingY = with(density) { 7.dp.toPx() },
-            levelGap = with(density) { 34.dp.toPx() },
-            siblingGap = with(density) { 10.dp.toPx() },
+            lineHeight = fontPx * NODE_LINE_HEIGHT,
+            paddingX = with(density) { MindNodePadX.toPx() },
+            paddingY = with(density) { MindNodePadY.toPx() },
+            levelGap = with(density) { 32.dp.toPx() },
+            siblingGap = with(density) { 12.dp.toPx() },
             maxLabelWidth = with(density) { 150.dp.toPx() },
         )
     }
@@ -120,7 +133,7 @@ fun MindEditor(
     Column(modifier = modifier) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
         ) {
             MindViewTab("导图", mind.view == MindView.MIND) {
                 if (mind.view != MindView.MIND) onMindChange(mind.copy(view = MindView.MIND))
@@ -128,16 +141,16 @@ fun MindEditor(
             MindViewTab("大纲", mind.view == MindView.OUTLINE) {
                 if (mind.view != MindView.OUTLINE) onMindChange(mind.copy(view = MindView.OUTLINE))
             }
-            Spacer(Modifier.weight(1f))
             if (selected != null) {
                 val label = selected.label.ifBlank { "（空节点）" }
                 Text(
                     "已选中：" + label,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.width(150.dp),
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
                 )
             }
         }
@@ -147,6 +160,8 @@ fun MindEditor(
                 MindView.MIND -> MindCanvas(
                     layout = layout,
                     root = mind.root,
+                    labelSp = labelSp,
+                    labelLineSp = labelLineSp,
                     selectedId = selectedId,
                     onSelect = { selectedId = it },
                     onReparent = { nodeId, newParentId ->
@@ -156,6 +171,8 @@ fun MindEditor(
                 )
                 MindView.OUTLINE -> MindOutline(
                     mind = mind,
+                    labelSp = labelSp,
+                    labelLineSp = labelLineSp,
                     selectedId = selectedId,
                     onSelect = { selectedId = it },
                     onToggleCollapse = { id -> onMindChange(mind.copy(root = mind.root.toggleCollapsed(id))) },
@@ -163,35 +180,49 @@ fun MindEditor(
             }
         }
 
+        // 节点操作条：五格等宽（每格 ≥44dp 触控），间距落 4dp 网格
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
         ) {
             val current = selected
             val rootSelected = current != null && current.id == mind.root.id
-            MindAction(Icons.Outlined.Add, "加子级", enabled = current != null) {
+            MindAction(Icons.Outlined.Add, "加子级", enabled = current != null, modifier = Modifier.weight(1f)) {
                 val node = current ?: return@MindAction
                 val child = MindNode(id = MindIds.newNodeId())
                 onMindChange(mind.copy(root = mind.root.insertChild(node.id, child)))
                 selectedId = child.id
             }
-            MindAction(Icons.Outlined.SubdirectoryArrowRight, "加同级", enabled = current != null && !rootSelected) {
+            MindAction(
+                Icons.Outlined.SubdirectoryArrowRight,
+                "加同级",
+                enabled = current != null && !rootSelected,
+                modifier = Modifier.weight(1f),
+            ) {
                 val node = current ?: return@MindAction
                 val sibling = MindNode(id = MindIds.newNodeId())
                 onMindChange(mind.copy(root = mind.root.insertSibling(node.id, sibling)))
                 selectedId = sibling.id
             }
-            MindAction(Icons.Outlined.Edit, "改文字", enabled = current != null) { editing = current?.id }
+            MindAction(Icons.Outlined.Edit, "改文字", enabled = current != null, modifier = Modifier.weight(1f)) {
+                editing = current?.id
+            }
             MindAction(
                 Icons.Outlined.UnfoldMore,
                 if (current?.collapsed == true) "展开" else "折叠",
                 enabled = current != null && current.children.isNotEmpty(),
+                modifier = Modifier.weight(1f),
             ) {
                 val node = current ?: return@MindAction
                 onMindChange(mind.copy(root = mind.root.toggleCollapsed(node.id)))
             }
-            MindAction(Icons.Outlined.DeleteOutline, "删除", enabled = current != null && !rootSelected) {
+            MindAction(
+                Icons.Outlined.DeleteOutline,
+                "删除",
+                enabled = current != null && !rootSelected,
+                modifier = Modifier.weight(1f),
+            ) {
                 val node = current ?: return@MindAction
                 onMindChange(mind.copy(root = mind.root.remove(node.id)))
                 selectedId = null
@@ -213,32 +244,54 @@ fun MindEditor(
     }
 }
 
+/** 视图切换标签：文字居中放在 ≥44dp 的触控槽里（左右各留 10dp，槽宽自然 ≥44dp） */
 @Composable
 private fun MindViewTab(label: String, active: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        fontSize = 13.sp,
-        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = Modifier
+            .heightIn(min = 44.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-    )
+            .padding(horizontal = 10.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            ),
+            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
+/** 节点操作格：图标 + 文字整体是一个触控目标（槽位宽度由调用方 weight 给出，高度钉 48dp） */
 @Composable
-private fun MindAction(icon: ImageVector, description: String, enabled: Boolean, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun MindAction(
+    icon: ImageVector,
+    description: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .clickable(enabled = enabled, onClick = onClick),
+    ) {
         Icon(
             icon,
             contentDescription = description,
             tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant,
-            modifier = Modifier.size(24.dp).clickable(enabled = enabled, onClick = onClick),
+            modifier = Modifier.size(24.dp),
         )
+        Spacer(Modifier.height(4.dp))
         Text(
             description,
-            fontSize = 10.sp,
+            style = MaterialTheme.typography.labelSmall,
             color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outlineVariant,
+            maxLines = 1,
         )
     }
 }
@@ -248,6 +301,8 @@ private fun MindAction(icon: ImageVector, description: String, enabled: Boolean,
 private fun MindCanvas(
     layout: MindLayoutResult,
     root: MindNode,
+    labelSp: Float,
+    labelLineSp: Float,
     selectedId: String?,
     onSelect: (String?) -> Unit,
     onReparent: (String, String) -> Unit,
@@ -339,7 +394,7 @@ private fun MindCanvas(
                                     isSelected -> MaterialTheme.colorScheme.primaryContainer
                                     else -> MaterialTheme.colorScheme.surfaceVariant
                                 },
-                                RoundedCornerShape(9.dp),
+                                MaterialTheme.shapes.small,
                             )
                             .border(
                                 width = if (isSelected || isDropTarget) 1.5.dp else 0.dp,
@@ -348,25 +403,26 @@ private fun MindCanvas(
                                     isSelected -> MaterialTheme.colorScheme.primary
                                     else -> MaterialTheme.colorScheme.surfaceVariant
                                 },
-                                shape = RoundedCornerShape(9.dp),
+                                shape = MaterialTheme.shapes.small,
                             )
                             .clickable { onSelect(n.id) },
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         Text(
                             text = n.label.ifBlank { "（空）" },
-                            fontSize = 14.sp,
+                            fontSize = labelSp.sp,
+                            lineHeight = labelLineSp.sp,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 9.dp),
+                            modifier = Modifier.padding(horizontal = MindNodePadX),
                         )
                         if (n.collapsed && n.hiddenCount > 0) {
                             Text(
                                 "+" + n.hiddenCount,
-                                fontSize = 10.sp,
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp, top = 2.dp),
+                                modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp, top = 4.dp),
                             )
                         }
                     }
@@ -380,6 +436,8 @@ private fun MindCanvas(
 @Composable
 private fun MindOutline(
     mind: MindDoc,
+    labelSp: Float,
+    labelLineSp: Float,
     selectedId: String?,
     onSelect: (String?) -> Unit,
     onToggleCollapse: (String) -> Unit,
@@ -399,7 +457,10 @@ private fun MindOutline(
                         },
                     )
                     .clickable { onSelect(row.id) }
-                    .padding(start = (6 + row.depth * 18).dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
+                    // 行高 48dp（列表行触控标准，也让 18dp 的折叠键自动扩到 48dp 触控）；
+                    // 缩进每级 16dp、右缘 16dp，都落在 4dp 网格上
+                    .heightIn(min = 48.dp)
+                    .padding(start = (row.depth * 16).dp, end = 16.dp),
             ) {
                 if (row.hasChildren) {
                     Icon(
@@ -411,10 +472,11 @@ private fun MindOutline(
                 } else {
                     Spacer(Modifier.width(18.dp))
                 }
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
                     row.label.ifBlank { "（空）" },
-                    fontSize = 15.sp,
+                    fontSize = labelSp.sp,
+                    lineHeight = labelLineSp.sp,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
@@ -439,7 +501,7 @@ private fun MindLabelDialog(initial: String, onDismiss: () -> Unit, onConfirm: (
                     .fillMaxWidth()
                     .height(72.dp)
                     .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                    .padding(10.dp),
+                    .padding(12.dp),
             )
         },
         confirmButton = { TextButton(onClick = { onConfirm(value.trim()) }) { Text("确定") } },
