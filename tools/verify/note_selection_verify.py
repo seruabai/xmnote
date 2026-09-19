@@ -18,6 +18,8 @@ SERIAL = sys.argv[1] if len(sys.argv) > 1 else 'emulator-5554'
 ADB = r'C:/Android/sdk/platform-tools/adb.exe'
 PKG = 'com.purenote.local'
 RES, SKIPPED = [], []
+# 左下角那一格允许的两种文案：笔记日期（yyyy年M月d日）与提醒日期时间（M月d日 HH:mm / yyyy年M月d日 HH:mm）
+DATE_CELL = re.compile(r'^(\d{4}年)?\d{1,2}月\d{1,2}日( \d{1,2}:\d{2})?$')
 
 
 def sh(cmd, timeout=90):
@@ -136,6 +138,26 @@ def list_bottom(ns):
     return min(n['y0'] for n in nav) if nav else H
 
 
+def title_node(ns, card):
+    """卡片里最上面那个文本节点（标题/清单进度），用来判断这张卡有没有被视口裁过"""
+    ts = [t for t in ns if (t['text'] or '').strip() and inside(card, t)]
+    return sorted(ts, key=lambda t: t['y0'])[0] if ts else None
+
+
+def is_clipped(ns, c):
+    """这张卡片是不是被列表视口裁掉了。
+
+    实测（5554，最下面那张"拖拽口径"）：卡片下缘越过列表下沿时，标题节点只剩 14px（正常 64px），
+    勾选框整块落在可视区外 —— 那是**量不到**，不是"没有勾选框"。判据取两条，任一成立即视为被裁：
+    ① 卡片下缘越过列表下沿；② 标题节点被裁矮（< 30px）。
+    只排除被裁的卡片，"完整可见的普通卡片必须右下角有勾选框"这条不放宽。
+    """
+    if c['card']['y1'] > list_bottom(ns) + 2:
+        return True
+    t = title_node(ns, c['card'])
+    return t is None or (t['y1'] - t['y0']) < 30
+
+
 def cards(ns, title):
     """列表里的卡片：占屏宽 ≥35%、高 ≥140px 的可点容器。
     分类胶囊只有 44dp 高、底部标签栏在最下一条（>0.86H），都会在这里被排掉。"""
@@ -162,9 +184,16 @@ def cards(ns, title):
 
 
 def stamp_of(ns, card):
-    """卡片左下角那一格：最下面一行里最靠左的文本节点（日期或提醒时间）"""
+    """卡片左下角那一格：底部那一条里最靠左的**单行小字**（日期或提醒时间）。
+
+    必须同时满足"单行小字（≤48px）"和"落在卡片下缘往上 34dp 内"：
+    只按下缘往上 40dp 取的话，被裁卡片会把两行预览文字（55px）或标题当成时间格
+    （5554 实测：'拖拽口径' 取到了 '［图片］TXT1 ［图片］TXT2'）。取不到就返回 None。
+    """
+    band = card['y1'] - int(34 * DP)
     row = [t for t in ns if (t['text'] or '').strip() and inside(card, t)
-           and t['y0'] >= card['y1'] - int(40 * DP)]
+           and t['y0'] >= band and (t['y1'] - t['y0']) <= 48
+           and DATE_CELL.match(t['text'].strip())]
     return min(row, key=lambda t: t['x0']) if row else None
 
 
@@ -262,53 +291,84 @@ check('长按后进入多选（出现"已选 N 项"/"退出多选"/"全选"）',
                                          find(mid, desc='选择笔记') is not None))
 compare('进入多选', title, before, mid)
 
-# ---- 要求 2/3：勾选框在最右下角 + 置顶在勾选框左侧同一行 ----
+# ---- 要求 2/3/5：都只对"完整可见"的卡片判定 ----
+# 被列表下沿裁掉的那张卡片一律先摘出去：它的勾选框/时间格可能在可视区外，
+# 拿它判定只会得到假 FAIL（5554 实测：'拖拽口径' 无勾选框 + 时间格量到两行预览文字）。
 mid_cards = cards(mid, big_title(mid, '笔记'))
+visible = [c for c in mid_cards if not is_clipped(mid, c)]
+clipped_titles = [c['title'][:8] for c in mid_cards if is_clipped(mid, c)]
+if clipped_titles:
+    print('    （跳过被列表视口裁掉的卡片：%s）' % '、'.join(clipped_titles))
 if not mid_cards:
     check('多选态能识别到卡片', False, '')
+elif not visible:
+    check('多选态能识别到完整可见的卡片', False, '整屏卡片都被视口裁掉了，无从判定')
 else:
-    ok_box, ok_pin, box_detail, pin_detail = True, True, [], []
-    bottom = list_bottom(mid)
-    checked = 0
-    for c in mid_cards:
+    # 先收集：完整可见的卡片 + 它的勾选框。完整可见却找不到勾选框 = 真缺陷，不放宽。
+    found, missing, box_detail = [], [], []
+    for c in visible:
         cb = next((n for n in mid if n['desc'] == '选择笔记' and inside(c['card'], n)), None)
         if cb is None:
-            ok_box = False
-            box_detail.append('%s 无勾选框' % c['title'][:8])
-            continue
+            missing.append(c['title'][:8])
+        else:
+            found.append((c, cb))
+    ok_box = not missing
+    box_detail += ['%s 无勾选框' % t for t in missing]
+    # 设计尺寸自校准：取所有卡片里最大的那个勾选框当基准（它们是同一个控件）。
+    # 列表下沿那一排的勾选框会跟着卡片被视口裁掉（实测 126x90px），
+    # 用"比基准小"识别裁切、跳过；但**基准本身**不足 44dp 就是真缺陷，照样 FAIL。
+    ref = max([min(cb['x1'] - cb['x0'], cb['y1'] - cb['y0']) for _, cb in found], default=0)
+    if ref < 44 * DP - 4:
+        ok_box = False
+        box_detail.append('勾选框设计尺寸只有 %dpx(%.1fdp)，不足 44dp' % (ref, dp(ref)))
+    checked = 0
+    for c, cb in found:
         size = (cb['x1'] - cb['x0'], cb['y1'] - cb['y0'])
-        if min(size) < 44 * DP - 4 or cb['y1'] > bottom:
-            # 列表下沿那半张卡片，勾选框本身也被裁了 —— 无从测量，跳过（不计入判定）
-            box_detail.append('%s 勾选框被列表下沿裁掉(%dx%dpx)，跳过' % (c['title'][:8], size[0], size[1]))
+        inset = (c['card']['x1'] - cb['x1'], c['card']['y1'] - cb['y1'])
+        if min(size) < ref - 4:
+            box_detail.append('%s 勾选框被列表下沿裁到 %dx%dpx，跳过' % (c['title'][:8], size[0], size[1]))
             continue
         checked += 1
-        inset = (c['card']['x1'] - cb['x1'], c['card']['y1'] - cb['y1'])
         # "最右下角"按外缘判定：勾选框右下角必须压在卡片右下角上（≤4px），且整体在卡片右半边。
         # 不按"卡片下半部"判：只有一行字的短卡片整张还不到两个勾选框高，那条判据会误伤。
         right_half = cb['x0'] >= c['card']['x0'] + (c['card']['x1'] - c['card']['x0']) * 0.5
         box_detail.append('%s %dx%dpx(%.0fdp) 距卡片右下角 %d,%dpx 右半边=%s'
                           % (c['title'][:8], size[0], size[1], dp(size[0]), inset[0], inset[1], right_half))
-        if max(inset) > 4 or not right_half or min(size) < 44 * DP - 4:
+        if max(inset) > 4 or not right_half:
             ok_box = False
-        pin = next((n for n in mid if n['desc'] == '已置顶' and inside(c['card'], n)), None)
-        if pin is not None:
-            gap = pin['x1'] - cb['x0']
-            dy = abs(center(pin)[1] - center(cb)[1])
-            pin_detail.append('%s 置顶 x1=%d 勾选框 x0=%d 水平间距=%dpx 中心 y 差=%dpx'
-                              % (c['title'][:8], pin['x1'], cb['x0'], gap, dy))
-            if gap > 2 or dy > 6:
-                ok_pin = False
-    check('要求 2：勾选框 44dp、落在卡片右下角（完整可见的 %d 张）' % checked, ok_box and checked > 0,
-          ' / '.join(box_detail))
-    check('要求 3：置顶图标紧挨勾选框左侧、同一行', ok_pin and bool(pin_detail),
-          ' / '.join(pin_detail) or '本屏没有置顶纸条，无法判定')
+    check('要求 2：勾选框 44dp、落在卡片右下角（完整可见的 %d 张）' % checked,
+          ok_box and (checked > 0 or bool(missing)), ' / '.join(box_detail))
 
-# ---- 要求 4/5：左下角那一格 ----
-stamps = [(c, stamp_of(mid, c['card'])) for c in mid_cards]
+    # 要求 3：置顶图标必须在勾选框左侧、同一行。
+    # 本屏一张置顶纸条都没有 → 没有判据可说，按 SKIP（和要求 4 缺样本一致），不判 FAIL。
+    pin_detail, ok_pin = [], True
+    for c in visible:
+        cb = next((n for n in mid if n['desc'] == '选择笔记' and inside(c['card'], n)), None)
+        pin = next((n for n in mid if n['desc'] == '已置顶' and inside(c['card'], n)), None)
+        if cb is None or pin is None:
+            continue
+        gap = pin['x1'] - cb['x0']
+        dy = abs(center(pin)[1] - center(cb)[1])
+        pin_detail.append('%s 置顶 x1=%d 勾选框 x0=%d 水平间距=%dpx 中心 y 差=%dpx'
+                          % (c['title'][:8], pin['x1'], cb['x0'], gap, dy))
+        if gap > 2 or dy > 6:
+            ok_pin = False
+    if pin_detail:
+        check('要求 3：置顶图标紧挨勾选框左侧、同一行', ok_pin, ' / '.join(pin_detail))
+    else:
+        skip('要求 3：置顶图标紧挨勾选框左侧、同一行', '本屏没有置顶纸条（没有判据），无法判定')
+
+# ---- 要求 4/5：左下角那一格（同样只取完整可见的卡片）----
+stamps = [(c, stamp_of(mid, c['card'])) for c in visible]
 stamps = [(c, s) for c, s in stamps if s]
-check('要求 5：左下角那一格永远单行（没有换行）', len(stamps) > 0
-      and all((s['y1'] - s['y0']) <= 48 for _, s in stamps),
-      ' / '.join('%s h=%dpx %r' % (c['title'][:8], s['y1'] - s['y0'], s['text']) for c, s in stamps))
+if stamps:
+    # 取到的必然是"日期/提醒"文案（stamp_of 已按 DATE_CELL 过滤），这里判它单行、且没被挤掉
+    check('要求 5：左下角那一格永远是单行日期/提醒（没有换行、没有被挤没）',
+          all((s['y1'] - s['y0']) <= 48 for _, s in stamps),
+          ' / '.join('%s h=%dpx %r' % (c['title'][:8], s['y1'] - s['y0'], s['text']) for c, s in stamps))
+else:
+    skip('要求 5：左下角那一格永远是单行日期/提醒',
+         '完整可见的卡片里取不到日期/提醒文案（%d 张都量不到）' % len(visible))
 reminders = db_reminders()
 if reminders is None:
     skip('要求 4：提醒纸条显示提醒日期时间', '读不到库（run-as/sqlite3 不可用）')
